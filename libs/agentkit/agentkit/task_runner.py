@@ -27,8 +27,15 @@ async def run_task(
 ) -> tuple[llm.Completion, list[str]]:
     """Returns (completion, problems). Empty problems = passed checks; otherwise mark needs_review."""
     template, version = await prompts.load(task, prompt_dir)
-    examples = await retrieve.similar_examples(task, untrusted) if use_examples else []
-    chunks = await retrieve.knowledge(untrusted) if use_knowledge else []
+    examples: list[dict] = []
+    chunks: list[dict] = []
+    try:  # retrieval is an enhancement: if the DB or embedder is down, run the prompt without it
+        if use_examples:
+            examples = await retrieve.similar_examples(task, untrusted)
+        if use_knowledge:
+            chunks = await retrieve.knowledge(untrusted)
+    except Exception:
+        log.warning("retrieval unavailable, continuing without it", extra={"ctx": {"task": task}})
     msgs = prompts.build_messages(template, untrusted=untrusted, examples=examples, context=chunks)
     result = await llm.complete(task, msgs, schema, **llm_kwargs)
     problems = validate(result) if validate else []

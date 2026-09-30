@@ -6,7 +6,7 @@ import time
 import pytest
 from pydantic import BaseModel
 
-from agentkit import checks, config, llm, prompts, redact, slack
+from agentkit import checks, config, llm, prompts, redact, retrieve, slack, task_runner
 from agentkit.db import email_hash, vec
 
 
@@ -84,3 +84,26 @@ def test_complete_gives_up(monkeypatch):
     monkeypatch.setattr(llm, "_post", fake_post)
     with pytest.raises(llm.LLMError):
         asyncio.run(llm.complete("t", [], Out))
+
+
+def test_run_task_survives_retrieval_failure(monkeypatch, tmp_path):
+    (tmp_path / "t_x.txt").write_text("sys")
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("db down")
+
+    async def fake_complete(task, msgs, schema=None, **_):
+        return llm.Completion("{}", None, "agent-dev", 1, 1)
+
+    async def no_log(*_a, **_k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(retrieve, "similar_examples", boom)
+    monkeypatch.setattr(retrieve, "knowledge", boom)
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    monkeypatch.setattr(task_runner.db, "log_retrieval", no_log)
+    monkeypatch.setattr(task_runner.db, "fetchrow", boom)
+    result, problems = asyncio.run(
+        task_runner.run_task("t.x", "hi", prompt_dir=tmp_path, use_knowledge=True)
+    )
+    assert result.model == "agent-dev" and problems == []

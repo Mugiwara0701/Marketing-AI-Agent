@@ -1,4 +1,4 @@
-.PHONY: install test lint format typecheck check up down health
+.PHONY: llm-verify install test lint format typecheck check up down health
 
 install:
 	pip install -e "libs/agentkit[dev]" ruff mypy types-PyYAML yamllint sqlfluff shellcheck-py actionlint-py pre-commit
@@ -33,3 +33,7 @@ down:
 
 health:
 	for p in 8101 8102 8103; do curl -fsS localhost:$$p/health; echo; done
+
+# Verify a running LLM host: LLM_BASE_URL, LLM_API_KEY (and EMBED_BASE_URL) must be set
+llm-verify:
+	PYTHON=.venv/bin/python bash services/llm-service/scripts/verify.sh
