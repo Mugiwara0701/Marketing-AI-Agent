@@ -13,12 +13,14 @@ import hmac
 import os
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from . import db
 from .log import get_logger
 
 MAX_RUNS = 200
@@ -63,18 +65,33 @@ def create_app(service: str, jobs: dict[str, JobFn]) -> FastAPI:
     active: set[str] = set()
     tasks: set[asyncio.Task] = set()
 
+    persist = bool(os.environ.get("DATABASE_URL"))
+
+    async def _record(fn, *args) -> None:
+        # Run history in agent_runs is best effort: a DB outage must not fail the job itself.
+        if not persist:
+            return
+        try:
+            await fn(*args)
+        except Exception:  # noqa: BLE001
+            log.warning("agent_runs write failed", extra={"ctx": {"run_id": args[0] if args else None}})
+
     async def _run(run_id: str, name: str, payload: dict) -> None:
+        await _record(db.start_run, service, name, run_id)
         try:
             result = await jobs[name](JobContext(run_id=run_id, job=name, payload=payload))
             runs[run_id].status = "succeeded"
             runs[run_id].result = result or {}
+            await _record(db.finish_run, run_id, "succeeded", result)
         except NotImplementedError:
             runs[run_id].status = "failed"
             runs[run_id].error = "not implemented"
-        except Exception as exc:  # noqa: BLE001 - report every failure to the caller
+            await _record(db.finish_run, run_id, "failed", None, "not implemented")
+        except Exception as exc:
             log.exception("job failed", extra={"ctx": {"job": name, "run_id": run_id}})
             runs[run_id].status = "failed"
             runs[run_id].error = f"{type(exc).__name__}: {exc}"
+            await _record(db.finish_run, run_id, "failed", None, type(exc).__name__)
         finally:
             runs[run_id].finished_at = time.time()
             active.discard(name)

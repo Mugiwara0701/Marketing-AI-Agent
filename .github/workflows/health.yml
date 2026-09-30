@@ -1,0 +1,32 @@
+name: health
+on:
+  schedule:
+    - cron: "17 20 * * *"   # daily 01:47 IST, before the LLM window
+  workflow_dispatch:
+jobs:
+  health:
+    if: github.event_name == 'workflow_dispatch' || vars.SCHEDULES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: Check services and LLM
+        env:
+          LEAD_URL: ${{ secrets.LEAD_URL }}
+          OUTREACH_URL: ${{ secrets.OUTREACH_URL }}
+          CONTENT_URL: ${{ secrets.CONTENT_URL }}
+          LLM_URL: ${{ secrets.LLM_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: bash scheduler/scripts/health_check.sh
+      - name: Alert Slack on failure
+        if: failure()
+        env:
+          SLACK_ALERTS_WEBHOOK: ${{ secrets.SLACK_ALERTS_WEBHOOK }}
+        run: |
+          [ -n "$SLACK_ALERTS_WEBHOOK" ] && curl -fsS -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"health check failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$SLACK_ALERTS_WEBHOOK" || true

@@ -45,8 +45,11 @@ One run per job at a time (409). Jobs must be idempotent: schedules can be delay
 
 ## Status
 
-Scaffold only. Job functions are stubs (`NotImplementedError`); the job contract, workflows, config
-and the retrieval migration are in place. Scheduled workflows run only when repo variable
+Infrastructure is in place: job contract, `.github/workflows/`, `config/`, migrations `0001` (retrieval)
+and `0002` (core schema), Supabase Edge Functions (`slack-interact`, `unsubscribe`, `trigger-run`), and the
+agentkit modules (db, llm, embed, retrieve, prompts, task_runner, checks, learn, redact, slack).
+Job functions are still stubs (`NotImplementedError`) and the dashboard is not built.
+Migrations and Edge Functions are syntax-checked only, not yet run against a live Supabase project. Scheduled workflows run only when repo variable
 `SCHEDULES_ENABLED=true`.
 
 ## Quick start

@@ -7,7 +7,17 @@ jobs:
   - {service: outreach-service, job: draft,            when: "weekdays 09:13"}
   - {service: outreach-service, job: send,             when: "weekdays 11:13"}
   - {service: outreach-service, job: poll_replies,     when: "every 2h weekdays"}
+  - {service: outreach-service, job: draft_replies,    when: "on approval/dispatch (reply-approved)"}
   - {service: content-service,  job: plan_topics,      when: "mon 08:17"}
   - {service: content-service,  job: draft_post,       when: "tue 08:17"}
   - {service: content-service,  job: publish,          when: "thu 10:17"}
   - {service: content-service,  job: collect_metrics,  when: "fri 18:17"}
+
+# Dispatch-triggered (Slack approval -> Edge Function -> repository_dispatch -> .github/workflows/dispatch.yml)
+dispatch:
+  - {event: lead-accepted,  service: lead-service,     job: enrich_contacts}
+  - {event: email-approved, service: outreach-service, job: send}
+  - {event: reply-approved, service: outreach-service, job: draft_replies}
+  - {event: post-approved,  service: content-service,  job: publish}
+  - {event: run-job,        service: any allow-listed, job: from dashboard Start run / Slack Retry}
+health: {workflow: health.yml, when: "daily 01:47", checks: "services /health, LLM /v1/models"}

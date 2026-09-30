@@ -1,0 +1,25 @@
+name: content
+on:
+  schedule:
+    - cron: "47 2 * * 1"    # plan_topics      mon 08:17 IST
+    - cron: "47 2 * * 2"    # draft_post       tue 08:17 IST
+    - cron: "47 4 * * 4"    # publish          thu 10:17 IST
+    - cron: "47 12 * * 5"   # collect_metrics  fri 18:17 IST
+  workflow_dispatch:
+    inputs:
+      job:
+        type: choice
+        options: [plan_topics, draft_post, publish, collect_metrics]
+        required: true
+jobs:
+  run:
+    if: github.event_name == 'workflow_dispatch' || vars.SCHEDULES_ENABLED == 'true'
+    uses: ./.github/workflows/_run-job.yml
+    with:
+      service: content
+      job: >-
+        ${{ github.event_name == 'workflow_dispatch' && inputs.job ||
+        github.event.schedule == '47 2 * * 1' && 'plan_topics' ||
+        github.event.schedule == '47 2 * * 2' && 'draft_post' ||
+        github.event.schedule == '47 4 * * 4' && 'publish' || 'collect_metrics' }}
+    secrets: inherit

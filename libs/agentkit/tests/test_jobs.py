@@ -1,9 +1,8 @@
 import asyncio
 
 import pytest
-from fastapi.testclient import TestClient
-
 from agentkit import JobContext, create_app
+from fastapi.testclient import TestClient
 
 H = {"X-Job-Token": "secret"}
 

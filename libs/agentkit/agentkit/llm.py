@@ -1,0 +1,138 @@
+"""One entry point for every model call: `complete(task, ...)`.
+
+Picks the model alias from config/routing.yaml, talks to the OpenAI-compatible endpoint
+(LLM_BASE_URL, LLM_API_KEY), validates structured output against a pydantic model and retries.
+Changing a model is a config change, not a code change.
+"""
+
+import asyncio
+import json
+import re
+from dataclasses import dataclass
+from typing import TypeVar
+
+import httpx
+from pydantic import BaseModel, ValidationError
+
+from .config import env, load_routing
+from .log import get_logger
+
+log = get_logger("agentkit.llm")
+T = TypeVar("T", bound=BaseModel)
+
+_sem: asyncio.Semaphore | None = None
+_MAX_CONCURRENT = 3
+# Aliases in models.yaml -> served names on the vLLM host.
+SERVED = {"dev": "agent-dev", "primary": "agent-primary", "fast": "agent-fast"}
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+@dataclass
+class Completion:
+    text: str
+    parsed: BaseModel | None
+    model: str
+    tokens_in: int
+    tokens_out: int
+
+
+def model_for(task: str) -> str:
+    """Resolve task -> served model name using config/routing.yaml."""
+    cfg = load_routing()
+    alias = (cfg.get("tasks") or {}).get(task) or cfg.get("default", "dev")
+    return SERVED.get(alias, alias)
+
+
+def _semaphore() -> asyncio.Semaphore:
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(_MAX_CONCURRENT)
+    return _sem
+
+
+def _extract_json(text: str) -> dict:
+    """Parse JSON from a model reply, tolerating code fences and surrounding prose."""
+    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if m:
+        text = m.group(1)
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("no JSON object in reply")
+    return json.loads(text[start : end + 1])
+
+
+async def _post(payload: dict, timeout: float) -> dict:
+    base = env("LLM_BASE_URL", required=True).rstrip("/")
+    headers = {"Authorization": f"Bearer {env('LLM_API_KEY', '')}"}
+    last: Exception | None = None
+    for attempt in range(3):  # 2 retries with back-off
+        try:
+            async with _semaphore(), httpx.AsyncClient(timeout=timeout) as c:
+                r = await c.post(f"{base}/v1/chat/completions", json=payload, headers=headers)
+            if r.status_code >= 500:
+                raise LLMError(f"llm server {r.status_code}")
+            r.raise_for_status()
+            return r.json()
+        except (httpx.TransportError, LLMError) as exc:
+            last = exc
+            await asyncio.sleep(2**attempt)
+    raise LLMError(f"llm unreachable: {last}")
+
+
+async def complete(
+    task: str,
+    messages: list[dict],
+    schema: type[T] | None = None,
+    *,
+    temperature: float = 0.2,
+    max_tokens: int = 1024,
+    timeout: float | None = None,
+    reasoning_effort: str | None = None,
+) -> Completion:
+    """Call the model for `task`. With `schema`, the reply is validated (one retry on failure)."""
+    model = model_for(task)
+    if timeout is None:
+        timeout = 30.0 if schema is not None else 120.0
+    payload: dict = {"model": model, "messages": list(messages), "temperature": temperature,
+                     "max_tokens": max_tokens}
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+    if schema is not None:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()},
+        }
+    tin = tout = 0
+    error: str | None = None
+    for attempt in range(2 if schema is not None else 1):
+        if error:
+            payload["messages"] = list(messages) + [
+                {"role": "user", "content": f"Your last reply was invalid ({error}). Reply with valid JSON only."}
+            ]
+        data = await _post(payload, timeout)
+        usage = data.get("usage") or {}
+        tin += usage.get("prompt_tokens", 0)
+        tout += usage.get("completion_tokens", 0)
+        text = data["choices"][0]["message"]["content"] or ""
+        if schema is None:
+            return Completion(text, None, model, tin, tout)
+        try:
+            return Completion(text, schema.model_validate(_extract_json(text)), model, tin, tout)
+        except (ValueError, ValidationError) as exc:
+            error = type(exc).__name__
+            log.warning("invalid structured output", extra={"ctx": {"task": task, "attempt": attempt}})
+    raise LLMError(f"invalid structured output for {task}: {error}")
+
+
+async def health() -> bool:
+    """True if the LLM endpoint answers /v1/models."""
+    base = env("LLM_BASE_URL", required=True).rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{base}/v1/models", headers={"Authorization": f"Bearer {env('LLM_API_KEY', '')}"})
+        return r.status_code == 200
+    except httpx.HTTPError:
+        return False

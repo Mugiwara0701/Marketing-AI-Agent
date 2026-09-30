@@ -7,3 +7,13 @@ Design documents (Claude Docs):
 - Implementation Milestones: https://claude.ai/code/artifact/8581d508-2073-4967-a17f-b5cff4094e2f
 - Fine-Tuned Models (optional, later): https://claude.ai/code/artifact/1ca06093-b13d-4ee8-b0e3-1309af669861
 - Retrieval and Prompt Path (first task): https://claude.ai/code/artifact/1e1ef77f-85f9-494e-953e-5081aa8ba80e
+
+## Running an eval
+
+```bash
+python eval/runner/run_eval.py lead.qualify eval/sets/lead_qualify.jsonl services/lead-service/app/prompts \
+    app.qualify:QualifyResult --min 0.85
+```
+
+Sets are JSONL (`{"input": ..., "expected": {...}}`); the target sizes are 40 job posts, 40 replies and
+3 blog briefs. Labelled data must come from the team; none is committed yet.
