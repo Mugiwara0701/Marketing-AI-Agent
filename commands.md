@@ -1,16 +1,21 @@
-## To install the python 3.12 
+# Setup commands
 
+## Install Python 3.12
+
+```bash
 uv python install 3.12
+```
 
+## Create the virtual environment
 
+Inside the project folder:
 
-###### Then inside the project folder 
-
-## create the virtual environment 
-
+```bash
 uv venv --python 3.12 .venv
+```
 
+## Activate the virtual environment
 
-## activate the virtual environment  
-
+```bash
 source .venv/bin/activate
+```

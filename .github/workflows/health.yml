@@ -27,6 +27,8 @@ jobs:
         env:
           SLACK_ALERTS_WEBHOOK: ${{ secrets.SLACK_ALERTS_WEBHOOK }}
         run: |
-          [ -n "$SLACK_ALERTS_WEBHOOK" ] && curl -fsS -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"health check failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            "$SLACK_ALERTS_WEBHOOK" || true
+          if [ -n "$SLACK_ALERTS_WEBHOOK" ]; then
+            curl -fsS -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"health check failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+              "$SLACK_ALERTS_WEBHOOK" || true
+          fi
