@@ -33,8 +33,13 @@ async def run_task(
     result = await llm.complete(task, msgs, schema, **llm_kwargs)
     problems = validate(result) if validate else []
     try:
-        await db.log_retrieval(task, version, [e["id"] for e in examples], [c["id"] for c in chunks],
-                               "ok" if not problems else "needs_review")
-    except Exception:  # noqa: BLE001 - logging must never fail the task
+        await db.log_retrieval(
+            task,
+            version,
+            [e["id"] for e in examples],
+            [c["id"] for c in chunks],
+            "ok" if not problems else "needs_review",
+        )
+    except Exception:
         log.warning("retrieval log write failed", extra={"ctx": {"task": task}})
     return result, problems

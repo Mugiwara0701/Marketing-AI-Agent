@@ -34,8 +34,10 @@ One run per job at a time (409). Jobs must be idempotent: schedules can be delay
 
 ## Trade-offs to know
 
-- Services must be **always on** (the company machine on the tailnet). GitHub Actions only triggers them;
-  agent code does not run inside runners.
+- Services and the LLM run on the company machine (on the tailnet), but **not 24/7**: the host is powered on for a
+  night window (01:30-04:30 IST daily) and a day window (09:00-17:00 IST weekdays), about 60 of 168 hours a week.
+  GitHub Actions only triggers the services; agent code does not run inside runners. Work that arrives while
+  the host is off waits in Supabase and is picked up by the next window. See `docs/` (Architecture, section 3).
 - Supabase Edge Functions cannot reach the tailnet, so Slack approvals fire `repository_dispatch`
   events, and workflows call the services.
 - LinkedIn forbids scraping. Leads come from LinkedIn job-alert emails, manual pastes and ATS feeds
@@ -68,6 +70,22 @@ Add repo secrets listed in `scheduler/README.md`.
 1. Retrieval and prompt path (`libs/agentkit`: embed, retrieve, prompts, task_runner, checks).
 2. lead-service, then outreach-service, then content-service.
 3. Optional: fine-tuned LoRA adapters after the evaluation gate (see docs).
+
+## Code quality and CI
+
+Every pull request and push to `main` runs three workflows; all three must be green to merge.
+
+| Workflow | Checks | Config |
+|---|---|---|
+| `ci.yml` | unit tests (agentkit and each service), docker compose config and image builds | `Makefile`, `pyproject.toml` |
+| `lint.yml` | ruff lint and format, mypy, sqlfluff (migrations), yamllint, shellcheck, actionlint (workflows), hadolint (Dockerfiles), deno fmt/lint/check (Edge Functions), markdownlint | `ruff.toml`, `mypy.ini`, `.sqlfluff`, `.yamllint.yaml`, `.hadolint.yaml`, `deno.json`, `.markdownlint.yaml` |
+| `security.yml` | gitleaks (secrets, full history), pip-audit (dependencies); also weekly | `.gitleaks.toml` |
+
+Dependabot (`.github/dependabot.yml`) opens weekly update PRs for Actions, pip and Docker.
+
+Locally: `make install`, then `make check` (lint, typecheck, tests) and `make format` to auto-fix.
+To run the same checks on every commit: `pre-commit install` (see `.pre-commit-config.yaml`).
+Set branch protection on `main` to require the `ci`, `lint` and `security` jobs.
 
 ## To verify before production
 

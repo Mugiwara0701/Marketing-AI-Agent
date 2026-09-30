@@ -11,8 +11,9 @@ from .config import env
 API = "https://slack.com/api"
 
 
-def verify_signature(signing_secret: str, timestamp: str, body: bytes, signature: str,
-                     max_age: int = 300) -> bool:
+def verify_signature(
+    signing_secret: str, timestamp: str, body: bytes, signature: str, max_age: int = 300
+) -> bool:
     """Slack request signing: v0=HMAC_SHA256(secret, 'v0:ts:body'); reject anything older than 5 min."""
     try:
         if abs(time.time() - int(timestamp)) > max_age:
@@ -28,9 +29,18 @@ def approval_blocks(text: str, approval_id: str, buttons: list[tuple[str, str]])
     """buttons: [(label, action_id)], e.g. [("Accept", "accept"), ("Ignore", "ignore")]."""
     return [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
-        {"type": "actions", "elements": [
-            {"type": "button", "text": {"type": "plain_text", "text": label},
-             "action_id": action, "value": approval_id} for label, action in buttons]},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": label},
+                    "action_id": action,
+                    "value": approval_id,
+                }
+                for label, action in buttons
+            ],
+        },
     ]
 
 
@@ -40,8 +50,11 @@ async def post_message(channel: str, text: str, blocks: list[dict] | None = None
     if blocks:
         payload["blocks"] = blocks
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(f"{API}/chat.postMessage", json=payload,
-                         headers={"Authorization": f"Bearer {env('SLACK_BOT_TOKEN', required=True)}"})
+        r = await c.post(
+            f"{API}/chat.postMessage",
+            json=payload,
+            headers={"Authorization": f"Bearer {env('SLACK_BOT_TOKEN', required=True)}"},
+        )
     data = r.json()
     if not data.get("ok"):
         raise RuntimeError(f"slack error: {data.get('error')}")

@@ -50,7 +50,9 @@ def email_hash(addr: str) -> str:
     return hashlib.sha256(addr.strip().lower().encode()).hexdigest()
 
 
-async def claim(table: str, from_status: str, to_status: str, limit: int = 20) -> list[asyncpg.Record]:
+async def claim(
+    table: str, from_status: str, to_status: str, limit: int = 20
+) -> list[asyncpg.Record]:
     """Atomically move up to `limit` rows from one status to the next (FOR UPDATE SKIP LOCKED).
 
     Late, dropped or duplicate runs cannot double-process a row. `table` must be a trusted literal.
@@ -68,27 +70,45 @@ async def claim(table: str, from_status: str, to_status: str, limit: int = 20) -
 async def start_run(service: str, job: str, run_id: str) -> None:
     await execute(
         "insert into agent_runs (service, job, run_id, status) values ($1,$2,$3,'running')",
-        service, job, run_id,
+        service,
+        job,
+        run_id,
     )
 
 
-async def finish_run(run_id: str, status: str, result: dict | None = None, error: str | None = None) -> None:
+async def finish_run(
+    run_id: str, status: str, result: dict | None = None, error: str | None = None
+) -> None:
     r = result or {}
     await execute(
         """update agent_runs set status=$2, finished_at=now(), error=$3,
                items_processed=$4, items_failed=$5, tokens_in=$6, tokens_out=$7
            where run_id=$1 and finished_at is null""",
-        run_id, status, error, int(r.get("processed", 0)), int(r.get("failed", 0)),
-        int(r.get("tokens_in", 0)), int(r.get("tokens_out", 0)),
+        run_id,
+        status,
+        error,
+        int(r.get("processed", 0)),
+        int(r.get("failed", 0)),
+        int(r.get("tokens_in", 0)),
+        int(r.get("tokens_out", 0)),
     )
 
 
-async def log_retrieval(task: str, prompt_version: int | None, example_ids: list, chunk_ids: list,
-                        outcome: str | None = None) -> None:
+async def log_retrieval(
+    task: str,
+    prompt_version: int | None,
+    example_ids: list,
+    chunk_ids: list,
+    outcome: str | None = None,
+) -> None:
     await execute(
         "insert into retrieval_logs (task, prompt_version, example_ids, chunk_ids, outcome) "
         "values ($1,$2,$3,$4,$5)",
-        task, prompt_version, example_ids, chunk_ids, outcome,
+        task,
+        prompt_version,
+        example_ids,
+        chunk_ids,
+        outcome,
     )
 
 

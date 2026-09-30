@@ -4,9 +4,10 @@ import hmac
 import time
 
 import pytest
-from agentkit import checks, llm, prompts, redact, slack
-from agentkit.db import email_hash, vec
 from pydantic import BaseModel
+
+from agentkit import checks, config, llm, prompts, redact, slack
+from agentkit.db import email_hash, vec
 
 
 def test_redact():
@@ -16,7 +17,9 @@ def test_redact():
 def test_checks():
     assert checks.check_banned("This is Guaranteed")
     assert not checks.check_banned("hello")
-    assert checks.check_footer("Acme, 1 Road", ["acme", "unsubscribe"]) == ["missing footer part: unsubscribe"]
+    assert checks.check_footer("Acme, 1 Road", ["acme", "unsubscribe"]) == [
+        "missing footer part: unsubscribe"
+    ]
     assert checks.check_label("x", {"a"}) and not checks.check_label("a", {"a"})
     assert checks.check_length("ab", min_chars=5) and checks.check_confidence(0.1)
 
@@ -27,7 +30,9 @@ def test_wrap_untrusted_strips_delimiters():
 
 
 def test_build_messages_order():
-    m = prompts.build_messages("sys", untrusted="x", examples=[{"input_text": "i", "output_json": {"a": 1}}])
+    m = prompts.build_messages(
+        "sys", untrusted="x", examples=[{"input_text": "i", "output_json": {"a": 1}}]
+    )
     assert [x["role"] for x in m] == ["system", "user", "assistant", "user"]
 
 
@@ -46,8 +51,6 @@ def test_slack_signature():
 
 
 def test_routing(tmp_path, monkeypatch):
-    from agentkit import config
-
     f = tmp_path / "r.yaml"
     f.write_text("default: dev\ntasks:\n  a.b: fast\n")
     monkeypatch.setenv("ROUTING_CONFIG", str(f))
@@ -64,7 +67,10 @@ def test_complete_retries_invalid_json(monkeypatch):
     replies = iter(["not json", '```json\n{"ok": true}\n```'])
 
     async def fake_post(payload, timeout):
-        return {"choices": [{"message": {"content": next(replies)}}], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
+        return {
+            "choices": [{"message": {"content": next(replies)}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+        }
 
     monkeypatch.setattr(llm, "_post", fake_post)
     r = asyncio.run(llm.complete("t", [{"role": "user", "content": "x"}], Out))

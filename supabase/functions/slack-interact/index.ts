@@ -9,8 +9,11 @@ async function verify(req: Request, body: string): Promise<boolean> {
   const sig = req.headers.get("x-slack-signature") ?? "";
   if (!ts || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false; // older than 5 min
   const key = await crypto.subtle.importKey(
-    "raw", enc.encode(Deno.env.get("SLACK_SIGNING_SECRET")!),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    "raw",
+    enc.encode(Deno.env.get("SLACK_SIGNING_SECRET")!),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
   );
   const mac = await crypto.subtle.sign("HMAC", key, enc.encode(`v0:${ts}:${body}`));
   const expected = "v0=" + [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -21,7 +24,10 @@ async function verify(req: Request, body: string): Promise<boolean> {
 }
 
 // action_id -> approval outcome, minimum role, and the workflow event fired on approve
-const ACTIONS: Record<string, { status: "approved" | "rejected"; kind: string; event?: string; role: string }> = {
+const ACTIONS: Record<
+  string,
+  { status: "approved" | "rejected"; kind: string; event?: string; role: string }
+> = {
   accept: { status: "approved", kind: "lead", event: "lead-accepted", role: "approver" },
   ignore: { status: "rejected", kind: "lead", role: "approver" },
   send_email: { status: "approved", kind: "email", event: "email-approved", role: "approver" },
@@ -52,7 +58,9 @@ Deno.serve(async (req) => {
 
   // Exactly-once: only succeeds while the approval is still pending and unexpired.
   const { data: decided, error } = await db.rpc("decide_approval", {
-    p_id: act.value, p_status: spec.status, p_by: slackUser,
+    p_id: act.value,
+    p_status: spec.status,
+    p_by: slackUser,
   });
   if (error) return new Response("error", { status: 500 });
   if (!decided?.id) {

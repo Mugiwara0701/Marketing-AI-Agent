@@ -73,8 +73,10 @@ def create_app(service: str, jobs: dict[str, JobFn]) -> FastAPI:
             return
         try:
             await fn(*args)
-        except Exception:  # noqa: BLE001
-            log.warning("agent_runs write failed", extra={"ctx": {"run_id": args[0] if args else None}})
+        except Exception:
+            log.warning(
+                "agent_runs write failed", extra={"ctx": {"run_id": args[0] if args else None}}
+            )
 
     async def _run(run_id: str, name: str, payload: dict) -> None:
         await _record(db.start_run, service, name, run_id)

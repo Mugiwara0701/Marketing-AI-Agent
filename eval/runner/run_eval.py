@@ -31,12 +31,17 @@ async def main() -> int:
 
     schema = _load_schema(a.schema)
     template, _ = await prompts.load(a.task, a.prompt_dir)
-    cases = [json.loads(x) for x in Path(a.set_file).read_text().splitlines() if x.strip()]
+    cases = [
+        json.loads(x)
+        for x in Path(a.set_file).read_text().splitlines()  # noqa: ASYNC240 - one-shot CLI
+        if x.strip()
+    ]
     correct = 0
     for i, case in enumerate(cases):
         msgs = prompts.build_messages(template, untrusted=case["input"])
         try:
-            got = (await llm.complete(a.task, msgs, schema)).parsed.model_dump()
+            parsed = (await llm.complete(a.task, msgs, schema)).parsed
+            got = parsed.model_dump() if parsed else {}
         except llm.LLMError:
             got = {}
         ok = all(got.get(k) == v for k, v in case["expected"].items())
@@ -44,7 +49,11 @@ async def main() -> int:
         if not ok:
             print(f"case {i}: expected {case['expected']} got {got}")
     acc = correct / len(cases) if cases else 0.0
-    print(json.dumps({"task": a.task, "model": llm.model_for(a.task), "cases": len(cases), "accuracy": acc}))
+    print(
+        json.dumps(
+            {"task": a.task, "model": llm.model_for(a.task), "cases": len(cases), "accuracy": acc}
+        )
+    )
     return 0 if acc >= a.min else 1
 
 

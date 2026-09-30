@@ -3,7 +3,13 @@
 import re
 
 BANNED_PHRASES = [
-    "guaranteed", "100% free", "act now", "limited time", "no obligation", "risk-free", "click here",
+    "guaranteed",
+    "100% free",
+    "act now",
+    "limited time",
+    "no obligation",
+    "risk-free",
+    "click here",
 ]
 
 
@@ -33,7 +39,9 @@ def check_label(label: str, allowed: set[str]) -> list[str]:
 
 def check_known_names(text: str, allowed: set[str]) -> list[str]:
     """Flag capitalised company-like names in a draft that are not in `allowed` (no invented clients)."""
-    found = set(re.findall(r"\b[A-Z][A-Za-z0-9]+(?:\s+(?:Inc|Ltd|LLC|GmbH|Corp|Pvt)\.?)\b", text or ""))
+    found = set(
+        re.findall(r"\b[A-Z][A-Za-z0-9]+(?:\s+(?:Inc|Ltd|LLC|GmbH|Corp|Pvt)\.?)\b", text or "")
+    )
     return [f"unknown company name: {n}" for n in sorted(found) if n not in allowed]
 
 

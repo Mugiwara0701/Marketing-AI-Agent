@@ -11,7 +11,7 @@ create table if not exists companies (
   country text,
   industry text,
   status text not null default 'candidate'
-    check (status in ('candidate','qualified','contact_found','verified','engaged','rejected','suppressed','closed')),
+    check (status in ('candidate', 'qualified', 'contact_found', 'verified', 'engaged', 'rejected', 'suppressed', 'closed')),
   fit_score numeric,
   fit_reason text,
   source text,
@@ -24,7 +24,7 @@ create index if not exists companies_status_idx on companies (status);
 
 create table if not exists lead_signals (
   id uuid primary key default gen_random_uuid(),
-  company_id uuid references companies(id) on delete cascade,
+  company_id uuid references companies (id) on delete cascade,
   kind text not null,                 -- job_post | github | alert_email | manual
   source_url text,
   raw_text text,
@@ -35,12 +35,12 @@ create table if not exists lead_signals (
 
 create table if not exists contacts (
   id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references companies(id) on delete cascade,
+  company_id uuid not null references companies (id) on delete cascade,
   name text,
   role text,
   email text,
   verification text not null default 'unverified'
-    check (verification in ('unverified','verified','invalid','manual')),
+    check (verification in ('unverified', 'verified', 'invalid', 'manual')),
   contact_form_url text,
   source_url text not null,           -- provenance is mandatory (compliance)
   collected_at timestamptz not null default now(),
@@ -59,11 +59,11 @@ create table if not exists campaigns (
 
 create table if not exists emails (
   id uuid primary key default gen_random_uuid(),
-  contact_id uuid not null references contacts(id) on delete cascade,
-  campaign_id uuid not null references campaigns(id),
+  contact_id uuid not null references contacts (id) on delete cascade,
+  campaign_id uuid not null references campaigns (id),
   step int not null default 1,
   status text not null default 'drafted'
-    check (status in ('drafted','approved','sending','sent','skipped','bounced','expired')),
+    check (status in ('drafted', 'approved', 'sending', 'sent', 'skipped', 'bounced', 'expired')),
   subject text,
   body text,
   mailbox text,
@@ -79,12 +79,12 @@ create index if not exists emails_status_idx on emails (status);
 
 create table if not exists replies (
   id uuid primary key default gen_random_uuid(),
-  email_id uuid references emails(id) on delete set null,
-  contact_id uuid references contacts(id) on delete set null,
+  email_id uuid references emails (id) on delete set null,
+  contact_id uuid references contacts (id) on delete set null,
   message_id text unique,
   in_reply_to text,
   status text not null default 'received'
-    check (status in ('received','classified','acknowledged','handled','unsubscribed')),
+    check (status in ('received', 'classified', 'acknowledged', 'handled', 'unsubscribed')),
   label text,                         -- interested | question | not_interested | ooo | bounce | unsubscribe
   body text,
   draft_response text,
@@ -98,7 +98,7 @@ create table if not exists topics (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   brief text,
-  status text not null default 'idea' check (status in ('idea','used','dropped')),
+  status text not null default 'idea' check (status in ('idea', 'used', 'dropped')),
   embedding vector(1024),
   embedding_model text,
   created_at timestamptz not null default now()
@@ -106,11 +106,11 @@ create table if not exists topics (
 
 create table if not exists content_posts (
   id uuid primary key default gen_random_uuid(),
-  topic_id uuid references topics(id),
+  topic_id uuid references topics (id),
   title text,
   body_md text,
   status text not null default 'idea'
-    check (status in ('idea','drafted','in_review','approved','published','rejected','publish_failed')),
+    check (status in ('idea', 'drafted', 'in_review', 'approved', 'published', 'rejected', 'publish_failed')),
   reviewer_note text,
   cms_url text,
   devto_url text,
@@ -131,16 +131,16 @@ create table if not exists team_members (
   name text not null,
   slack_user_id text unique,
   auth_user_id uuid unique,           -- Supabase Auth user, for the dashboard
-  role text not null default 'viewer' check (role in ('viewer','approver','admin')),
+  role text not null default 'viewer' check (role in ('viewer', 'approver', 'admin')),
   active boolean not null default true
 );
 
 -- Append-only: corrections are new rows.
 create table if not exists approvals (
   id uuid primary key default gen_random_uuid(),
-  kind text not null check (kind in ('lead','email','reply','post')),
+  kind text not null check (kind in ('lead', 'email', 'reply', 'post')),
   ref_id uuid not null,               -- companies / emails / replies / content_posts id
-  status text not null default 'pending' check (status in ('pending','approved','rejected','expired')),
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'expired')),
   slack_channel text,
   slack_ts text,
   decided_by text,                    -- slack user id
@@ -163,7 +163,7 @@ create table if not exists agent_runs (
   service text not null,
   job text not null,
   run_id text,
-  status text not null check (status in ('running','succeeded','failed','skipped')),
+  status text not null check (status in ('running', 'succeeded', 'failed', 'skipped')),
   items_processed int not null default 0,
   items_failed int not null default 0,
   tokens_in bigint not null default 0,

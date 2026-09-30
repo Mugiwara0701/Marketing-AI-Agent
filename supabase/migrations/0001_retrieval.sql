@@ -26,7 +26,7 @@ create table if not exists knowledge_docs (
 
 create table if not exists knowledge_chunks (
   id uuid primary key default gen_random_uuid(),
-  doc_id uuid not null references knowledge_docs(id) on delete cascade,
+  doc_id uuid not null references knowledge_docs (id) on delete cascade,
   chunk_index int not null,
   content text not null,
   embedding vector(1024),

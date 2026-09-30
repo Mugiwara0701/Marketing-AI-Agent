@@ -1,0 +1,14 @@
+extends: default
+ignore: |
+  .venv/
+  node_modules/
+rules:
+  document-start: disable
+  line-length: {max: 160, level: warning}
+  truthy: {check-keys: false}       # GitHub Actions uses `on:`
+  comments: {min-spaces-from-content: 1}
+  comments-indentation: disable
+  commas: {max-spaces-after: -1}   # aligned columns in scheduler/jobs.yaml
+  braces: {max-spaces-inside: 1}
+  brackets: {max-spaces-inside: 1}
+  indentation: {spaces: consistent, indent-sequences: consistent}

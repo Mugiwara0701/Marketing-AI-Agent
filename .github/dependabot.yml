@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: pip
+    directory: /libs/agentkit
+    schedule: {interval: weekly}
+  - package-ecosystem: pip
+    directory: /services/lead-service
+    schedule: {interval: weekly}
+  - package-ecosystem: pip
+    directory: /services/outreach-service
+    schedule: {interval: weekly}
+  - package-ecosystem: pip
+    directory: /services/content-service
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /services/lead-service
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /services/outreach-service
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /services/content-service
+    schedule: {interval: weekly}

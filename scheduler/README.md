@@ -4,6 +4,7 @@ Component 5: GitHub Actions and cron. Workflows in `.github/workflows/` call the
 `/jobs/*` endpoints over Tailscale via the reusable `_run-job.yml`. `jobs.yaml` documents the
 intended schedule.
 
+- The host and services run only in two windows (night 01:30-04:30 IST daily, day 09:00-17:00 IST weekdays). Each workflow waits up to 15 minutes for the host, then records a skipped run and exits; dispatch-triggered jobs are also swept in the next window.
 - Scheduled workflows only run when repository variable `SCHEDULES_ENABLED` is `true`.
 - GitHub schedules can be delayed or dropped, run only from the default branch, and are disabled
   after 60 days of repo inactivity (public repos). Jobs must be idempotent and safe to re-run.

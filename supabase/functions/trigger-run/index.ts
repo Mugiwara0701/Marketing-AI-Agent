@@ -4,8 +4,14 @@ import { db, dispatchGithub } from "../_shared/db.ts";
 
 // Only these service/job pairs can be started from outside (dashboard Start run, Slack Retry).
 const ALLOWED = new Set([
-  "lead/collect_sources", "lead/ingest_alerts", "lead/qualify", "lead/enrich_contacts",
-  "outreach/draft", "outreach/poll_replies", "content/plan_topics", "content/draft_post",
+  "lead/collect_sources",
+  "lead/ingest_alerts",
+  "lead/qualify",
+  "lead/enrich_contacts",
+  "outreach/draft",
+  "outreach/poll_replies",
+  "content/plan_topics",
+  "content/draft_post",
 ]);
 
 Deno.serve(async (req) => {

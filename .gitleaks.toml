@@ -1,0 +1,11 @@
+title = "marketing-agent gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Templates and generated docs contain no real secrets"
+paths = [
+  '''\.env\.example$''',
+  '''^docs/''',
+]

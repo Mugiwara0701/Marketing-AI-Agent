@@ -1,0 +1,3 @@
+failure-threshold: warning
+ignored:
+  - DL3013   # pip versions are constrained in pyproject.toml / requirements.txt

@@ -1,2 +1,45 @@
 line-length = 100
 target-version = "py311"
+extend-exclude = [".venv"]
+
+[lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes
+  "I",        # isort
+  "B",        # bugbear
+  "UP",       # pyupgrade
+  "S",        # bandit (security)
+  "ASYNC",    # async pitfalls
+  "SIM",      # simplifications
+  "C4",       # comprehensions
+  "PT",       # pytest style
+  "RUF",      # ruff-specific
+  "N",        # naming
+  "PL",       # pylint
+  "TRY",      # exception handling
+  "PERF",     # performance
+  "T20",      # no print()
+]
+ignore = [
+  "E501",     # line length is enforced by the formatter
+  "PLR2004",  # magic numbers are fine in thresholds/tests
+  "PLR0913",  # many keyword arguments are normal for llm/task helpers
+  "TRY003",   # long messages in exceptions
+  "TRY300",
+  "ASYNC109", # explicit timeout parameters are intentional
+]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["S101", "PT018"]   # assert is how pytest tests work
+"eval/runner/*" = ["T201"]          # CLI prints its report
+"libs/agentkit/agentkit/db.py" = ["PLW0603", "S608"]   # pool singleton; table name is validated
+"libs/agentkit/agentkit/llm.py" = ["PLW0603", "PLR0915"]
+"libs/agentkit/agentkit/jobs.py" = ["PLR0915"]   # create_app is one closure by design
+"libs/agentkit/agentkit/retrieve.py" = ["S608"]  # table is checked against an allow-list
+
+[lint.isort]
+known-first-party = ["agentkit", "app"]
+
+[format]
+quote-style = "double"

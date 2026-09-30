@@ -1,8 +1,10 @@
 import asyncio
+import time
 
 import pytest
-from agentkit import JobContext, create_app
 from fastapi.testclient import TestClient
+
+from agentkit import JobContext, create_app
 
 H = {"X-Job-Token": "secret"}
 
@@ -34,8 +36,6 @@ def client():
 
 
 def wait(c, run_id, tries=50):
-    import time
-
     for _ in range(tries):
         r = c.get(f"/runs/{run_id}", headers=H).json()
         if r["status"] != "running":

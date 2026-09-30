@@ -73,7 +73,7 @@ async def _post(payload: dict, timeout: float) -> dict:
             async with _semaphore(), httpx.AsyncClient(timeout=timeout) as c:
                 r = await c.post(f"{base}/v1/chat/completions", json=payload, headers=headers)
             if r.status_code >= 500:
-                raise LLMError(f"llm server {r.status_code}")
+                raise LLMError(f"llm server {r.status_code}")  # noqa: TRY301 - retried below
             r.raise_for_status()
             return r.json()
         except (httpx.TransportError, LLMError) as exc:
@@ -96,8 +96,12 @@ async def complete(
     model = model_for(task)
     if timeout is None:
         timeout = 30.0 if schema is not None else 120.0
-    payload: dict = {"model": model, "messages": list(messages), "temperature": temperature,
-                     "max_tokens": max_tokens}
+    payload: dict = {
+        "model": model,
+        "messages": list(messages),
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
     if schema is not None:
@@ -109,8 +113,12 @@ async def complete(
     error: str | None = None
     for attempt in range(2 if schema is not None else 1):
         if error:
-            payload["messages"] = list(messages) + [
-                {"role": "user", "content": f"Your last reply was invalid ({error}). Reply with valid JSON only."}
+            payload["messages"] = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": f"Your last reply was invalid ({error}). Reply with valid JSON only.",
+                },
             ]
         data = await _post(payload, timeout)
         usage = data.get("usage") or {}
@@ -123,7 +131,9 @@ async def complete(
             return Completion(text, schema.model_validate(_extract_json(text)), model, tin, tout)
         except (ValueError, ValidationError) as exc:
             error = type(exc).__name__
-            log.warning("invalid structured output", extra={"ctx": {"task": task, "attempt": attempt}})
+            log.warning(
+                "invalid structured output", extra={"ctx": {"task": task, "attempt": attempt}}
+            )
     raise LLMError(f"invalid structured output for {task}: {error}")
 
 
@@ -132,7 +142,9 @@ async def health() -> bool:
     base = env("LLM_BASE_URL", required=True).rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{base}/v1/models", headers={"Authorization": f"Bearer {env('LLM_API_KEY', '')}"})
+            r = await c.get(
+                f"{base}/v1/models", headers={"Authorization": f"Bearer {env('LLM_API_KEY', '')}"}
+            )
         return r.status_code == 200
     except httpx.HTTPError:
         return False

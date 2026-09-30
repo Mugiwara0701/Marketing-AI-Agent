@@ -1,0 +1,8 @@
+config:
+  extends: .markdownlint.yaml
+globs:
+  - "**/*.md"
+ignores:
+  - docs/**         # converted from Word, with embedded diagrams
+  - .venv/**
+  - node_modules/**

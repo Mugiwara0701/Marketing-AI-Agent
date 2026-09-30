@@ -15,5 +15,5 @@ python eval/runner/run_eval.py lead.qualify eval/sets/lead_qualify.jsonl service
     app.qualify:QualifyResult --min 0.85
 ```
 
-Sets are JSONL (`{"input": ..., "expected": {...}}`); the target sizes are 40 job posts, 40 replies and
-3 blog briefs. Labelled data must come from the team; none is committed yet.
+Sets are JSONL (`{"input": ..., "expected": {...}}`); start with 40 job posts and 40 replies, growing to the Playbook targets (qualify 100, extract 60,
+classify 80, 20 each of email, reply and blog drafts). Labelled data must come from the team; none is committed yet.

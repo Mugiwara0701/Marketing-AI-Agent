@@ -24,3 +24,10 @@ docker run --gpus all -p 8002:80 ghcr.io/huggingface/text-embeddings-inference:l
 
 Verify before relying on it: TEI's OpenAI-compatible route (`/v1/embeddings` vs `/embed`), the
 exact repo IDs marked TODO, and vLLM flags for your installed version.
+
+## Power and availability
+
+The host is not on 24/7. It powers on 30 minutes before each window (night 01:30-04:30 IST daily, day 09:00-17:00
+IST weekdays) and powers down after the window once no job is running. vLLM, the embedding server, Tailscale and
+the compose services start at boot (systemd / restart policies). Allow 10-15 minutes for the model to load;
+workflows wait for `/v1/models` before running jobs. Measure boot-to-ready time on the real GPU.

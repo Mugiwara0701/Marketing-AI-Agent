@@ -5,6 +5,7 @@ service's prompts directory. Untrusted text (scraped pages, emails, replies) is 
 data inside a delimited block; the model has no tools.
 """
 
+import json
 from pathlib import Path
 
 from . import db
@@ -24,7 +25,7 @@ async def load(task: str, fallback_dir: str | Path | None = None) -> tuple[str, 
         row = await db.fetchrow(
             "select template, version from prompt_versions where task=$1 and active", task
         )
-    except Exception:  # noqa: BLE001 - DB down or not configured: use the file
+    except Exception:
         row = None
     if row:
         return row["template"], row["version"]
@@ -35,11 +36,14 @@ async def load(task: str, fallback_dir: str | Path | None = None) -> tuple[str, 
     raise FileNotFoundError(f"no prompt for task {task}")
 
 
-def build_messages(template: str, *, untrusted: str = "", examples: list[dict] | None = None,
-                   context: list[dict] | None = None) -> list[dict]:
+def build_messages(
+    template: str,
+    *,
+    untrusted: str = "",
+    examples: list[dict] | None = None,
+    context: list[dict] | None = None,
+) -> list[dict]:
     """system = template; few-shot examples as user/assistant turns; untrusted data last."""
-    import json
-
     msgs: list[dict] = [{"role": "system", "content": template}]
     for ex in examples or []:
         msgs.append({"role": "user", "content": wrap_untrusted(ex["input_text"])})

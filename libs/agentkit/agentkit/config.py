@@ -3,10 +3,15 @@
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal, overload
 
 import yaml
 
 
+@overload
+def env(name: str, default: str | None = None, *, required: Literal[True]) -> str: ...
+@overload
+def env(name: str, default: str | None = None, required: bool = False) -> str | None: ...
 def env(name: str, default: str | None = None, required: bool = False) -> str | None:
     value = os.environ.get(name, default)
     if required and not value:
