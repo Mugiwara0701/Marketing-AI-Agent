@@ -91,7 +91,7 @@ jobs:
         service: [lead-service, outreach-service, content-service]
     steps:
       - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: services/${{ matrix.service }}/Dockerfile
           config: .hadolint.yaml
