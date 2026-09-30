@@ -8,7 +8,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || vars.SCHEDULES_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: tailscale/github-action@v2
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
