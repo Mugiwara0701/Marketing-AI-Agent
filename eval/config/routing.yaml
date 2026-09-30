@@ -1,0 +1,10 @@
+# task -> model alias (aliases defined in services/llm-service/config/models.yaml)
+default: dev
+tasks:
+  lead.qualify: dev
+  lead.extract_contact: dev
+  outreach.draft: dev
+  outreach.classify_reply: fast
+  outreach.draft_reply: dev
+  content.plan: dev
+  content.draft_post: primary

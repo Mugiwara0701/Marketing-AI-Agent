@@ -1,0 +1,13 @@
+# Source of truth for what runs when. Workflows in .github/workflows must match (times are Asia/Kolkata).
+jobs:
+  - {service: lead-service,     job: collect_sources,  when: "daily 02:07"}
+  - {service: lead-service,     job: ingest_alerts,    when: "daily 02:37"}
+  - {service: lead-service,     job: qualify,          when: "daily 03:07"}
+  - {service: lead-service,     job: enrich_contacts,  when: "daily 03:37"}
+  - {service: outreach-service, job: draft,            when: "weekdays 09:13"}
+  - {service: outreach-service, job: send,             when: "weekdays 11:13"}
+  - {service: outreach-service, job: poll_replies,     when: "every 2h weekdays"}
+  - {service: content-service,  job: plan_topics,      when: "mon 08:17"}
+  - {service: content-service,  job: draft_post,       when: "tue 08:17"}
+  - {service: content-service,  job: publish,          when: "thu 10:17"}
+  - {service: content-service,  job: collect_metrics,  when: "fri 18:17"}

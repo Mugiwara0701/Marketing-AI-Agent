@@ -1,0 +1,27 @@
+# Model registry for the self-hosted LLM host. Aliases are what services request (see config/routing.yaml).
+# Repo IDs marked TODO must be confirmed on Hugging Face before first download.
+llm:
+  server: vllm                      # OpenAI-compatible, port 8001
+  api_key_env: LLM_API_KEY
+  models:
+    dev:                            # default while building
+      repo: Qwen/Qwen3.5-9B
+      served_name: agent-dev
+      max_model_len: 16384
+    primary:
+      repo: TODO-confirm-Qwen3.8-27B-repo-id
+      served_name: agent-primary
+      max_model_len: 32768
+    fast:
+      repo: TODO-confirm-Qwen3.6-35B-A3B-repo-id
+      served_name: agent-fast
+      max_model_len: 16384
+  lora:                             # optional, only after fine-tuning gate; adapters share ONE base model
+    enabled: false
+    modules: []                     # e.g. ["lead-qualify=/adapters/lead-qualify"]
+    max_lora_rank: 32
+embeddings:
+  server: tei                       # or vllm embedding mode; verify route (/embed vs /v1/embeddings)
+  repo: Qwen/Qwen3-Embedding-0.6B   # 1024 dims, Apache 2.0
+  port: 8002
+  dimensions: 1024
