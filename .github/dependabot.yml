@@ -1,26 +1,25 @@
+# One combined PR per ecosystem per week (Dependabot cannot merge different ecosystems into a single PR).
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
+    groups:
+      actions: {patterns: ["*"]}
   - package-ecosystem: pip
-    directory: /libs/agentkit
+    directories:
+      - /libs/agentkit
+      - /services/lead-service
+      - /services/outreach-service
+      - /services/content-service
     schedule: {interval: weekly}
-  - package-ecosystem: pip
-    directory: /services/lead-service
-    schedule: {interval: weekly}
-  - package-ecosystem: pip
-    directory: /services/outreach-service
-    schedule: {interval: weekly}
-  - package-ecosystem: pip
-    directory: /services/content-service
-    schedule: {interval: weekly}
+    groups:
+      python-deps: {patterns: ["*"]}
   - package-ecosystem: docker
-    directory: /services/lead-service
+    directories:
+      - /services/lead-service
+      - /services/outreach-service
+      - /services/content-service
     schedule: {interval: weekly}
-  - package-ecosystem: docker
-    directory: /services/outreach-service
-    schedule: {interval: weekly}
-  - package-ecosystem: docker
-    directory: /services/content-service
-    schedule: {interval: weekly}
+    groups:
+      docker-images: {patterns: ["*"]}
