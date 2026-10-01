@@ -1,0 +1,12 @@
+[Unit]
+Description=AOSP marketing agent: one bounded daily run (leads + blog)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Marketing-AI-Agent
+ExecStart=%h/Marketing-AI-Agent/deploy/run-daily.sh
+# Hard stop slightly above AGENT_MAX_MINUTES (default 120) so a hung run cannot go on.
+TimeoutStartSec=135min
+Nice=10

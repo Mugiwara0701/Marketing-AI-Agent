@@ -23,10 +23,16 @@ async def run_task(
     use_examples: bool = True,
     use_knowledge: bool = False,
     validate: Callable[[llm.Completion], list[str]] | None = None,
+    template_vars: dict[str, str] | None = None,
+    feedback: str | None = None,
     **llm_kwargs,
 ) -> tuple[llm.Completion, list[str]]:
     """Returns (completion, problems). Empty problems = passed checks; otherwise mark needs_review."""
     template, version = await prompts.load(task, prompt_dir)
+    for key, value in (
+        template_vars or {}
+    ).items():  # trusted values only: {{KEY}} in the prompt file
+        template = template.replace("{{" + key + "}}", value)
     examples: list[dict] = []
     chunks: list[dict] = []
     try:  # retrieval is an enhancement: if the DB or embedder is down, run the prompt without it
@@ -37,6 +43,8 @@ async def run_task(
     except Exception:
         log.warning("retrieval unavailable, continuing without it", extra={"ctx": {"task": task}})
     msgs = prompts.build_messages(template, untrusted=untrusted, examples=examples, context=chunks)
+    if feedback:  # repair attempt: tell the model what was wrong with its previous output
+        msgs.append({"role": "user", "content": feedback})
     result = await llm.complete(task, msgs, schema, **llm_kwargs)
     problems = validate(result) if validate else []
     try:

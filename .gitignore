@@ -219,3 +219,7 @@ __marimo__/
 
 # LLM host secrets
 services/llm-service/llm.env
+
+# dry-run reports
+out/
+.cache/

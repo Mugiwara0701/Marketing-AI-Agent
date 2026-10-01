@@ -34,7 +34,4 @@ jobs:
         with: {python-version: "3.12", cache: pip}
       - run: pip install pip-audit
       - run: |
-          pip-audit -r services/lead-service/requirements.txt
-          pip-audit -r services/outreach-service/requirements.txt
-          pip-audit -r services/content-service/requirements.txt
           pip-audit ./libs/agentkit

@@ -1,6 +1,6 @@
 # agentkit
 
-Shared library used by lead-, outreach- and content-service.
+Shared library used by the daily agent (`agent/`).
 
 - `jobs.py`: `create_app(service, jobs)` builds the FastAPI app with the job contract
   (`/health`, `POST /jobs/{name}` -> 202 + run_id, `GET /runs/{id}`), token auth via `JOB_TOKEN`,

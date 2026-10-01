@@ -3,6 +3,7 @@
 import hashlib
 import json
 from typing import Any
+from urllib.parse import unquote
 
 import asyncpg
 
@@ -11,12 +12,35 @@ from .config import env
 _pool: asyncpg.Pool | None = None
 
 
+def parse_dsn(url: str) -> dict[str, Any]:
+    """Split postgresql://user:password@host:port/db into connect kwargs.
+
+    Splits on the LAST '@' and the FIRST ':' so a password containing '@', '?', '#' or '/' works
+    without URL-encoding (Supabase generates such passwords). Query options are ignored.
+    """
+    rest = url.split("://", 1)[-1]
+    creds, _, hostpart = rest.rpartition("@")
+    user, _, password = creds.partition(":")
+    hostport, _, dbname = hostpart.partition("/")
+    host, _, port = hostport.partition(":")
+    return {
+        "host": host,
+        "port": int(port or 5432),
+        "user": unquote(user),
+        "password": unquote(password),
+        "database": dbname.split("?", 1)[0] or "postgres",
+    }
+
+
 async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         # statement_cache_size=0: required behind pgbouncer/Supabase transaction pooler.
         _pool = await asyncpg.create_pool(
-            env("DATABASE_URL", required=True), min_size=1, max_size=5, statement_cache_size=0
+            **parse_dsn(env("DATABASE_URL", required=True)),
+            min_size=1,
+            max_size=5,
+            statement_cache_size=0,
         )
     return _pool
 

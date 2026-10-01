@@ -1,6 +1,6 @@
-// Slack interactivity URL. Verifies the signature, checks the allow-list, decides the approval
-// exactly once, then dispatches the next workflow. Must answer Slack within 3 seconds.
-import { db, dispatchGithub } from "../_shared/db.ts";
+// Slack interactivity endpoint (Request URL). Verifies Slack's signature, checks who clicked, records the
+// decision exactly once by updating the email / blog post row (no Slack data is stored). Must answer Slack within 3 seconds.
+import { db } from "../_shared/db.ts";
 
 const enc = new TextEncoder();
 
@@ -23,21 +23,40 @@ async function verify(req: Request, body: string): Promise<boolean> {
   return diff === 0;
 }
 
-// action_id -> approval outcome, minimum role, and the workflow event fired on approve
+// action_id -> what it means. `table`/`from`/`to` is the state change applied to the referenced row.
 const ACTIONS: Record<
   string,
-  { status: "approved" | "rejected"; kind: string; event?: string; role: string }
+  { kind: "email" | "post"; status: "approved" | "rejected"; table: string; from: string[]; to: string }
 > = {
-  accept: { status: "approved", kind: "lead", event: "lead-accepted", role: "approver" },
-  ignore: { status: "rejected", kind: "lead", role: "approver" },
-  send_email: { status: "approved", kind: "email", event: "email-approved", role: "approver" },
-  skip_email: { status: "rejected", kind: "email", role: "approver" },
-  send_reply: { status: "approved", kind: "reply", event: "reply-approved", role: "approver" },
-  skip_reply: { status: "rejected", kind: "reply", role: "approver" },
-  approve_post: { status: "approved", kind: "post", event: "post-approved", role: "approver" },
-  request_changes: { status: "rejected", kind: "post", role: "approver" },
+  approve_email: { kind: "email", status: "approved", table: "emails", from: ["drafted"], to: "approved" },
+  skip_email: { kind: "email", status: "rejected", table: "emails", from: ["drafted"], to: "skipped" },
+  approve_post: {
+    kind: "post",
+    status: "approved",
+    table: "content_posts",
+    from: ["drafted", "in_review"],
+    to: "approved",
+  },
+  reject_post: {
+    kind: "post",
+    status: "rejected",
+    table: "content_posts",
+    from: ["drafted", "in_review"],
+    to: "rejected",
+  },
 };
-const RANK: Record<string, number> = { viewer: 0, approver: 1, admin: 2 };
+
+// Who may decide: Slack user ids in SLACK_ALLOWED_USERS (comma separated), or active approver/admin rows
+// in team_members.
+async function allowed(slackUser: string): Promise<string | null> {
+  const list = (Deno.env.get("SLACK_ALLOWED_USERS") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (list.includes(slackUser)) return slackUser;
+  const { data } = await db.from("team_members").select("name, role, active").eq("slack_user_id", slackUser)
+    .maybeSingle();
+  return data?.active && ["approver", "admin"].includes(data.role) ? data.name : null;
+}
+
+const ephemeral = (text: string) => Response.json({ response_type: "ephemeral", text });
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
@@ -49,40 +68,25 @@ Deno.serve(async (req) => {
   const spec = act && ACTIONS[act.action_id];
   if (!spec) return new Response("", { status: 200 }); // unknown action: ignore
 
-  const slackUser: string = payload.user?.id;
-  const { data: member } = await db.from("team_members").select("name, role, active")
-    .eq("slack_user_id", slackUser).maybeSingle();
-  if (!member?.active || RANK[member.role] < RANK[spec.role]) {
-    return Response.json({ response_type: "ephemeral", text: "You are not allowed to do that." });
-  }
+  const who = await allowed(payload.user?.id ?? "");
+  if (!who) return ephemeral("You are not allowed to approve. Ask an admin to add your Slack user id.");
 
-  // Exactly-once: only succeeds while the approval is still pending and unexpired.
-  const { data: decided, error } = await db.rpc("decide_approval", {
-    p_id: act.value,
-    p_status: spec.status,
-    p_by: slackUser,
-  });
+  // Button value is "<kind>:<row id>". Nothing about Slack is stored: the decision is written onto the row.
+  const [kind, refId] = String(act.value ?? "").split(":");
+  if (kind !== spec.kind || !/^[0-9a-f-]{36}$/.test(refId ?? "")) return new Response("bad value", { status: 400 });
+
+  // Exactly once: the update only matches while the row is still undecided.
+  const { data: changed, error } = await db.from(spec.table).update({ status: spec.to })
+    .eq("id", refId).in("status", spec.from).select("id");
   if (error) return new Response("error", { status: 500 });
-  if (!decided?.id) {
-    return Response.json({ response_type: "ephemeral", text: "Already decided or expired." });
-  }
-  if (decided.kind !== spec.kind) return new Response("kind mismatch", { status: 400 });
+  if (!changed?.length) return ephemeral("Already decided.");
 
-  if (spec.event && spec.status === "approved") {
-    try {
-      await dispatchGithub(spec.event, { approval_id: decided.id, ref_id: decided.ref_id });
-    } catch (_) {
-      // Decision is recorded; the daily sweep and the Retry button pick it up.
-    }
-  }
-
-  // Replace buttons with the outcome.
   const verb = spec.status === "approved" ? "Approved" : "Rejected";
   if (payload.response_url) {
     fetch(payload.response_url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ replace_original: true, text: `${verb} by ${member.name}` }),
+      body: JSON.stringify({ replace_original: true, text: `${verb} by ${who}` }),
     }).catch(() => {});
   }
   return new Response("", { status: 200 });

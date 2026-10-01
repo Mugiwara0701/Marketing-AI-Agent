@@ -5,7 +5,6 @@ tasks:
   lead.qualify: dev
   lead.extract_contact: dev
   outreach.draft: dev
-  outreach.classify_reply: dev
-  outreach.draft_reply: dev
   content.plan: dev
+  content.adapt: dev
   content.draft_post: dev

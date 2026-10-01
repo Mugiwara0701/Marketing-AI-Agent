@@ -1,0 +1,11 @@
+[Unit]
+Description=Start the AOSP marketing agent once per day
+
+[Timer]
+# Local time of the office machine. Persistent: if the machine was off at 09:30, run at next boot.
+OnCalendar=*-*-* 09:30:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

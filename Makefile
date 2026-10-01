@@ -1,38 +1,35 @@
-.PHONY: llm-verify install test lint format typecheck check up down health
+.PHONY: llm-verify install test lint format typecheck check run demo
 
 install:
-	pip install -e "libs/agentkit[dev]" ruff mypy types-PyYAML yamllint sqlfluff shellcheck-py actionlint-py pre-commit
+	pip install -r requirements-dev.txt yamllint sqlfluff shellcheck-py actionlint-py pre-commit
 
 test:
-	pytest libs/agentkit
-	for s in lead outreach content; do (cd services/$$s-service && python -m pytest tests -q) || exit 1; done
+	pytest libs/agentkit agent
 
 lint:
 	ruff check .
 	ruff format --check .
 	yamllint --strict -c .yamllint.yaml .
 	sqlfluff lint supabase/migrations
-	shellcheck scheduler/scripts/*.sh
+	shellcheck deploy/*.sh
 
 format:
 	ruff format .
 	ruff check --fix .
 
 typecheck:
-	mypy libs/agentkit/agentkit eval/runner
-	for s in lead outreach content; do (cd services/$$s-service && mypy --config-file ../../mypy.ini app) || exit 1; done
+	mypy libs/agentkit/agentkit eval/runner agent
 
 # everything CI runs (deno, hadolint, actionlint and markdownlint run in CI only)
 check: lint typecheck test
 
-up:
-	docker compose up --build -d
+# Check setup, run the whole pipeline once for real, print the results
+demo:
+	python -m agent demo
 
-down:
-	docker compose down
-
-health:
-	for p in 8101 8102 8103; do curl -fsS localhost:$$p/health; echo; done
+# One bounded daily run (send approved emails -> leads -> blog). Normally started by the systemd timer.
+run:
+	python -m agent run
 
 # Verify a running LLM host: LLM_BASE_URL, LLM_API_KEY (and EMBED_BASE_URL) must be set
 llm-verify:

@@ -11,9 +11,9 @@ Design documents (Claude Docs):
 ## Running an eval
 
 ```bash
-python eval/runner/run_eval.py lead.qualify eval/sets/lead_qualify.jsonl services/lead-service/app/prompts \
-    app.qualify:QualifyResult --min 0.85
+PYTHONPATH=. python eval/runner/run_eval.py lead.qualify eval/sets/lead_qualify.jsonl agent/prompts \
+    agent.tasks.qualify:QualifyResult --min 0.85
 ```
 
-Sets are JSONL (`{"input": ..., "expected": {...}}`); start with 40 job posts and 40 replies, growing to the Playbook targets (qualify 100, extract 60,
-classify 80, 20 each of email, reply and blog drafts). Labelled data must come from the team; none is committed yet.
+Sets are JSONL (`{"input": ..., "expected": {...}}`); start with 40 listings (job/project posts, company pages), growing to the Playbook targets (qualify 100, extract 60,
+20 each of email and blog drafts). Labelled data must come from the team; none is committed yet.

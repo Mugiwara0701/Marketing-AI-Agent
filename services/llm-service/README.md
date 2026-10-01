@@ -28,10 +28,10 @@ make llm-verify        # or: bash services/llm-service/scripts/verify.sh
 ```
 
 It checks reachability, a plain reply, a schema-constrained reply, embeddings (1024 dims), accuracy on the labelled
-synthetic sets (`lead.qualify`, `lead.extract_contact`, `outreach.classify_reply`, threshold 0.85) and the generative
-tasks (`outreach.draft`, `outreach.draft_reply`, `content.plan`, `content.draft_post`) against length and banned-phrase
+synthetic sets (`lead.qualify`, `lead.extract_contact`, threshold 0.85) and the generative
+tasks (`outreach.draft`, `content.plan`, `content.draft_post`) against length and banned-phrase
 checks. Any failure exits non-zero. Read the failing cases it prints, then adjust the prompt in
-`services/*/app/prompts/*.txt`. Generated text still needs a human read; the checks catch format problems only.
+`agent/prompts/*.txt`. Generated text still needs a human read; the checks catch format problems only.
 
 ## Start manually (alternative)
 
@@ -68,8 +68,8 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 ollama cp qwen3:4b-instruct-2507-q4_K_M agent-dev      # routing alias "dev" -> agent-dev
 export LLM_BASE_URL=http://127.0.0.1:11434 LLM_API_KEY=local ROUTING_CONFIG=config/routing.yaml
 python eval/runner/smoke.py                              # health, plain, structured reply
-cd services/lead-service && python ../../eval/runner/run_eval.py lead.qualify \
-    ../../eval/sets/lead_qualify.jsonl app/prompts app.qualify:QualifyResult --min 0.85
+PYTHONPATH=. python eval/runner/run_eval.py lead.qualify \
+    eval/sets/lead_qualify.jsonl agent/prompts agent.tasks.qualify:QualifyResult --min 0.85
 ```
 
 `eval/sets/lead_qualify.jsonl` is a small synthetic seed set for plumbing checks only; replace it with team-labelled

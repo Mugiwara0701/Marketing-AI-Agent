@@ -8,6 +8,7 @@ set -euo pipefail
 : "${LLM_API_KEY:?set LLM_API_KEY}"
 export ROUTING_CONFIG="${ROUTING_CONFIG:-config/routing.yaml}"
 PY="${PYTHON:-python}"
+export PYTHONPATH="${PYTHONPATH:-.}"
 
 echo "== waiting for ${LLM_BASE_URL}/v1/models (model load can take 10-15 min)"
 for _ in $(seq 1 90); do
@@ -28,12 +29,11 @@ fi
 
 echo "== eval: labelled tasks (synthetic seed sets)"
 fail=0
-run_eval() { # task set service schema min
-  (cd "services/$3" && "$PY" ../../eval/runner/run_eval.py "$1" "../../eval/sets/$2.jsonl" app/prompts "$4" --min "$5") || fail=1
+run_eval() { # task set schema min
+  "$PY" eval/runner/run_eval.py "$1" "eval/sets/$2.jsonl" agent/prompts "$3" --min "$4" || fail=1
 }
-run_eval lead.qualify lead_qualify lead-service app.qualify:QualifyResult 0.85
-run_eval lead.extract_contact lead_extract_contact lead-service app.enrich:ContactResult 0.85
-run_eval outreach.classify_reply outreach_classify_reply outreach-service app.replies:ReplyClass 0.85
+run_eval lead.qualify lead_qualify agent.tasks.qualify:QualifyResult 0.85
+run_eval lead.extract_contact lead_extract_contact agent.tasks.contact:ContactResult 0.85
 
 echo "== drafts: schema, length, banned phrases"
 "$PY" eval/runner/draft_check.py || fail=1

@@ -1,5 +1,5 @@
 # Static checks on every pull request and push to main. Rules live in the config files at the repo root
-# (ruff.toml, mypy.ini, .sqlfluff, .yamllint.yaml, .hadolint.yaml, deno.json, .markdownlint.yaml).
+# (ruff.toml, mypy.ini, .sqlfluff, .yamllint.yaml, deno.json, .markdownlint.yaml).
 # The same checks run locally through .pre-commit-config.yaml and `make lint`.
 name: lint
 on:
@@ -34,12 +34,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: pip install -e "libs/agentkit[dev]" mypy types-PyYAML
-      - run: mypy libs/agentkit/agentkit eval/runner
-      # each service has its own top-level `app` package, so they are checked one by one
-      - run: |
-          for s in lead outreach content; do
-            (cd "services/$s-service" && mypy --config-file ../../mypy.ini app)
-          done
+      - run: mypy libs/agentkit/agentkit eval/runner agent
 
   sql:
     name: sql (sqlfluff)
@@ -63,14 +58,6 @@ jobs:
       - run: pip install yamllint
       - run: yamllint --strict -c .yamllint.yaml .
 
-  shell:
-    name: shell (shellcheck)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - run: shellcheck scheduler/scripts/*.sh
-
   workflows:
     name: github workflows (actionlint)
     runs-on: ubuntu-latest
@@ -81,20 +68,6 @@ jobs:
         with: {python-version: "3.12", cache: pip}
       - run: pip install actionlint-py
       - run: actionlint
-
-  dockerfiles:
-    name: dockerfiles (hadolint)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    strategy:
-      matrix:
-        service: [lead-service, outreach-service, content-service]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: services/${{ matrix.service }}/Dockerfile
-          config: .hadolint.yaml
 
   typescript:
     name: edge functions (deno)
