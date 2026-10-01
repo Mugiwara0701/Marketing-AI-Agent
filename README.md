@@ -50,7 +50,7 @@ One run per job at a time (409). Jobs must be idempotent: schedules can be delay
 Infrastructure is in place: job contract, `.github/workflows/`, `config/`, migrations `0001` (retrieval)
 and `0002` (core schema), Supabase Edge Functions (`slack-interact`, `unsubscribe`, `trigger-run`), and the
 agentkit modules (db, llm, embed, retrieve, prompts, task_runner, checks, learn, redact, slack).
-Job functions are still stubs (`NotImplementedError`) and the dashboard is not built.
+LLM layer is implemented for all seven routed tasks (schemas, prompts, checks in each service's `app/`); verify a GPU host with `make llm-verify`. Job functions are still stubs (`NotImplementedError`) and the dashboard is not built.
 Migrations and Edge Functions are syntax-checked only, not yet run against a live Supabase project. Scheduled workflows run only when repo variable
 `SCHEDULES_ENABLED=true`.
 

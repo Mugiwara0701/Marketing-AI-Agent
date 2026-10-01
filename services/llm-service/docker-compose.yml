@@ -1,0 +1,55 @@
+# LLM host stack: vLLM (chat) + TEI (embeddings). Run on the GPU machine:
+#   cd services/llm-service && cp llm.env.example llm.env && docker compose --env-file llm.env up -d
+# Ports bind to BIND_IP (set it to the machine's Tailscale IP). Never bind to a public interface.
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    ipc: host
+    command:
+      - --model
+      - ${DEV_MODEL:-Qwen/Qwen3.5-9B}
+      - --served-model-name
+      - agent-dev
+      - --max-model-len
+      - ${MAX_MODEL_LEN:-16384}
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_UTIL:-0.80}
+      - --api-key
+      - ${LLM_API_KEY:?set LLM_API_KEY in llm.env}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    ports: ["${BIND_IP:-127.0.0.1}:8001:8001"]
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-H", "Authorization: Bearer ${LLM_API_KEY}", "http://localhost:8001/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 600s
+
+  embeddings:
+    # GPU-specific tags exist (see the TEI docs); "latest" targets recent NVIDIA GPUs.
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:latest}
+    restart: unless-stopped
+    command: ["--model-id", "${EMBED_MODEL:-Qwen/Qwen3-Embedding-0.6B}", "--api-key", "${LLM_API_KEY}"]
+    ports: ["${BIND_IP:-127.0.0.1}:8002:80"]
+    volumes:
+      - tei-cache:/data
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+
+volumes:
+  hf-cache:
+  tei-cache:

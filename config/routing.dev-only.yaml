@@ -1,0 +1,11 @@
+# Routes every task to the single "dev" model. Use while only agent-dev is served (first tests on a new machine):
+#   ROUTING_CONFIG=config/routing.dev-only.yaml
+default: dev
+tasks:
+  lead.qualify: dev
+  lead.extract_contact: dev
+  outreach.draft: dev
+  outreach.classify_reply: dev
+  outreach.draft_reply: dev
+  content.plan: dev
+  content.draft_post: dev
