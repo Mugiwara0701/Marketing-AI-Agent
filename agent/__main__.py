@@ -1,0 +1,137 @@
+"""CLI: python -m agent run | dryrun | send | review | approve | reject."""
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+
+from agentkit import db
+
+
+async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
+    ap = argparse.ArgumentParser(prog="agent", description="Daily AOSP/embedded lead + blog agent")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run", help="one bounded daily run (send approved -> leads -> blog)")
+    r.add_argument("--only", choices=["send", "leads", "blog"])
+    r.add_argument("--force", action="store_true", help="run even if today's run already succeeded")
+    r.add_argument(
+        "--redo-blog",
+        action="store_true",
+        help="DELETE today's saved blog post (and its platform versions), then write a new one",
+    )
+    d = sub.add_parser(
+        "dryrun", help="live scraping + real LLM, no database, no email; writes out/*.md"
+    )
+    d.add_argument("--leads", type=int, default=3)
+    d.add_argument("--signals", type=int, default=40)
+    d.add_argument("--no-blog", action="store_true")
+    d.add_argument(
+        "--blog-only",
+        action="store_true",
+        help="skip lead search; research, write and adapt one post",
+    )
+    sub.add_parser("migrate", help="apply supabase/migrations/*.sql to DATABASE_URL (idempotent)")
+    sub.add_parser(
+        "notify", help="post unreviewed drafts to Slack (done automatically after each run)"
+    )
+    sub.add_parser(
+        "slack-setup",
+        help="create the Slack channels and invite approvers (needs extra bot scopes)",
+    )
+    vp = sub.add_parser(
+        "variants", help="print the per-platform versions of a blog post (default: latest)"
+    )
+    vp.add_argument("post_id", nargs="?")
+    sub.add_parser("check", help="preflight: LLM, database, Slack, search, email switch")
+    dm = sub.add_parser(
+        "demo", help="check -> migrate -> full run -> Slack -> print what was produced"
+    )
+    dm.add_argument(
+        "--no-run", action="store_true", help="only the checks and the summary of existing data"
+    )
+    sub.add_parser("send", help="send approved emails now")
+    sub.add_parser("review", help="list drafted emails awaiting approval")
+    s = sub.add_parser("show", help="show one draft in full")
+    s.add_argument("id")
+    for name in ("approve", "reject"):
+        p = sub.add_parser(name)
+        p.add_argument("ids", nargs="*")
+        p.add_argument("--all", action="store_true", help="every drafted email")
+    a = ap.parse_args(argv)
+
+    try:
+        if a.cmd not in ("dryrun", "check", "slack-setup") and not os.environ.get("DATABASE_URL"):
+            print(  # noqa: T201
+                f"'{a.cmd}' needs a database: set DATABASE_URL in .env (see README), "
+                "or use `python -m agent dryrun`, which needs none."
+            )
+            return 2
+        if a.cmd == "run":
+            from . import run  # noqa: PLC0415
+
+            result = await run.daily_run(force=a.force, only=a.only, redo_blog=a.redo_blog)
+            print(json.dumps(result, default=str))  # noqa: T201
+        elif a.cmd == "dryrun":
+            from . import dryrun  # noqa: PLC0415
+
+            print(f"report: {await dryrun.run(a.leads, a.signals, not a.no_blog, not a.blog_only)}")  # noqa: T201
+        elif a.cmd == "migrate":
+            from . import migrate  # noqa: PLC0415
+
+            print(f"applied: {await migrate.apply() or 'nothing new'}")  # noqa: T201
+        elif a.cmd == "slack-setup":
+            from . import slack_setup  # noqa: PLC0415
+
+            print("\n".join(await slack_setup.run()))  # noqa: T201
+        elif a.cmd == "variants":
+            rows = await db.fetch(
+                """select p.title, v.platform, v.body, v.review_note from content_variants v
+                     join content_posts p on p.id=v.post_id
+                    where p.id = coalesce($1::uuid, (select id from content_posts order by created_at desc limit 1))
+                    order by v.platform""",
+                a.post_id,
+            )
+            for r in rows:
+                note = f"  CHECKS: {r['review_note']}" if r["review_note"] else ""
+                print(f"\n===== {r['platform']}  (post: {r['title']}){note}\n{r['body']}")  # noqa: T201
+            if not rows:
+                print("no variants found")  # noqa: T201
+        elif a.cmd == "check":
+            from . import demo  # noqa: PLC0415
+
+            return 0 if await demo.preflight() else 1
+        elif a.cmd == "demo":
+            from . import demo  # noqa: PLC0415
+
+            return await demo.run(execute=not a.no_run)
+        elif a.cmd == "notify":
+            from . import notify  # noqa: PLC0415
+
+            print(json.dumps(await notify.sweep()))  # noqa: T201
+        elif a.cmd == "send":
+            from . import mailer  # noqa: PLC0415
+
+            print(json.dumps(await mailer.send_approved()))  # noqa: T201
+        else:
+            from . import review  # noqa: PLC0415
+
+            if a.cmd == "review":
+                for d in await review.list_drafts():
+                    flag = f"  [CHECK: {d['review_note']}]" if d["review_note"] else ""
+                    print(f"{d['id']}  {d['company']} <{d['email']}>  {d['subject']}{flag}")  # noqa: T201
+            elif a.cmd == "show":
+                d = await review.show(a.id)
+                print(dict(d) if d else "not found")  # noqa: T201
+                if d:
+                    print(f"\n{d['subject']}\n\n{d['body']}")  # noqa: T201
+            else:
+                ids = [str(d["id"]) for d in await review.list_drafts()] if a.all else a.ids
+                print(f"{await review.decide(ids, a.cmd == 'approve')} {a.cmd}d")  # noqa: T201
+    finally:
+        await db.close_pool()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(_main(sys.argv[1:])))

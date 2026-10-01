@@ -9,7 +9,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -54,14 +54,35 @@ def _semaphore() -> asyncio.Semaphore:
 
 
 def _extract_json(text: str) -> dict:
-    """Parse JSON from a model reply, tolerating code fences and surrounding prose."""
-    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    """Parse JSON from a model reply, tolerating code fences and surrounding prose.
+
+    The whole reply is tried first: a blog body inside the JSON may itself contain ``` fences.
+    """
+    try:
+        whole = json.loads(text.strip())
+        if isinstance(whole, dict):
+            return whole
+    except ValueError:
+        pass
+    m = re.match(r"\s*```(?:json)?\s*(.*?)\s*```\s*$", text, re.DOTALL)  # fence around everything
     if m:
         text = m.group(1)
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
         raise ValueError("no JSON object in reply")
     return json.loads(text[start : end + 1])
+
+
+def _server_schema(schema: Any) -> Any:
+    """JSON schema for the server's constrained decoding. Length bounds are dropped: some servers
+    (Ollama/llama.cpp) fail to build a grammar from them. pydantic still enforces them on the reply."""
+    if isinstance(schema, dict):
+        return {
+            k: _server_schema(v) for k, v in schema.items() if k not in ("minLength", "maxLength")
+        }
+    if isinstance(schema, list):
+        return [_server_schema(v) for v in schema]
+    return schema
 
 
 async def _post(payload: dict, timeout: float) -> dict:
@@ -74,7 +95,10 @@ async def _post(payload: dict, timeout: float) -> dict:
                 r = await c.post(f"{base}/v1/chat/completions", json=payload, headers=headers)
             if r.status_code >= 500:
                 raise LLMError(f"llm server {r.status_code}")  # noqa: TRY301 - retried below
-            r.raise_for_status()
+            if r.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    f"{r.status_code}: {r.text[:300]}", request=r.request, response=r
+                )
             return r.json()
         except (httpx.TransportError, LLMError) as exc:
             last = exc
@@ -107,7 +131,10 @@ async def complete(
     if schema is not None:
         payload["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()},
+            "json_schema": {
+                "name": schema.__name__,
+                "schema": _server_schema(schema.model_json_schema()),
+            },
         }
     tin = tout = 0
     error: str | None = None

@@ -1,13 +1,15 @@
 import asyncio
 import hashlib
 import hmac
+import json
+import os
 import time
 
 import pytest
 from pydantic import BaseModel
 
 from agentkit import checks, config, llm, prompts, redact, retrieve, slack, task_runner
-from agentkit.db import email_hash, vec
+from agentkit.db import email_hash, parse_dsn, vec
 
 
 def test_redact():
@@ -107,3 +109,35 @@ def test_run_task_survives_retrieval_failure(monkeypatch, tmp_path):
         task_runner.run_task("t.x", "hi", prompt_dir=tmp_path, use_knowledge=True)
     )
     assert result.model == "agent-dev" and problems == []
+
+
+def test_load_dotenv(tmp_path, monkeypatch):
+    f = tmp_path / ".env"
+    f.write_text("# c\nA_KEY=http://x:1  # note\nB_KEY='q v'\nEMPTY=\nC_KEY=from_file\n")
+    monkeypatch.setenv("C_KEY", "from_shell")
+    monkeypatch.delenv("A_KEY", raising=False)
+    config.load_dotenv(f)
+    assert os.environ["A_KEY"] == "http://x:1" and os.environ["B_KEY"] == "q v"
+    assert os.environ["EMPTY"] == "" and os.environ["C_KEY"] == "from_shell"
+
+
+def test_parse_dsn_with_special_characters():
+    d = parse_dsn("postgresql://postgres:pa?ss@w/rd#1@db.abc.supabase.co:5432/postgres")
+    assert d["host"] == "db.abc.supabase.co" and d["port"] == 5432 and d["user"] == "postgres"
+    assert d["password"] == "pa?ss@w/rd#1" and d["database"] == "postgres"  # noqa: S105
+    assert parse_dsn("postgresql://u.ref:p%40x@h:6543/postgres")["password"] == "p@x"  # noqa: S105
+
+
+def test_extract_json_with_code_fences_inside_value():
+    body = "intro\n```bash\nls\n```\nend"
+    assert llm._extract_json(json.dumps({"body": body}))["body"] == body
+    assert llm._extract_json('```json\n{"a": 1}\n```') == {"a": 1}
+    assert llm._extract_json('Sure! {"a": 2} hope that helps') == {"a": 2}
+
+
+def test_server_schema_drops_length_bounds_only():
+    out = llm._server_schema({"properties": {"a": {"type": "string", "minLength": 3, "maxLength": 9},
+                                             "b": {"type": "array", "maxItems": 4, "items": {"maxLength": 2}}}})  # fmt: skip
+    assert out == {
+        "properties": {"a": {"type": "string"}, "b": {"type": "array", "maxItems": 4, "items": {}}}
+    }

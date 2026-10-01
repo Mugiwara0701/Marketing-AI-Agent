@@ -4,7 +4,6 @@ tasks:
   lead.qualify: dev
   lead.extract_contact: dev
   outreach.draft: dev
-  outreach.classify_reply: fast
-  outreach.draft_reply: dev
   content.plan: dev
+  content.adapt: dev
   content.draft_post: primary

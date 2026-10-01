@@ -1,0 +1,8 @@
+use_default_settings: true
+server:
+  # Local use only; change this value if the port is ever exposed.
+  secret_key: "change-me-to-a-long-random-string"
+  limiter: false
+  image_proxy: false
+search:
+  formats: [html, json]   # json is what the agent calls

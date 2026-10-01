@@ -1,75 +1,80 @@
 # AI Marketing Agent
 
-Automated marketing for an AOSP / embedded-engineering services company, built on open-source
-models and our own stack. Three modules: **lead discovery**, **email outreach + replies**,
-**blog writing and publishing** (LinkedIn, dev.to). Slack is the control surface: every approval
-and error goes there. Nothing is sent or published without manual approval.
+A small autonomous B2B lead-generation and technical-content agent for an AOSP / embedded-engineering
+services company. It is **not** a general-purpose LLM system and it does **not** run continuously: once a
+day it runs for at most 1-2 hours, saves everything to the database and exits.
 
-## Architecture: five components
-
+```text
+Daily run (python -m agent run, started by a systemd timer)
+│
+├── Send emails you approved after the previous run
+│
+├── Part 1: Lead generation  (max 10 new leads/day)
+│   ├── Search free public sources: job boards, HN hiring threads, project posts, web search
+│   ├── LLM qualifies each listing: does a named company need AOSP / BSP / Embedded Linux work done?
+│   ├── Extract company, project, technologies, location, website, source URL
+│   ├── Find a public business contact on the company's own site (never guessed)
+│   ├── Deduplicate (by listing and by company domain), save to the database
+│   └── LLM drafts a company-specific proposal email  ->  waits for your approval
+│
+└── Part 2: Daily blog  (1 post/day)
+    ├── Research current AOSP / Android / embedded Linux news and discussions
+    ├── LLM proposes ranked topics; code picks the best one that is not a repeat
+    ├── LLM writes one technical post
+    └── Save post + metadata (sources, tags, checks) to the database
 ```
-GitHub Actions / cron (scheduler) --Tailscale--> lead-service    --\
-                                              -> outreach-service --> llm-service (vLLM + embeddings, own GPU host)
-                                              -> content-service  --/          |
-                     Slack <-> Supabase Edge Functions (repository_dispatch)   v
-                                                              Supabase Postgres + pgvector
-```
 
-| # | Component | Path | What it is |
-|---|---|---|---|
-| 1 | lead-service | `services/lead-service` | Collect leads, parse job-alert emails, qualify, enrich contacts |
-| 2 | outreach-service | `services/outreach-service` | Draft, send (after approval), read and answer replies |
-| 3 | content-service | `services/content-service` | Plan, draft, publish posts (after approval), metrics |
-| 4 | llm-service | `services/llm-service` | Self-hosted open-source LLM (vLLM) and embedding server |
-| 5 | scheduler | `scheduler/`, `.github/workflows/` | GitHub Actions and cron that call the services |
+We look for **companies that need this engineering work done** (to sell them our services), not for
+engineers to hire. A job post is only evidence that a company has the work and is short of capacity.
 
-Shared: `libs/agentkit` (job contract, config, logging, later LLM/retrieval/Slack helpers),
-`config/routing.yaml` (task -> model), `supabase/` (migrations, edge functions), `dashboard/`
-(read-only lead view and pipeline start), `eval/` (eval sets), `docs/`.
+## Layout
 
-### Job contract (all three services)
+| Path | What it is |
+|---|---|
+| `agent/` | The daily runner: `run.py` (orchestration + time budget), `leads.py`, `blog.py`, `sources.py`, `contacts.py`, `mailer.py`, `review.py`, `store.py`, `web.py` |
+| `agent/tasks/` | The five LLM tasks (qualify, extract contact, proposal, topics, blog) with schemas and output checks; prompts in `agent/prompts/` |
+| `config/sources.yaml` | Keywords, job APIs, search queries, blog feeds (edit without touching code) |
+| `config/routing.yaml` | Task -> model alias |
+| `libs/agentkit` | Shared LLM client, DB access, prompts, checks |
+| `services/llm-service` | Self-hosted open-source LLM (vLLM + embeddings) on the office GPU machine |
+| `supabase/` | Migrations and the one-click `unsubscribe` Edge Function |
+| `deploy/` | systemd timer + service, approval workflow |
+| `eval/` | Eval sets and runners for prompts/models |
 
-`GET /health`, `POST /jobs/{name}` (202 + `run_id`), `GET /runs/{id}`, header `X-Job-Token`.
-One run per job at a time (409). Jobs must be idempotent: schedules can be delayed or dropped.
+## Rules built in
 
-## Trade-offs to know
-
-- Services and the LLM run on the company machine (on the tailnet), but **not 24/7**: the host is powered on for a
-  night window (01:30-04:30 IST daily) and a day window (09:00-17:00 IST weekdays), about 60 of 168 hours a week.
-  GitHub Actions only triggers the services; agent code does not run inside runners. Work that arrives while
-  the host is off waits in Supabase and is picked up by the next window. See `docs/` (Architecture, section 3).
-- Supabase Edge Functions cannot reach the tailnet, so Slack approvals fire `repository_dispatch`
-  events, and workflows call the services.
-- LinkedIn forbids scraping. Leads come from LinkedIn job-alert emails, manual pastes and ATS feeds
-  (accepted risk, needs senior sign-off).
-- Compliance: CAN-SPAM, GDPR/CASL, India DPDP Rules, Gmail/Yahoo bulk-sender rules (SPF/DKIM/DMARC,
-  one-click unsubscribe, complaints under 0.3%). Keep a suppression list; no PII in logs.
+- **Limits:** `MAX_NEW_LEADS_PER_DAY=10`, one blog per day (idempotent), `AGENT_MAX_MINUTES=120` hard stop with
+  25 minutes always reserved for the blog; a failing step never blocks the next.
+- **Sending is off by default** (`EMAIL_SENDING_ENABLED=false`): the run still scrapes, qualifies, saves leads and
+  drafts proposals. When enabled, emails are saved as `drafted` and only approved ones are sent (`python -m agent approve`).
+- **Contacts:** only addresses that appear literally on the company's own website and belong to its own domain.
+- **Polite scraping:** robots.txt respected, per-host delay, identifiable user agent, no private addresses.
+- **Compliance:** suppression list, one-click unsubscribe link and headers, identity + postal address footer
+  (CAN-SPAM / GDPR / DPDP), send cap, `APP_ENV=dev` restricts recipients to `ALLOWED_RECIPIENT_DOMAINS`.
+- **Free sources only:** no paid APIs. Reliable open-web search needs a self-hosted SearXNG (`SEARXNG_URL`);
+  DuckDuckGo's page is used as a fallback but usually blocks bots.
+- LinkedIn is not scraped (its terms forbid it).
 
 ## Status
 
-Infrastructure is in place: job contract, `.github/workflows/`, `config/`, migrations `0001` (retrieval)
-and `0002` (core schema), Supabase Edge Functions (`slack-interact`, `unsubscribe`, `trigger-run`), and the
-agentkit modules (db, llm, embed, retrieve, prompts, task_runner, checks, learn, redact, slack).
-LLM layer is implemented for all seven routed tasks (schemas, prompts, checks in each service's `app/`); verify a GPU host with `make llm-verify`. Job functions are still stubs (`NotImplementedError`) and the dashboard is not built.
-Migrations and Edge Functions are syntax-checked only, not yet run against a live Supabase project. Scheduled workflows run only when repo variable
-`SCHEDULES_ENABLED=true`.
+Implemented and unit-tested (31 tests, ruff, mypy): sources, qualification flow, contact guard, proposal drafting,
+blog pipeline, mailer, approval CLI, time-budgeted runner. Free feeds were checked live. **Not yet run end to end**:
+there has been no run against a real LLM host or a live Supabase project (apply `supabase/migrations/*.sql`,
+including `0003_daily_agent.sql`). Expect to tune `config/sources.yaml` and the prompts once real data flows;
+10 qualified leads with public contacts per day is a target, and free sources may yield fewer.
+Design documents in `docs/` describe the earlier multi-service design and are superseded by this README.
 
 ## Quick start
 
 ```bash
-cp .env.example .env         # fill in values
+cp .env.example .env                 # fill in values
 make install && make test
-make up && make health       # services on 127.0.0.1:8101-8103
+python -m agent run --only blog      # try one part (needs LLM_BASE_URL and DATABASE_URL)
+python -m agent run                  # full daily run
+python -m agent review               # drafted emails; then: approve <id> | --all, reject <id>
 ```
 
-LLM host: see `services/llm-service/README.md`. Apply `supabase/migrations/*.sql` to your project.
-Add repo secrets listed in `scheduler/README.md`.
-
-## Build order
-
-1. Retrieval and prompt path (`libs/agentkit`: embed, retrieve, prompts, task_runner, checks).
-2. lead-service, then outreach-service, then content-service.
-3. Optional: fine-tuned LoRA adapters after the evaluation gate (see docs).
+LLM host: see `services/llm-service/README.md` (`make llm-verify`). Scheduling: `deploy/README.md`.
 
 ## Code quality and CI
 

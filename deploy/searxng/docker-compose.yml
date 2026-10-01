@@ -1,0 +1,10 @@
+# Free self-hosted meta-search for the agent. Listens on localhost only.
+#   cd deploy/searxng && docker compose up -d
+#   then in .env:  SEARXNG_URL=http://127.0.0.1:8888
+services:
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    ports: ["127.0.0.1:8888:8080"]
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro

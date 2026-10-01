@@ -49,5 +49,36 @@ def check_confidence(confidence: float, threshold: float = 0.6) -> list[str]:
     return [] if confidence >= threshold else [f"confidence {confidence:.2f} < {threshold}"]
 
 
+_TECH_ID = re.compile(
+    r"CONFIG_[A-Z0-9_]+"  # kernel config symbols
+    r"|(?<![\w.])/(?:sys|proc|dev|etc|var|usr|data|vendor|system|boot|mnt)\b[\w./-]*"  # device/system paths
+    r"|(?<!\w)--[a-z][a-z0-9-]+"  # long command-line flags
+    r"|\b(?:Android|Linux|kernel|AOSP)\s+v?\d+(?:\.\d+)*",  # versions
+    re.IGNORECASE,
+)
+
+
+def check_grounded(text: str, source: str, limit: int = 8) -> list[str]:
+    """Technical identifiers in `text` (CONFIG_ symbols, system paths, --flags, versions) that never appear in
+    `source`. A small model writes plausible-looking names from memory; anything it cannot point to in the
+    source material is treated as invented."""
+    low = re.sub(r"\s+", " ", (source or "").lower())
+    missing: list[str] = []
+    for m in _TECH_ID.finditer(text or ""):
+        ident = re.sub(r"\s+", " ", m.group(0).lower().rstrip(".,;:)"))
+        if ident and ident not in low and ident not in [x.lower() for x in missing]:
+            missing.append(m.group(0))
+    return [f"not found in the source material: {x}" for x in missing[:limit]]
+
+
+_LEAKS = ("reference material", "untrusted_data", "<untrusted", "as an ai", "source material")
+
+
+def check_no_leaks(text: str) -> list[str]:
+    """Prompt scaffolding must never appear in published text."""
+    low = (text or "").lower()
+    return [f"prompt text leaked into output: {p!r}" for p in _LEAKS if p in low]
+
+
 def run_checks(*results: list[str]) -> list[str]:
     return [p for r in results for p in r]

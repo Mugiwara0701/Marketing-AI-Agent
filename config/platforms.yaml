@@ -1,0 +1,40 @@
+# Where each daily post is published and what each platform expects. The long-form company-blog post
+# (Markdown, ~700-1000 words, kind-specific structure) is written first, grounded in the source articles.
+# Every entry below is a REWRITE of it with that platform's own structure, length and voice.
+# Add a platform by adding an entry; remove one to stop generating it. `render` picks the assembler/checks.
+platforms:
+  devto:
+    label: dev.to
+    max_chars: 9000
+    tags_max: 4
+    render: devto_frontmatter
+    rules: >-
+      A dev.to article for practising engineers, 450 to 750 words, in Markdown, in an informal technical voice
+      (shorter and more direct than the company blog). Fixed structure: first line "TL;DR:" with two sentences;
+      "## Why this matters"; "## Key points" as a bulleted list of 4 to 6 items; "## What to try next" with
+      practical steps, using fenced code blocks with a language tag ONLY for commands that appear in the original;
+      "## Further reading" linking the original's Sources. title: specific, under 80 characters. description: one
+      sentence under 150 characters. tags: up to 4, lowercase single words with no hyphens or spaces.
+  linkedin:
+    label: LinkedIn
+    max_chars: 2800
+    tags_max: 5
+    render: linkedin_post
+    rules: >-
+      A LinkedIn insight post in PLAIN TEXT for engineering managers and platform leads: no Markdown (no #, ##,
+      **, backticks, bullet dashes, code or commands at all). 700 to 1300 characters, never more than 2800.
+      Structure: line 1 is a hook under 200 characters; then 2 to 4 short paragraphs of one or two sentences each
+      (what happened, what it changes for a team, one practical takeaway); then one question inviting replies; then
+      a last line of 3 to 5 hashtags. At most two emojis, none in the first line. title: empty string.
+      description: empty string. tags: hashtag words without the # sign.
+  x_thread:
+    label: X (Twitter) thread
+    max_chars: 2400
+    tags_max: 2
+    render: x_thread
+    rules: >-
+      A thread of 5 to 7 posts in plain text. Separate posts with a blank line. Each post is at most 270
+      characters and starts with its number and a slash ("1/", "2/", ...). Post 1 is a hook that makes engineers
+      want to read on. Posts 2 to 6 each carry one concrete point from the article. The last post gives the main
+      takeaway and a question. No Markdown, no code, no links, at most two hashtags in the last post only.
+      title: empty string. description: empty string. tags: up to 2 hashtag words without the # sign.

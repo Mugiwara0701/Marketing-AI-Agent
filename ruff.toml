@@ -32,14 +32,18 @@ ignore = [
 
 [lint.per-file-ignores]
 "**/tests/**" = ["S101", "PT018"]   # assert is how pytest tests work
-"eval/runner/*" = ["T201"]          # CLI prints its report
+"eval/runner/*" = ["T201"]
+"agent/tests/*" = ["S101", "S105", "PLC0415", "SLF001", "PT018"]
+"agent/sources.py" = ["S101", "PERF401"]
+"agent/portals.py" = ["PERF401"]
+"agent/research.py" = ["PERF401"]   # one parser per portal; explicit loops read better          # CLI prints its report
 "libs/agentkit/agentkit/db.py" = ["PLW0603", "S608"]   # pool singleton; table name is validated
 "libs/agentkit/agentkit/llm.py" = ["PLW0603", "PLR0915"]
 "libs/agentkit/agentkit/jobs.py" = ["PLR0915"]   # create_app is one closure by design
 "libs/agentkit/agentkit/retrieve.py" = ["S608"]  # table is checked against an allow-list
 
 [lint.isort]
-known-first-party = ["agentkit", "app"]
+known-first-party = ["agentkit", "agent"]
 
 [format]
 quote-style = "double"

@@ -76,6 +76,20 @@ make llm-verify
 
 1. Run `make llm-verify` on the office machine and fix failing prompts.
 2. Confirm `primary` and `fast` model repo IDs, then drop `routing.dev-only.yaml`.
-3. Get team-labelled eval data (targets: qualify 100, extract 60, classify 80, 20 each of email, reply and blog drafts).
+3. Get team-labelled eval data (targets: qualify 100, extract 60, 20 each of email, reply and blog drafts).
 4. Implement the service job functions on top of the LLM layer.
 5. Apply migrations to a live Supabase project; build the dashboard.
+
+## 9. Redesign (2026-10-01): one daily runner
+
+The earlier layout (three always-on HTTP services, weekly/2-hourly schedules, Slack approvals, LinkedIn/dev.to
+publishing) did not match the intended product. It is replaced by a single bounded daily run with two
+workflows: up to 10 new project leads with company-specific proposal emails (approval-gated), and one technical
+blog per day. See `README.md`.
+
+- Removed: `services/lead-service`, `outreach-service`, `content-service`, `scheduler/`, dispatch/lead/outreach/content/health
+  workflows, `slack-interact` and `trigger-run` Edge Functions, reply classification/drafting, root `docker-compose.yml`.
+- Added: `agent/` (runner, sources, contacts, mailer, review CLI, blog pipeline), `config/sources.yaml`,
+  `deploy/` (systemd timer), migration `0003_daily_agent.sql`.
+- Task modules moved to `agent/tasks/`; prompts to `agent/prompts/`. `lead.qualify` now also extracts company,
+  project, technologies, location and website; the proposal prompt is company-specific.

@@ -18,19 +18,4 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: pip install -e "libs/agentkit[dev]"
-      - run: |
-          for s in lead outreach content; do pip install -r "services/$s-service/requirements.txt"; done
       - run: make test
-
-  docker:
-    name: docker build and compose config
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate compose file
-        run: |
-          cp .env.example .env
-          docker compose config --quiet
-      - name: Build service images
-        run: docker compose build

@@ -44,11 +44,15 @@ def approval_blocks(text: str, approval_id: str, buttons: list[tuple[str, str]])
     ]
 
 
-async def post_message(channel: str, text: str, blocks: list[dict] | None = None) -> dict:
+async def post_message(
+    channel: str, text: str, blocks: list[dict] | None = None, thread_ts: str | None = None
+) -> dict:
     """Post with the bot token. Returns {ts, channel}. Raises if Slack rejects (caller keeps approval pending)."""
     payload: dict = {"channel": channel, "text": text}
     if blocks:
         payload["blocks"] = blocks
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(
             f"{API}/chat.postMessage",

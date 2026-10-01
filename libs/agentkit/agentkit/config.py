@@ -1,11 +1,31 @@
 """Environment and routing config helpers."""
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, overload
 
 import yaml
+
+
+def load_dotenv(path: str | Path = ".env") -> None:
+    """Read KEY=VALUE lines from a .env file into os.environ (real environment variables win)."""
+    p = Path(path)
+    if not p.is_file():
+        return
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = re.sub(r"\s+#.*$", "", value.strip())  # inline comment
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key.strip(), value)
+
+
+load_dotenv()
 
 
 @overload
