@@ -31,13 +31,13 @@ engineers to hire. A job post is only evidence that a company has the work and i
 
 | Path | What it is |
 |---|---|
-| `agent/` | The daily runner: `run.py` (orchestration + time budget), `leads.py`, `blog.py`, `sources.py`, `contacts.py`, `mailer.py`, `review.py`, `store.py`, `web.py` |
-| `agent/tasks/` | The five LLM tasks (qualify, extract contact, proposal, topics, blog) with schemas and output checks; prompts in `agent/prompts/` |
+| `agent/` | The daily runner: `run.py` (orchestration + time budget), `leads.py`, `blog.py`, `sources.py`, `contacts.py`, `mailer.py`, `replies.py`, `followups.py`, `review.py`, `store.py`, `web.py` |
+| `agent/tasks/` | The LLM tasks (qualify, extract contact, proposal, reply, follow-up, topics, blog) with schemas and output checks; prompts in `agent/prompts/` |
 | `config/sources.yaml` | Keywords, job APIs, search queries, blog feeds (edit without touching code) |
 | `config/routing.yaml` | Task -> model alias |
 | `libs/agentkit` | Shared LLM client, DB access, prompts, checks |
 | `services/llm-service` | Self-hosted open-source LLM (vLLM + embeddings) on the office GPU machine |
-| `supabase/` | Migrations and the one-click `unsubscribe` Edge Function |
+| `supabase/` | Migrations and the Edge Functions (`unsubscribe`, `slack-interact`, `resend-webhook`) |
 | `deploy/` | systemd timer + service, approval workflow |
 | `eval/` | Eval sets and runners for prompts/models |
 
@@ -47,6 +47,13 @@ engineers to hire. A job post is only evidence that a company has the work and i
   25 minutes always reserved for the blog; a failing step never blocks the next.
 - **Sending is off by default** (`EMAIL_SENDING_ENABLED=false`): the run still scrapes, qualifies, saves leads and
   drafts proposals. When enabled, emails are saved as `drafted` and only approved ones are sent (`python -m agent approve`).
+- **Replies and follow-ups:** mail goes out through Resend. Its webhook (`supabase/functions/resend-webhook`)
+  records delivery, opens, bounces and inbound replies. `python -m agent run` classifies replies and drafts an
+  answer for interested people and questions; an intro with no open and no reply after `FOLLOWUP_DELAY_DAYS=4`
+  gets one drafted follow-up. Both are posted to Slack and **sent only after a person approves**.
+  Unsubscribes and bounces are suppressed automatically. Opens are a weak signal (image blocking, Apple Mail
+  privacy), so replies always win. Resend setup: verify the sending domain, turn on open tracking, add a
+  receiving address (MX) and point the webhook at the function; put the address in `REPLY_TO`.
 - **Contacts:** only addresses that appear literally on the company's own website and belong to its own domain.
 - **Polite scraping:** robots.txt respected, per-host delay, identifiable user agent, no private addresses.
 - **Compliance:** suppression list, one-click unsubscribe link and headers, identity + postal address footer
@@ -71,7 +78,9 @@ cp .env.example .env                 # fill in values
 make install && make test
 python -m agent run --only blog      # try one part (needs LLM_BASE_URL and DATABASE_URL)
 python -m agent run                  # full daily run
-python -m agent review               # drafted emails; then: approve <id> | --all, reject <id>
+python -m agent replies              # classify new replies, queue approved answers
+python -m agent followups            # draft follow-ups for unopened, unanswered intros
+python -m agent review               # drafted emails (intros, follow-ups); then: approve <id> | --all, reject <id>
 ```
 
 LLM host: see `services/llm-service/README.md` (`make llm-verify`). Scheduling: `deploy/README.md`.

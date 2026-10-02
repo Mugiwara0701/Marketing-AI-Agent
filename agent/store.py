@@ -66,15 +66,24 @@ async def save_contact(company_id: UUID, c, source_url: str) -> UUID:
     return row["id"]
 
 
-async def campaign_id() -> UUID:
-    row = await db.fetchrow("select id from campaigns where name='daily-outreach'")
+async def _campaign(name: str, steps: int) -> UUID:
+    row = await db.fetchrow("select id from campaigns where name=$1", name)
     if row:
         return row["id"]
     row = await db.fetchrow(
-        "insert into campaigns (name, steps) values ('daily-outreach', 1) returning id"
+        "insert into campaigns (name, steps) values ($1,$2) returning id", name, steps
     )
     assert row is not None  # noqa: S101
     return row["id"]
+
+
+async def campaign_id() -> UUID:
+    return await _campaign("daily-outreach", 1)
+
+
+async def reply_campaign_id() -> UUID:
+    """Replies we send live in their own campaign, so they never collide with the intro's step."""
+    return await _campaign("replies", 1)
 
 
 async def save_email_draft(
@@ -150,3 +159,65 @@ async def save_variant(  # noqa: PLR0917
              set title=excluded.title, body=excluded.body, tags=excluded.tags, review_note=excluded.review_note""",
         post_id, platform, title, body, tags, note,
     )  # fmt: skip
+
+
+async def suppress_contact(contact_id: UUID, reason: str) -> None:
+    """Add the address to the suppression list and drop anything still queued for this contact."""
+    await db.execute(
+        """insert into suppression_list (email_hash, reason)
+           select email_hash(email), $2 from contacts where id=$1 and email is not null
+           on conflict (email_hash) do nothing""",
+        contact_id, reason,
+    )  # fmt: skip
+    await db.execute(
+        "update emails set status='skipped', updated_at=now() where contact_id=$1 and status in ('drafted','approved')",
+        contact_id,
+    )
+
+
+async def set_company_status(contact_id: UUID, status: str) -> None:
+    """Never lifts a company out of suppressed."""
+    await db.execute(
+        """update companies set status=$2, updated_at=now()
+            where id=(select company_id from contacts where id=$1) and status <> 'suppressed'""",
+        contact_id, status,
+    )  # fmt: skip
+
+
+async def ensure_followup_step() -> None:
+    """The daily-outreach campaign now has an intro and one follow-up."""
+    await db.execute("update campaigns set steps=2 where name='daily-outreach' and steps < 2")
+
+
+async def followup_candidates(delay_days: int, limit: int) -> list:
+    """Intros sent at least `delay_days` ago with no open, no reply, no bounce and no follow-up yet."""
+    cid = await campaign_id()
+    return await db.fetch(
+        """select e.id, e.contact_id, e.subject, e.body, e.message_id, c.name, c.role,
+                  co.name as company, co.project_summary, co.technologies
+             from emails e join contacts c on c.id=e.contact_id join companies co on co.id=c.company_id
+            where e.campaign_id=$1 and e.step=1 and e.status='sent'
+              and e.sent_at < now() - make_interval(days => $2)
+              and e.opened_at is null and e.bounced_at is null
+              and c.email is not null and not is_suppressed(c.email)
+              and co.status not in ('suppressed','closed','rejected')
+              and not exists (select 1 from replies r where r.contact_id=e.contact_id)
+              and not exists (select 1 from emails f where f.contact_id=e.contact_id
+                                 and f.campaign_id=e.campaign_id and f.step=2)
+            order by e.sent_at limit $3""",
+        cid, delay_days, limit,
+    )  # fmt: skip
+
+
+async def save_followup_draft(
+    contact_id: UUID, subject: str, body: str, note: str | None, in_reply_to: str | None
+) -> UUID | None:
+    cid = await campaign_id()
+    row = await db.fetchrow(
+        """insert into emails (contact_id, campaign_id, step, status, subject, body, review_note,
+                               in_reply_to, idempotency_key)
+           values ($1,$2,2,'drafted',$3,$4,$5,$6,$7)
+           on conflict (contact_id, campaign_id, step) do nothing returning id""",
+        contact_id, cid, subject, body, note, in_reply_to, f"followup-{contact_id}",
+    )  # fmt: skip
+    return row["id"] if row else None
