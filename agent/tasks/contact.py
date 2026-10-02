@@ -36,6 +36,7 @@ async def extract_contact(page_text: str) -> tuple[ContactResult, list[str]]:
         use_examples=False,
         validate=_validate,
         max_tokens=300,
+        reasoning_effort="none",  # a thinking model otherwise spends the whole budget before the JSON
     )
     parsed = completion.parsed
     if not isinstance(parsed, ContactResult):
