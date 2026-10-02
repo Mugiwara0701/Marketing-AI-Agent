@@ -248,3 +248,40 @@ td .ellip { max-width: 150px; }
 .theme-toggle .sun { display: none; }
 [data-theme="dark"] .theme-toggle .sun { display: block; }
 [data-theme="dark"] .theme-toggle .moon { display: none; }
+
+/* ---------- Auth (login page) ---------- */
+body.auth-view .topbar { display: none; }
+body.auth-view .page { min-height: 100vh; justify-content: center; align-items: center; padding: 24px 16px; }
+.auth-card { width: 100%; max-width: 400px; padding: 32px 28px; display: flex; flex-direction: column; gap: 6px; }
+.auth-card .tile { margin-bottom: 10px; }
+.auth-title { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
+.auth-sub { margin: 0 0 14px; }
+.auth-form { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-weight: 500; font-size: 13px; }
+.field[hidden] { display: none; }
+.field input { width: 100%; height: 42px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--card); color: var(--text); font: inherit; transition: border-color .15s, box-shadow .15s; }
+.field input::placeholder { color: var(--muted); }
+.field input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pw-wrap { position: relative; display: block; }
+.pw-wrap input { padding-right: 44px; }
+.pw-toggle { position: absolute; top: 0; right: 0; width: 42px; height: 42px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; border-radius: 10px; }
+.pw-toggle:hover, .pw-toggle[aria-pressed="true"] { color: var(--accent); }
+.pw-toggle:focus-visible, .link-btn:focus-visible, .signout:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.auth-msg { min-height: 20px; font-size: 13px; }
+.auth-msg[data-tone="error"] { color: var(--red); }
+.auth-msg[data-tone="ok"] { color: var(--green); }
+.auth-submit { justify-content: center; height: 42px; }
+.auth-submit:disabled { opacity: .7; cursor: progress; }
+.auth-submit.loading::after { content: ""; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.link-btn { align-self: center; margin-top: 8px; border: 0; background: none; color: var(--accent); font-weight: 500; padding: 4px 8px; border-radius: 6px; }
+.link-btn:hover { color: var(--accent-hover); text-decoration: underline; }
+.signout { margin-left: 10px; }
+
+/* ---------- Positive Leads ---------- */
+td .ellip.preview { max-width: 320px; }
+@media (max-width: 760px) {
+  .tabs { min-width: 0; flex: 1; }
+  .tab { padding: 7px 10px; font-size: 13px; }
+  .signout { margin-left: 8px; padding: 0 12px; white-space: nowrap; }
+}

@@ -49,8 +49,8 @@ const titles = ['Head of Marketing', 'Content Manager', 'VP of Growth', 'Founder
 // Hand-picked leads (these also own the first sent emails and the 5 replies).
 // number -> [name, source, status, jobTitle, company, email, addedAt]
 const FIXED_LEADS = {
-  12: ['Priya Sharma', 'linkedin', 'Awaiting', 'Head of Content', 'CloudScale', 'priya@cloudscale.dev', '2024-04-22T09:12:00'],
-  13: ['Daniel Kim', 'x', 'Awaiting', 'Product Marketing Manager', 'TechFlow Studio', 'daniel@techflowstudio.com', '2024-04-21T14:05:00'],
+  12: ['Priya Sharma', 'linkedin', 'Responded', 'Head of Content', 'CloudScale', 'priya@cloudscale.dev', '2024-04-22T09:12:00'],
+  13: ['Daniel Kim', 'x', 'Responded', 'Product Marketing Manager', 'TechFlow Studio', 'daniel@techflowstudio.com', '2024-04-21T14:05:00'],
   14: ['Aisha Khan', 'linkedin', 'Responded', 'Growth Marketing Lead', 'North Star Media', 'aisha@northstarmedia.co', '2024-04-20T10:24:00'],
   15: ['Marcus Lee', 'other', 'Awaiting', 'Founder & CEO', 'BuildIt Labs', 'marcus@builditlabs.io', '2024-04-19T16:40:00'],
   16: ['Sophia Chen', 'linkedin', 'Responded', 'Marketing Director', 'DevHub', 'sophia@devhub.co', '2024-04-18T08:50:00'],
@@ -153,16 +153,16 @@ export const sentEmails = emailLeadOrder.map((leadNum, i) => {
 });
 
 // ---------- replies (5, each linked to a sent email) ----------
-// [email number, receivedAt, text]
+// [email number, receivedAt, text, label]  (label = classify_reply output)
 const replyDefs = [
-  [1, '2024-04-22T14:15:00', 'Thanks for reaching out, this looks interesting. Could you share a couple of examples of blog posts you have published for similar teams? A call on Thursday afternoon would work for me.'],
-  [5, '2024-04-18T13:20:00', 'Hi Alex, nice to connect! We are planning our Q3 content calendar right now. Are you free for a quick call tomorrow morning?'],
-  [2, '2024-04-21T09:30:00', 'Hi Alex, we are already working with an agency, but I would be curious to hear how your reporting works. Can you send over a short deck?'],
-  [3, '2024-04-20T17:05:00', 'Thank you for the note. Please send pricing for a content package and we will review it internally.'],
-  [6, '2024-04-17T11:45:00', 'Not a fit for us at the moment, but please check back in the new year. Appreciate the detailed email.'],
+  [1, '2024-04-22T14:15:00', 'Thanks for reaching out, this looks interesting. Could you share a couple of examples of blog posts you have published for similar teams? A call on Thursday afternoon would work for me.', 'interested'],
+  [5, '2024-04-18T13:20:00', 'Hi Alex, nice to connect! We are planning our Q3 content calendar right now. Are you free for a quick call tomorrow morning?', 'interested'],
+  [2, '2024-04-21T09:30:00', 'Hi Alex, we are already working with an agency, but I would be curious to hear how your reporting works. Can you send over a short deck?', 'question'],
+  [3, '2024-04-20T17:05:00', 'Thank you for the note. Please send pricing for a content package and we will review it internally.', 'interested'],
+  [6, '2024-04-17T11:45:00', 'Not a fit for us at the moment, but please check back in the new year. Appreciate the detailed email.', 'not_interested'],
 ];
 
-export const replies = replyDefs.map(([emailNumber, receivedAt, text], i) => {
+export const replies = replyDefs.map(([emailNumber, receivedAt, text, label], i) => {
   const orig = sentEmails[emailNumber - 1];
   const lead = leads.find((l) => l.id === orig.leadId);
   const first = lead.name.split(' ')[0];
@@ -172,7 +172,7 @@ export const replies = replyDefs.map(([emailNumber, receivedAt, text], i) => {
   if (lead.status === 'Responded') { lead.replyId = orig.replyId; lead.lastContactAt = iso(received); }
   return {
     id: orig.replyId, number: n, senderName: lead.name, senderEmail: lead.email, to: FROM,
-    subject: `Re: ${orig.subject}`, receivedAt: iso(received), inReplyToId: orig.id,
+    subject: `Re: ${orig.subject}`, receivedAt: iso(received), inReplyToId: orig.id, label,
     body: `Hi Alex,
 
 ${text}
