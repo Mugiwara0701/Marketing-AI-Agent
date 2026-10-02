@@ -75,6 +75,20 @@ def test_message_has_footer_and_unsubscribe_headers(monkeypatch):
     assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
 
+def test_resend_payload_carries_unsubscribe_and_threading_headers(monkeypatch):
+    for k, v in {"UNSUBSCRIBE_BASE_URL": "https://x/u", "UNSUBSCRIBE_SECRET": "s", "MAIL_FROM": "a@b.io",
+                 "COMPANY_NAME": "Acme Eng", "COMPANY_ADDRESS": "1 Road", "REPLY_TO": "r@in.b.io"}.items():  # fmt: skip
+        monkeypatch.setenv(k, v)
+    row = {"id": "abc", "subject": "Re: Hi", "body": "Hello", "in_reply_to": "<m1@x>"}
+    payload = mailer.resend_payload(mailer.build_message(row, "to@c.io"), "to@c.io")
+    assert payload["to"] == ["to@c.io"] and payload["reply_to"] == "r@in.b.io"
+    assert "Unsubscribe:" in payload["text"]
+    h = payload["headers"]
+    assert h["In-Reply-To"] == "<m1@x>" and h["References"] == "<m1@x>"
+    assert h["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click" and "Message-ID" in h
+    assert "From" not in h and "Subject" not in h
+
+
 def test_blog_is_skipped_when_today_exists(monkeypatch):
     async def exists(_):
         return True
@@ -252,10 +266,11 @@ def test_email_blocks_flag_problems_and_carry_approval_id():
 def test_notify_is_noop_without_slack_token():
     from agent import notify
 
-    assert asyncio.run(notify.sweep()) == {"emails": 0, "posts": 0, "failed": 0}
+    assert asyncio.run(notify.sweep()) == {"emails": 0, "replies": 0, "posts": 0, "failed": 0}
     assert (
         asyncio.run(notify.post_email("x")) is False and asyncio.run(notify.post_blog("x")) is False
     )
+    assert asyncio.run(notify.post_reply("x")) is False
 
 
 def test_unbacked_experience_claims_are_flagged():

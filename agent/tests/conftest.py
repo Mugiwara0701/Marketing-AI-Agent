@@ -7,7 +7,8 @@ def _no_real_services(monkeypatch):
     for name in (
         "DATABASE_URL",
         "LLM_BASE_URL",
-        "SMTP_HOST",
+        "RESEND_API_KEY",
+        "REPLY_TO",
         "EMAIL_SENDING_ENABLED",
         "SLACK_BOT_TOKEN",
         "SLACK_ALERTS_WEBHOOK",
