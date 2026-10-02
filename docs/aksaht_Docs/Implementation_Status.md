@@ -1,5 +1,7 @@
 # Implementation Status
 
+> **Superseded:** for the current state of the project see `Work_Done_So_Far.md` (2026-10-01). Sections 1-8 below describe the earlier three-service design.
+
 Date: 2026-09-30 · Author: Akshat
 
 A summary of what has been built so far. Job functions in the three services are still stubs; the LLM layer is
