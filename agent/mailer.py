@@ -1,4 +1,4 @@
-"""Send APPROVED emails through Resend, with suppression, caps and an unsubscribe link."""
+"""Send APPROVED emails through the Gmail API, with suppression, caps and an unsubscribe link."""
 
 import asyncio
 import hashlib
@@ -6,7 +6,7 @@ import hmac
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 
-from agentkit import db, resend
+from agentkit import db, gmail
 from agentkit.config import env
 from agentkit.log import get_logger
 
@@ -59,22 +59,6 @@ def build_message(row, to_addr: str) -> EmailMessage:
     return msg
 
 
-def resend_payload(msg: EmailMessage, to_addr: str) -> dict:
-    """Map the built message to Resend's JSON body; everything but the core fields goes in headers."""
-    core = {"from", "to", "subject", "date", "reply-to", "content-type", "mime-version",
-            "content-transfer-encoding"}  # fmt: skip
-    payload = {
-        "from": msg["From"],
-        "to": [a.strip() for a in to_addr.split(",")],
-        "subject": msg["Subject"],
-        "text": msg.get_content(),
-        "headers": {k: str(v) for k, v in msg.items() if k.lower() not in core},
-    }
-    if msg["Reply-To"]:
-        payload["reply_to"] = msg["Reply-To"]
-    return payload
-
-
 def _allowed_in_env(addr: str) -> bool:
     """In dev, only addresses on ALLOWED_RECIPIENT_DOMAINS may be emailed."""
     if (env("APP_ENV", "dev") or "dev") == "prod":
@@ -87,21 +71,39 @@ def _allowed_in_env(addr: str) -> bool:
     return addr.split("@", 1)[1].lower() in allowed
 
 
-async def deliver(row, recipients: str) -> tuple[str, str]:
-    """Send one request per address: Resend rejects the whole request if any single recipient is not
-    allowed (e.g. onboarding@resend.dev only reaches the account owner). Returns the first
-    (Message-ID, Resend id) that went out; raises only if every address failed."""
-    first: tuple[str, str] | None = None
+async def _thread_id_for(row) -> str | None:
+    """Gmail thread of the mail this one answers, so follow-ups and replies stay in one conversation."""
+    if row.get("reply_id"):
+        r = await db.fetchrow("select gmail_thread_id from replies where id=$1", row["reply_id"])
+        if r and r["gmail_thread_id"]:
+            return r["gmail_thread_id"]
+    if row.get("in_reply_to"):
+        r = await db.fetchrow(
+            "select gmail_thread_id from emails where message_id=$1 and gmail_thread_id is not null limit 1",
+            row["in_reply_to"],
+        )
+        return r["gmail_thread_id"] if r else None
+    return None
+
+
+async def deliver(row, recipients: str, thread_id: str | None = None) -> dict:
+    """Send one message per address through Gmail. Returns the first that went out as
+    {message_id, gmail_message_id, gmail_thread_id}; raises only if every address failed.
+    A Gmail auth problem is raised at once: retrying other addresses cannot fix it."""
+    first: dict | None = None
     errors: list[str] = []
+    service = gmail.get_service()
     for to in (a.strip() for a in recipients.split(",") if a.strip()):
         msg = build_message(row, to)
         try:
-            pid = await resend.send_email(resend_payload(msg, to), f"{row['id']}:{to}")
-        except Exception as exc:
-            errors.append(f"{to}: {exc}")
-            log.warning("send to one recipient failed", extra={"ctx": {"error": str(exc)}})
+            sent = await asyncio.to_thread(gmail.send_message, service, msg, thread_id)
+        except gmail.GmailAuthError:
+            raise
+        except Exception as exc:  # error text only: Gmail errors carry no bodies, never log addresses
+            errors.append(f"{type(exc).__name__}: {exc}")
+            log.warning("send to one recipient failed", extra={"ctx": {"error": type(exc).__name__}})
             continue
-        first = first or (msg["Message-ID"], pid)
+        first = first or sent
     if first is None:
         raise RuntimeError("; ".join(errors) or "no recipient")
     return first
@@ -146,13 +148,21 @@ async def send_approved(limit: int | None = None) -> dict:
             outgoing = row
             if override:  # test mode: show who it would have gone to
                 outgoing = {**row, "subject": f"[TEST for {addr}] {row['subject']}"}
-            message_id, provider_id = await deliver(outgoing, to_addr)
+            sent = await deliver(outgoing, to_addr, await _thread_id_for(row))
             await db.execute(
-                "update emails set status='sent', sent_at=now(), message_id=$2, provider_id=$3, mailbox=$4, updated_at=now() where id=$1",
-                row["id"], message_id, provider_id, mailbox,
+                """update emails set status='sent', sent_at=now(), message_id=$2, gmail_message_id=$3,
+                          gmail_thread_id=$4, mailbox=$5, updated_at=now() where id=$1""",
+                row["id"], sent["message_id"], sent["gmail_message_id"], sent["gmail_thread_id"], mailbox,
             )  # fmt: skip
             stats["sent"] += 1
             await asyncio.sleep(cfg.send_gap_seconds)
+        except gmail.GmailAuthError as exc:
+            # Not this email's fault: put it and the rest back untouched (no attempt used) and stop.
+            stats["failed"] += 1
+            log.warning("gmail auth problem, nothing more sent: %s", exc)
+            ids = [r["id"] for r in rows[n:]]
+            await db.execute("update emails set status='approved' where id = any($1::uuid[])", ids)
+            break
         except Exception:
             stats["failed"] += 1
             log.exception("send failed", extra={"ctx": {"email_id": str(row["id"])}})

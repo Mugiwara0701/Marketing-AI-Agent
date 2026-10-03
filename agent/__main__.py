@@ -18,7 +18,7 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         "run",
         help="one bounded daily run (replies -> send approved -> follow-ups -> leads -> blog)",
     )
-    r.add_argument("--only", choices=["replies", "send", "followups", "leads", "blog"])
+    r.add_argument("--only", choices=["inbox", "replies", "send", "followups", "leads", "blog"])
     r.add_argument("--force", action="store_true", help="run even if today's run already succeeded")
     r.add_argument(
         "--redo-blog",
@@ -105,8 +105,9 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
     )
     te.add_argument("--count", type=int, default=1, help="how many sample emails (1-3)")
     te.add_argument("--to", help="comma separated override for TEST_RECIPIENT")
+    sub.add_parser("inbox", help="poll Gmail now: store new replies, mark bounces")
     sub.add_parser("replies", help="classify new replies and queue approved answers now")
-    sub.add_parser("followups", help="draft follow-ups for unopened, unanswered intros now")
+    sub.add_parser("followups", help="draft follow-ups for unanswered intros now")
     sub.add_parser("review", help="list drafted emails awaiting approval")
     s = sub.add_parser("show", help="show one draft in full")
     s.add_argument("id")
@@ -212,6 +213,10 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
             from . import test_email  # noqa: PLC0415
 
             return await test_email.run(a.count, a.to, a.direct)
+        elif a.cmd == "inbox":
+            from . import inbox  # noqa: PLC0415
+
+            print(json.dumps(await inbox.poll()))  # noqa: T201
         elif a.cmd == "replies":
             from . import replies  # noqa: PLC0415
 

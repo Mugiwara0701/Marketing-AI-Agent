@@ -75,8 +75,8 @@ async def run(count: int = 1, to: str | None = None, direct: bool = False) -> in
                     "subject": f"[TEST for {company}] {draft.subject}",
                     "body": draft.body,
                 }
-                _, provider_id = await mailer.deliver(row, recipients)
-                print(f"sent to {recipients} (resend id {provider_id})")  # noqa: T201
+                sent = await mailer.deliver(row, recipients)
+                print(f"sent to {recipients} (gmail id {sent['gmail_message_id']})")  # noqa: T201
             elif await _queue_for_slack(company, ctx, draft, problems):
                 print("posted to Slack: approve it there")  # noqa: T201
             else:

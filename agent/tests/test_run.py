@@ -1,6 +1,6 @@
 import asyncio
 
-from agent import blog, followups, leads, mailer, notify, replies, run
+from agent import blog, followups, inbox, leads, mailer, notify, replies, run
 
 
 def _fake_steps(monkeypatch, order):
@@ -18,6 +18,7 @@ def _fake_steps(monkeypatch, order):
     monkeypatch.setattr(run.db, "start_run", none)
     monkeypatch.setattr(run.db, "finish_run", none)
     monkeypatch.setattr(run.notify, "summary", none)
+    monkeypatch.setattr(inbox, "poll", step("inbox"))
     monkeypatch.setattr(replies, "run", step("replies"))
     monkeypatch.setattr(mailer, "send_approved", step("send"))
     monkeypatch.setattr(followups, "run", step("followups"))
@@ -26,12 +27,12 @@ def _fake_steps(monkeypatch, order):
     monkeypatch.setattr(notify, "summary", none)
 
 
-def test_daily_run_order_puts_replies_before_send(monkeypatch):
+def test_daily_run_order_polls_inbox_then_replies_before_send(monkeypatch):
     order: list[str] = []
     _fake_steps(monkeypatch, order)
     monkeypatch.setenv("EMAIL_SENDING_ENABLED", "true")
     out = asyncio.run(run.daily_run())
-    assert order == ["replies", "send", "followups", "leads", "blog"] and list(out) == order
+    assert order == ["inbox", "replies", "send", "followups", "leads", "blog"] and list(out) == order
 
 
 def test_only_runs_a_single_step(monkeypatch):

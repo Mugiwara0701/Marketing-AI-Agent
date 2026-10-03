@@ -37,7 +37,7 @@ engineers to hire. A job post is only evidence that a company has the work and i
 | `config/routing.yaml` | Task -> model alias |
 | `libs/agentkit` | Shared LLM client, DB access, prompts, checks |
 | `services/llm-service` | Self-hosted open-source LLM (vLLM + embeddings) on the office GPU machine |
-| `supabase/` | Migrations and the Edge Functions (`unsubscribe`, `slack-interact`, `resend-webhook`) |
+| `supabase/` | Migrations and the Edge Functions (`unsubscribe`, `slack-interact`) |
 | `deploy/` | systemd timer + service, approval workflow |
 | `eval/` | Eval sets and runners for prompts/models |
 
@@ -47,13 +47,13 @@ engineers to hire. A job post is only evidence that a company has the work and i
   25 minutes always reserved for the blog; a failing step never blocks the next.
 - **Sending is off by default** (`EMAIL_SENDING_ENABLED=false`): the run still scrapes, qualifies, saves leads and
   drafts proposals. When enabled, emails are saved as `drafted` and only approved ones are sent (`python -m agent approve`).
-- **Replies and follow-ups:** mail goes out through Resend. Its webhook (`supabase/functions/resend-webhook`)
-  records delivery, opens, bounces and inbound replies. `python -m agent run` classifies replies and drafts an
-  answer for interested people and questions; an intro with no open and no reply after `FOLLOWUP_DELAY_DAYS=4`
-  gets one drafted follow-up. Both are posted to Slack and **sent only after a person approves**.
-  Unsubscribes and bounces are suppressed automatically. Opens are a weak signal (image blocking, Apple Mail
-  privacy), so replies always win. Resend setup: verify the sending domain, turn on open tracking, add a
-  receiving address (MX) and point the webhook at the function; put the address in `REPLY_TO`.
+- **Replies and follow-ups:** mail goes out through the Gmail API (`agentkit/gmail.py`, one-time login with
+  `python -m agent.gmail_check`). Each run first polls the inbox (`python -m agent inbox`): replies are matched to
+  the mail we sent (Message-ID headers, Gmail thread, then sender) and stored once; mailer-daemon failure notices
+  mark the email bounced and suppress the contact. `python -m agent run` then classifies replies and drafts an
+  answer for interested people and questions; an intro with no reply after `FOLLOWUP_DELAY_DAYS=4` gets one
+  drafted follow-up, sent in the same Gmail thread. Both are posted to Slack and **sent only after a person
+  approves**. Gmail gives no open or delivery events, so none are tracked or faked. Setup: `docs/aksaht_Docs/Gmail_Migration.md`.
 - **Contacts:** only addresses that appear literally on the company's own website and belong to its own domain.
 - **Polite scraping:** robots.txt respected, per-host delay, identifiable user agent, no private addresses.
 - **Compliance:** suppression list, one-click unsubscribe link and headers, identity + postal address footer

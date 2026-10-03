@@ -95,13 +95,17 @@ Fill it in by hand (it holds secrets: never commit it, never paste it into chats
 | `MODEL_GUI_STEP` | the vision model's name from `ollama list` |
 | `MODEL_OUTREACH_DRAFT` etc. | optional: text model name per task |
 | `EXECUTOR_URL` / `EXECUTOR_TOKEN` | `http://127.0.0.1:8765` / 24+ random characters (same value as step 8) |
-| `DATABASE_URL`, `SLACK_*`, `RESEND_API_KEY`, `MAIL_FROM` | from your Supabase, Slack and Resend accounts |
+| `DATABASE_URL`, `SLACK_*`, `MAIL_FROM` | from your Supabase and Slack accounts; `MAIL_FROM` is the Gmail address you log in with |
+| `GMAIL_CREDENTIALS_PATH` / `GMAIL_TOKEN_PATH` | `credentials.json` / `token.json` (see the Gmail note below) |
 | `TEST_RECIPIENT` | comma separated team inboxes while developing, so no real company is ever emailed |
 | `EMAIL_SENDING_ENABLED` | `true` only when you want mail to go out (to `TEST_RECIPIENT` while it is set) |
 
 Generate a token: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.
-Resend's `onboarding@resend.dev` only delivers to the Resend account owner's address. To email other
-addresses, verify a domain at resend.com/domains and use an address on it as `MAIL_FROM`.
+**Gmail login on this headless host:** log in once on a machine with a browser (`pip install -r requirements.txt`,
+then `python -m agent.gmail_check`), copy the resulting `token.json` and your `credentials.json` into the project
+folder here (`chmod 600`), and run `python -m agent.gmail_check` again: it must print the account without a
+browser. While the Google OAuth app is in "Testing", the refresh token expires after 7 days; repeat the login then
+(or set the consent screen to "In production").
 
 ## 8. The sandbox (Chrome the vision model drives)
 
@@ -168,5 +172,5 @@ Request URL (`supabase/functions/README.md`).
 | `executor unreachable` | `docker ps`, `docker logs sandbox`, token identical in `.env` and the container |
 | Model answers are not valid steps | `ollama list` name matches `MODEL_GUI_STEP`; try a larger or different vision model |
 | Every step is slow | models are swapping: confirm `OLLAMA_MAX_LOADED_MODELS=1` took effect and batch work (`gui-find` takes several names) |
-| `resend error 403` | sender or recipient not allowed by Resend (see step 7) |
+| `GmailAuthError` / `Gmail token refresh failed` | delete `token.json`, log in again on a machine with a browser, copy it over (see step 7) |
 | Chrome window missing in VNC | see "If Chrome never appears" in step 8 |

@@ -1,6 +1,6 @@
 """Handle inbound replies: classify, act on the label, draft an answer for a human to approve.
 
-The resend-webhook Edge Function stores each reply as status 'received'. A person decides on the drafted
+agent.inbox polls Gmail and stores each reply as status 'received'. A person decides on the drafted
 answer in Slack (classified -> acknowledged = approved, -> handled = skipped). Approved answers become an
 emails row in the 'replies' campaign, so the mailer remains the only send path.
 """

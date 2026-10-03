@@ -1,8 +1,8 @@
-"""One follow-up per intro email that was neither opened nor answered after FOLLOWUP_DELAY_DAYS.
+"""One follow-up per intro email that was not answered after FOLLOWUP_DELAY_DAYS.
 
 The draft goes to Slack for approval like every other email (nothing is sent without a person's
 Approve), and is threaded under the intro. A reply of any kind, a bounce, an unsubscribe or a closed
-company removes the contact from this list; opens are tracked by the resend-webhook Edge Function.
+company removes the contact from this list. Gmail gives no open data, so opens play no part.
 """
 
 import time
