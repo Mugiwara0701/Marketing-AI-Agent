@@ -1,4 +1,5 @@
 """CLI: python -m agent run | dryrun | browse | fill-form | send | review | approve | reject."""
+
 """CLI: python -m agent run | dryrun | send | replies | followups | review | approve | reject."""
 
 import argparse
@@ -13,7 +14,10 @@ from agentkit import db
 async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
     ap = argparse.ArgumentParser(prog="agent", description="Daily AOSP/embedded lead + blog agent")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="one bounded daily run (replies -> send approved -> follow-ups -> leads -> blog)")
+    r = sub.add_parser(
+        "run",
+        help="one bounded daily run (replies -> send approved -> follow-ups -> leads -> blog)",
+    )
     r.add_argument("--only", choices=["replies", "send", "followups", "leads", "blog"])
     r.add_argument("--force", action="store_true", help="run even if today's run already succeeded")
     r.add_argument(
@@ -64,11 +68,43 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         "browse", help="watch a visible Chromium search for a company and read its contact details"
     )
     br.add_argument("company", help="company name or domain")
+    gf = sub.add_parser(
+        "gui-find",
+        help="a vision model drives the sandbox Chrome to find a company's contact; the lead goes to Slack",
+    )
+    gf.add_argument(
+        "companies",
+        nargs="+",
+        help="company names, e.g. 'ID Tech Solutions' (all done in one batch)",
+    )
+    gf.add_argument(
+        "--dry", action="store_true", help="only print the verified contact: no database, no Slack"
+    )
+    sp = sub.add_parser(
+        "gui-spike",
+        help="run short fixed browser tasks with the vision model and report the success rate",
+    )
+    sp.add_argument("--tasks", type=int, default=10)
     sub.add_parser(
         "manual",
         help="companies to contact by hand: bot-protected sites and contact-form-only sites",
     )
-    sub.add_parser("send", help="send approved emails now")
+    sn = sub.add_parser("send", help="send approved emails now")
+    sn.add_argument(
+        "--watch",
+        action="store_true",
+        help="keep running and send each email within seconds of its Slack approval",
+    )
+    sn.add_argument("--interval", type=float, default=5, help="seconds between checks (--watch)")
+    te = sub.add_parser(
+        "test-email",
+        help="LLM writes sample outreach emails: posted to Slack for approval (or --direct send)",
+    )
+    te.add_argument(
+        "--direct", action="store_true", help="skip Slack/database, send now to TEST_RECIPIENT"
+    )
+    te.add_argument("--count", type=int, default=1, help="how many sample emails (1-3)")
+    te.add_argument("--to", help="comma separated override for TEST_RECIPIENT")
     sub.add_parser("replies", help="classify new replies and queue approved answers now")
     sub.add_parser("followups", help="draft follow-ups for unopened, unanswered intros now")
     sub.add_parser("review", help="list drafted emails awaiting approval")
@@ -83,9 +119,13 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         os.environ["BROWSER_VISIBLE"] = "1"
 
     try:
-        if a.cmd not in ("dryrun", "check", "slack-setup", "browse") and not os.environ.get(
-            "DATABASE_URL"
-        ):
+        if a.cmd not in (
+            "dryrun",
+            "check",
+            "slack-setup",
+            "browse",
+            "test-email",
+        ) and not os.environ.get("DATABASE_URL"):
             print(  # noqa: T201
                 f"'{a.cmd}' needs a database: set DATABASE_URL in .env (see README), "
                 "or use `python -m agent dryrun`, which needs none."
@@ -150,6 +190,28 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
             from . import formfill  # noqa: PLC0415
 
             print(await formfill.run(a.company))  # noqa: T201
+        elif a.cmd == "gui-find":
+            from .gui import lead  # noqa: PLC0415
+
+            if a.dry:
+                results = [(n, await lead.find_company(n), "") for n in a.companies]
+            else:
+                results = await lead.find_many(a.companies)
+            for name, found, report in results:
+                print(f"\n{name}: {found.message}")  # noqa: T201
+                if found.ok:
+                    print(f"  {found.email}  ({found.role or 'role unknown'})  {found.page_url}")  # noqa: T201
+                    if report:
+                        print(f"  {report}")  # noqa: T201
+            return 0 if all(f.ok for _, f, _ in results) else 1
+        elif a.cmd == "gui-spike":
+            from .gui import spike  # noqa: PLC0415
+
+            return await spike.run(a.tasks)
+        elif a.cmd == "test-email":
+            from . import test_email  # noqa: PLC0415
+
+            return await test_email.run(a.count, a.to, a.direct)
         elif a.cmd == "replies":
             from . import replies  # noqa: PLC0415
 
@@ -161,6 +223,16 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         elif a.cmd == "send":
             from . import mailer  # noqa: PLC0415
 
+            if a.watch:
+                print(f"watching for approved emails every {a.interval:g}s; Ctrl+C to stop")  # noqa: T201
+                while True:
+                    stats = await mailer.send_approved()
+                    if stats.get("disabled"):
+                        print("EMAIL_SENDING_ENABLED is not true; stopping")  # noqa: T201
+                        return 1
+                    if stats["sent"] or stats["failed"] or stats["skipped"]:
+                        print(json.dumps(stats))  # noqa: T201
+                    await asyncio.sleep(a.interval)
             print(json.dumps(await mailer.send_approved()))  # noqa: T201
         else:
             from . import review  # noqa: PLC0415

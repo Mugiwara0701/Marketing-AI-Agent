@@ -645,3 +645,64 @@ def test_manual_reason_only_for_bot_blocked_sites():
         assert "bot check" in (contacts.manual_reason("blocked.io") or "")
     finally:
         web.bot_blocked.discard("www.blocked.io")
+
+
+def test_test_recipient_redirects_every_mail(monkeypatch):
+    for k, v in {
+        "EMAIL_SENDING_ENABLED": "true",
+        "TEST_RECIPIENT": "me@test.io",
+        "MAIL_FROM": "from@x.io",
+        "COMPANY_NAME": "Co",
+        "COMPANY_ADDRESS": "addr",
+        "UNSUBSCRIBE_BASE_URL": "https://u.io",
+        "UNSUBSCRIBE_SECRET": "s",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("ALLOWED_RECIPIENT_DOMAINS", "")
+    row = {"id": "abc", "contact_id": "c", "subject": "Hi", "body": "Hello", "attempts": 0}
+    sent, updates = [], []
+
+    async def claim(*a, **k):
+        return [row]
+
+    async def fetchrow(sql, *a):
+        return {"email": "real@company.io"} if "contacts" in sql else {"ok": True}
+
+    async def execute(sql, *a):
+        updates.append(sql)
+
+    async def send_email(payload, key):
+        sent.append(payload)
+        return "pid"
+
+    async def not_suppressed(addr):
+        return False
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(mailer.db, "claim", claim)
+    monkeypatch.setattr(mailer.db, "fetchrow", fetchrow)
+    monkeypatch.setattr(mailer.db, "execute", execute)
+    monkeypatch.setattr(mailer.resend, "send_email", send_email)
+    monkeypatch.setattr(mailer.store, "is_suppressed", not_suppressed)
+    monkeypatch.setattr(mailer.asyncio, "sleep", no_sleep)
+    assert asyncio.run(mailer.send_approved())["sent"] == 1
+    assert sent[0]["to"] == ["me@test.io"]
+    assert sent[0]["subject"] == "[TEST for real@company.io] Hi"
+
+
+def test_test_recipient_accepts_several_addresses(monkeypatch):
+    monkeypatch.setenv("TEST_RECIPIENT", " a@x.io, b@y.io ,,c@z.io ")
+    assert mailer.test_recipient() == "a@x.io, b@y.io, c@z.io"
+    monkeypatch.setenv("UNSUBSCRIBE_BASE_URL", "https://x/u")
+    monkeypatch.setenv("UNSUBSCRIBE_SECRET", "s")
+    monkeypatch.setenv("MAIL_FROM", "f@b.io")
+    monkeypatch.setenv("COMPANY_NAME", "Co")
+    monkeypatch.setenv("COMPANY_ADDRESS", "addr")
+    to = mailer.test_recipient()
+    payload = mailer.resend_payload(
+        mailer.build_message({"id": "1", "subject": "S", "body": "B"}, to), to
+    )
+    assert payload["to"] == ["a@x.io", "b@y.io", "c@z.io"]
