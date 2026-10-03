@@ -523,3 +523,125 @@ def test_linkedin_drops_keyword_line_above_hashtags():
     assert (
         "feature access" not in text and "What is your plan?" in text and text.endswith("#security")
     )
+
+
+def test_contact_form_detection():
+    form = '<form><input name="email"><textarea name="msg"></textarea></form>'
+    assert web.has_contact_form(form)
+    assert not web.has_contact_form(
+        '<form role="search"><input name="q"><textarea></textarea></form>'
+    )
+    assert not web.has_contact_form('<form><input type="password"><textarea></textarea></form>')
+    assert not web.has_contact_form('<form><input name="email"></form>')  # newsletter box
+
+
+def test_form_field_kinds():
+    from agent import formfill
+
+    assert formfill._kind("your-email", "input", "text") == "email"
+    assert formfill._kind("full name", "input", "text") == "name"
+    assert formfill._kind("", "textarea", "text") == "message"
+    assert formfill._kind("phone", "input", "tel") is None
+
+
+def test_overlong_hostname_is_refused_not_crashed():
+    assert asyncio.run(web.fetch("https://" + "a" * 70 + ".com")) is None
+
+
+def test_company_pages_become_signals(monkeypatch, tmp_path):
+    from agent import sources
+
+    monkeypatch.setenv("VISITED_CACHE", str(tmp_path / "v.json"))  # never touch the real cache
+
+    async def search(_q, limit=8):
+        return [
+            ("https://www.idtechproducts.com/", "ID TECH"),
+            ("https://www.indeed.com/x", "job"),
+            ("https://acme.io/blog", "Cooking"),
+        ]
+
+    async def page(url):
+        return "Android RFID reader and NFC payment terminals" if "idtech" in url else "recipes"
+
+    monkeypatch.setattr(sources, "web_search", search)
+    monkeypatch.setattr(sources.web, "fetch_page_text", page)
+    sigs = asyncio.run(sources._company_signals(["q"], ["rfid"]))
+    assert [(s.kind, s.domain_hint) for s in sigs] == [("company_page", "idtechproducts.com")]
+
+
+def test_search_does_not_reopen_visited_pages(monkeypatch, tmp_path):
+    from agent import sources
+
+    monkeypatch.setenv("VISITED_CACHE", str(tmp_path / "v.json"))
+    opened: list[str] = []
+
+    async def search(_q, limit=8):
+        return [("https://a.io/", "A"), ("https://b.io/", "B")]
+
+    async def page(url):
+        opened.append(url)
+        return "rfid readers" if "a.io" in url else "recipes"
+
+    monkeypatch.setattr(sources, "web_search", search)
+    monkeypatch.setattr(sources.web, "fetch_page_text", page)
+    first = asyncio.run(sources._company_signals(["q"], ["rfid"]))
+    second = asyncio.run(sources._company_signals(["q"], ["rfid"]))
+    assert len(first) == 1 and opened == ["https://a.io/", "https://b.io/"]
+    assert (
+        second == []
+    )  # a.io was a match (kept for a few days, but skipped now) and b.io was rejected
+
+
+def test_project_filter_drops_permanent_jobs():
+    from agent import sources
+
+    pk = ["contract", "freelance"]
+    mk = lambda kind, text: sources.Signal(kind, "x", "u", "t", text)  # noqa: E731
+    assert sources.is_project_work(mk("job_post", "AOSP contract engineer, 6 months"), pk)
+    assert not sources.is_project_work(mk("job_post", "Full-time AOSP engineer, salary 120k"), pk)
+    assert not sources.is_project_work(mk("job_post", "AOSP engineer wanted"), pk)
+    assert sources.is_project_work(mk("project_post", "SEEKING FREELANCER: AOSP"), pk)
+    assert sources.is_project_work(mk("company_page", "RFID readers"), pk)
+
+
+def test_old_posts_are_dropped():
+    from datetime import UTC, datetime
+
+    from agent import sources
+
+    now = datetime(2026, 10, 2, tzinfo=UTC).timestamp()
+
+    def mk(text, **kw):
+        return sources.Signal(kw.pop("kind", "web_page"), "x", kw.pop("url", "u"), "t", text, **kw)
+
+    old = datetime(2025, 8, 1, tzinfo=UTC).timestamp()
+    new = datetime(2026, 9, 20, tzinfo=UTC).timestamp()
+    assert sources.is_stale(mk("x", published=old), 45, now)
+    assert not sources.is_stale(mk("x", published=new), 45, now)
+    assert sources.is_stale(mk("Posted March 12, 2025. Contract AOSP engineer"), 45, now)
+    assert sources.is_stale(mk("project", url="https://a.io/blog/2025/03/aosp"), 45, now)
+    assert not sources.is_stale(mk("Posted September 2026. Contract AOSP"), 45, now)
+    assert not sources.is_stale(mk("Contract AOSP engineer, remote"), 45, now)  # no date: kept
+    assert not sources.is_stale(
+        mk("Founded March 2012. RFID readers", kind="company_page"), 45, now
+    )
+
+
+def test_bot_check_pages_are_recognised():
+    from agent import chrome
+
+    cf = "<html><title>Just a moment...</title><body>Verifying you are human. This may take a few seconds.</body></html>"
+    assert chrome.bot_check(cf)
+    assert not chrome.bot_check(
+        "<html><body>" + "Contact us at sales@acme.io. " * 20 + "</body></html>"
+    )
+
+
+def test_manual_reason_only_for_bot_blocked_sites():
+    web.bot_blocked.discard("blocked.io")
+    assert contacts.manual_reason("blocked.io") is None
+    web.bot_blocked.add("www.blocked.io")
+    try:
+        assert "bot check" in (contacts.manual_reason("blocked.io") or "")
+    finally:
+        web.bot_blocked.discard("www.blocked.io")

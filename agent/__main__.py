@@ -1,3 +1,4 @@
+"""CLI: python -m agent run | dryrun | browse | fill-form | send | review | approve | reject."""
 """CLI: python -m agent run | dryrun | send | replies | followups | review | approve | reject."""
 
 import argparse
@@ -20,9 +21,13 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         action="store_true",
         help="DELETE today's saved blog post (and its platform versions), then write a new one",
     )
+    r.add_argument(
+        "--visible", action="store_true", help="do the web work in a visible Chrome window (Google)"
+    )
     d = sub.add_parser(
         "dryrun", help="live scraping + real LLM, no database, no email; writes out/*.md"
     )
+    d.add_argument("--visible", action="store_true", help="use a visible Chrome window (Google)")
     d.add_argument("--leads", type=int, default=3)
     d.add_argument("--signals", type=int, default=40)
     d.add_argument("--no-blog", action="store_true")
@@ -50,6 +55,19 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
     dm.add_argument(
         "--no-run", action="store_true", help="only the checks and the summary of existing data"
     )
+    ff = sub.add_parser(
+        "fill-form",
+        help="open a company's contact form in Chrome, pre-filled with a draft; you review and send",
+    )
+    ff.add_argument("company", help="domain or id of a company that has a contact form")
+    br = sub.add_parser(
+        "browse", help="watch a visible Chromium search for a company and read its contact details"
+    )
+    br.add_argument("company", help="company name or domain")
+    sub.add_parser(
+        "manual",
+        help="companies to contact by hand: bot-protected sites and contact-form-only sites",
+    )
     sub.add_parser("send", help="send approved emails now")
     sub.add_parser("replies", help="classify new replies and queue approved answers now")
     sub.add_parser("followups", help="draft follow-ups for unopened, unanswered intros now")
@@ -61,9 +79,13 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         p.add_argument("ids", nargs="*")
         p.add_argument("--all", action="store_true", help="every drafted email")
     a = ap.parse_args(argv)
+    if getattr(a, "visible", False):
+        os.environ["BROWSER_VISIBLE"] = "1"
 
     try:
-        if a.cmd not in ("dryrun", "check", "slack-setup") and not os.environ.get("DATABASE_URL"):
+        if a.cmd not in ("dryrun", "check", "slack-setup", "browse") and not os.environ.get(
+            "DATABASE_URL"
+        ):
             print(  # noqa: T201
                 f"'{a.cmd}' needs a database: set DATABASE_URL in .env (see README), "
                 "or use `python -m agent dryrun`, which needs none."
@@ -111,6 +133,23 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
             from . import notify  # noqa: PLC0415
 
             print(json.dumps(await notify.sweep()))  # noqa: T201
+        elif a.cmd == "manual":
+            from . import store  # noqa: PLC0415
+
+            rows = await store.companies_to_contact_manually()
+            for r in rows:
+                how = r["manual_reason"] or f"contact form: {r['contact_form_url']}"
+                print(f"{r['name']}  https://{r['domain']}  [{how}]")  # noqa: T201
+            if not rows:
+                print("nothing to contact by hand")  # noqa: T201
+        elif a.cmd == "browse":
+            from . import browse  # noqa: PLC0415
+
+            print(await browse.lookup(a.company))  # noqa: T201
+        elif a.cmd == "fill-form":
+            from . import formfill  # noqa: PLC0415
+
+            print(await formfill.run(a.company))  # noqa: T201
         elif a.cmd == "replies":
             from . import replies  # noqa: PLC0415
 
@@ -139,6 +178,9 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
                 ids = [str(d["id"]) for d in await review.list_drafts()] if a.all else a.ids
                 print(f"{await review.decide(ids, a.cmd == 'approve')} {a.cmd}d")  # noqa: T201
     finally:
+        from . import chrome  # noqa: PLC0415
+
+        await chrome.close()
         await db.close_pool()
     return 0
 

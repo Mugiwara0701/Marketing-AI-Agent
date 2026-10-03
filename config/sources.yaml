@@ -39,15 +39,92 @@ extra_lead_feeds: []
 
 # Portals that forbid scraping are blocked in code (LinkedIn, Indeed, Naukri, Glassdoor, Monster, Foundit).
 
+# Posts older than this many days are dropped (by the source's date, or the newest date written in the text).
+max_age_days: 45
+
+# We sell project delivery, not recruiting: keep contract / freelance / outsourced project work and drop permanent jobs.
+# work_type: projects (default) or all. Product-company pages and the HN freelancer thread always pass.
+work_type: projects
+project_keywords:
+  - contract
+  - contractor
+  - freelance
+  - freelancer
+  - consultant
+  - consulting
+  - project-based
+  - project based
+  - outsource
+  - outsourced
+  - outsourcing
+  - rfp
+  - request for proposal
+  - statement of work
+  - fixed price
+  - fixed-price
+  - short-term
+  - short term
+  - agency
+  - turnkey
+
 # Free web search for pages not on the boards above. Set SEARXNG_URL (self-hosted SearXNG) for reliable results;
 # without it the agent tries DuckDuckGo's HTML page, which usually blocks bots.
 search_queries:
-  - '"AOSP" "BSP" engineer careers'
-  - '"Android Automotive" platform engineer hiring'
-  - '"board bring-up" embedded linux engineer hiring'
-  - '"Yocto" "BSP" engineer job'
+  - '"AOSP" contract developer needed project'
+  - '"Android Automotive" freelance OR contract engineer project'
+  - 'need "Android BSP" developer freelance project'
+  - '"board bring-up" embedded linux contractor needed'
+  - 'outsource Android device firmware development project'
   - 'AOSP customization project "request for proposal"'
-  - 'hiring "Android HAL" "vehicle HAL" engineer'
+  - 'embedded Linux Yocto BSP "statement of work" OR "RFP"'
+  - 'looking for agency Android custom ROM OEM firmware development'
+  - '"Android HAL" OR "vehicle HAL" contract engineer short-term'
+
+# Companies that BUILD products on Android / embedded Linux (not hiring pages), e.g. RFID, NFC and payment device makers.
+# Their own website is the signal; the LLM decides whether they are a plausible customer.
+company_keywords:
+  - rfid
+  - nfc
+  - uhf
+  - smart card reader
+  - card reader
+  - pos terminal
+  - payment terminal
+  - handheld
+  - rugged
+  - kiosk
+  - barcode
+  - android device
+  - android-based
+  - aosp
+  - android os
+  - embedded linux
+  - bsp
+  - set-top box
+  - digital signage
+  - telematics
+  - gateway
+  - hmi
+  - wearable
+  - drone
+company_queries:
+  - 'RFID reader manufacturer Android device SDK'
+  - 'NFC RFID handheld terminal Android manufacturer'
+  - 'UHF RFID reader embedded Linux Android OEM'
+  - 'smart card reader payment terminal Android manufacturer'
+  - 'rugged Android handheld computer manufacturer'
+  - 'Android POS terminal manufacturer custom firmware'
+  - 'Android kiosk digital signage hardware OEM'
+  - 'Android set-top box OTT hardware manufacturer'
+  - 'custom Android tablet ODM embedded hardware'
+  - 'barcode scanner mobile computer manufacturer Android'
+  - 'IoT gateway embedded Linux hardware manufacturer'
+  - 'vehicle telematics device Android embedded Linux manufacturer'
+  - 'medical device Android embedded tablet manufacturer'
+  - 'industrial HMI panel Android embedded Linux manufacturer'
+  - 'EV charger smart display embedded Linux Android OEM'
+  - 'smart glasses wearable Android AOSP hardware company'
+  - 'drone ground control Android embedded Linux manufacturer'
 
 # Blog research: what is hot right now. Items are ranked by popularity (HN points, dev.to reactions) x freshness.
 topic_feeds:
