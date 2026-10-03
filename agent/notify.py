@@ -47,7 +47,12 @@ def chunks(text: str, size: int = _THREAD_CHUNK) -> list[str]:
 
 
 def email_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
-    head = f"*New lead: {esc(row['company'])}*  ({esc(row['domain'])})"
+    follow = row.get("step", 1) > 1
+    head = (
+        f"*Follow-up: {esc(row['company'])}*  ({esc(row['domain'])})  _no open or reply yet_"
+        if follow
+        else f"*New lead: {esc(row['company'])}*  ({esc(row['domain'])})"
+    )
     facts = [
         f"*Project:* {esc(clip(row['project_summary'] or '-', 500))}",
         f"*Tech:* {esc(', '.join(row['technologies'] or []) or '-')}",
@@ -64,7 +69,7 @@ def email_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
         {"type": "section", "text": {"type": "mrkdwn", "text": clip(draft, _SECTION_MAX)}},
         *slack.approval_blocks("Approve this email for sending?", approval_id, [("Approve", "approve_email"), ("Skip", "skip_email")])[1:],
     ]  # fmt: skip
-    return f"New lead: {row['company']}", blocks
+    return f"{'Follow-up' if follow else 'New lead'}: {row['company']}", blocks
 
 
 def post_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
@@ -83,7 +88,30 @@ def post_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
     return f"Blog draft: {row['title']}", blocks
 
 
-_EMAIL_Q = """select e.id, e.subject, e.body, e.review_note, c.email, c.name, c.role,
+def reply_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
+    head = f"*Reply from {esc(row['company'])}*  ({esc(row['email'])})   *Label:* {esc(row['label'] or '-')}"
+    if row["review_note"]:
+        head += f"\n:warning: *Checks flagged:* {esc(row['review_note'])}"
+    inbound = f"*They wrote:*\n{esc(clip(row['body'] or '', 1200))}"
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": clip(head, _SECTION_MAX)}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": clip(inbound, _SECTION_MAX)}},
+    ]
+    if row["status"] == "classified":  # still undecided: offer buttons
+        if row["draft_response"]:
+            draft = f"*Draft answer:*\n{esc(clip(row['draft_response'], 1800))}"
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": clip(draft, _SECTION_MAX)}})
+            buttons = [("Approve", "approve_reply"), ("Skip", "skip_reply")]
+        else:
+            buttons = [("Dismiss", "skip_reply")]
+        blocks += slack.approval_blocks("Send this answer?", approval_id, buttons)[1:]
+    return f"Reply from {row['company']}", blocks
+
+
+_REPLY_Q = """select r.id, r.status, r.label, r.body, r.draft_response, r.review_note, c.email, co.name as company
+                from replies r join contacts c on c.id=r.contact_id join companies co on co.id=c.company_id
+               where true"""
+_EMAIL_Q = """select e.id, e.step, e.subject, e.body, e.review_note, c.email, c.name, c.role,
                   co.name as company, co.domain, co.project_summary, co.technologies, co.source_url
              from emails e join contacts c on c.id=e.contact_id join companies co on co.id=c.company_id
             where e.status='drafted'"""
@@ -118,6 +146,8 @@ async def _safe_send(kind: str, row) -> bool:
     chan, build = (
         (env("SLACK_CHANNEL_OUTREACH", "#outreach-approvals"), email_blocks)
         if kind == "email"
+        else (env("SLACK_CHANNEL_OUTREACH", "#outreach-approvals"), reply_blocks)
+        if kind == "reply"
         else (env("SLACK_CHANNEL_CONTENT", "#content"), post_blocks)
     )
     try:
@@ -135,6 +165,13 @@ async def post_email(email_id) -> bool:
     return bool(row) and await _safe_send("email", row)
 
 
+async def post_reply(reply_id) -> bool:
+    if not enabled():
+        return False
+    row = await db.fetchrow(_REPLY_Q + " and r.id=$1::uuid", str(reply_id))
+    return bool(row) and await _safe_send("reply", row)
+
+
 async def post_blog(post_id) -> bool:
     if not enabled():
         return False
@@ -144,12 +181,14 @@ async def post_blog(post_id) -> bool:
 
 async def sweep() -> dict:
     """Manual: re-post every undecided draft. May duplicate messages already posted."""
-    stats = {"emails": 0, "posts": 0, "failed": 0}
+    stats = {"emails": 0, "replies": 0, "posts": 0, "failed": 0}
     if not enabled():
         log.info("slack not configured (SLACK_BOT_TOKEN); nothing posted")
         return stats
     for r in await db.fetch(_EMAIL_Q + " order by e.created_at limit 20"):
         stats["emails" if await _safe_send("email", r) else "failed"] += 1
+    for r in await db.fetch(_REPLY_Q + " and r.status='classified' order by r.received_at limit 20"):
+        stats["replies" if await _safe_send("reply", r) else "failed"] += 1
     for r in await db.fetch(_POST_Q + " order by created_at limit 5"):
         stats["posts" if await _safe_send("post", r) else "failed"] += 1
     return stats

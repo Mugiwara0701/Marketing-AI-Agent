@@ -26,10 +26,25 @@ async function verify(req: Request, body: string): Promise<boolean> {
 // action_id -> what it means. `table`/`from`/`to` is the state change applied to the referenced row.
 const ACTIONS: Record<
   string,
-  { kind: "email" | "post"; status: "approved" | "rejected"; table: string; from: string[]; to: string }
+  {
+    kind: "email" | "post" | "reply";
+    status: "approved" | "rejected";
+    table: string;
+    from: string[];
+    to: string;
+  }
 > = {
   approve_email: { kind: "email", status: "approved", table: "emails", from: ["drafted"], to: "approved" },
   skip_email: { kind: "email", status: "rejected", table: "emails", from: ["drafted"], to: "skipped" },
+  // Replies: 'acknowledged' = approved; the daily agent then queues the draft as an email for the mailer.
+  approve_reply: {
+    kind: "reply",
+    status: "approved",
+    table: "replies",
+    from: ["classified"],
+    to: "acknowledged",
+  },
+  skip_reply: { kind: "reply", status: "rejected", table: "replies", from: ["classified"], to: "handled" },
   approve_post: {
     kind: "post",
     status: "approved",

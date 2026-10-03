@@ -1,4 +1,4 @@
-"""One bounded daily run: send approved emails -> leads -> blog. Then exit."""
+"""One bounded daily run: replies -> send approved emails -> follow-ups -> leads -> blog. Then exit."""
 
 import asyncio
 import time
@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from agentkit import db
 from agentkit.log import get_logger
 
-from . import blog, leads, mailer, notify, settings
+from . import blog, followups, leads, mailer, notify, replies, settings
 
 log = get_logger("agent.run")
 SERVICE = "agent"
@@ -51,8 +51,14 @@ async def daily_run(
     await db.start_run(SERVICE, "daily_run", run_id)
     out: dict = {}
     try:
+        # Replies first: it queues answers a person approved, so the send step below delivers them.
+        if only in (None, "replies"):
+            out["replies"] = await _step("replies", replies.run, 20 * 60)
         if only == "send" or (only is None and mailer.sending_enabled()):
             out["send"] = await _step("send", mailer.send_approved, 15 * 60)
+        if only in (None, "followups"):
+            deadline = time.monotonic() + 10 * 60
+            out["followups"] = await _step("followups", lambda: followups.run(deadline), 12 * 60)
         if only in (None, "leads"):
             budget = total - cfg.blog_reserve_minutes * 60 - (time.monotonic() - start)
             deadline = time.monotonic() + budget

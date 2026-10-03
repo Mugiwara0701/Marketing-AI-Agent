@@ -4,6 +4,8 @@ tasks:
   lead.qualify: dev
   lead.extract_contact: dev
   outreach.draft: dev
+  email.reply: dev
+  email.followup: dev
   content.plan: dev
   content.adapt: dev
   content.draft_post: primary

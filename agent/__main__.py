@@ -1,4 +1,5 @@
 """CLI: python -m agent run | dryrun | browse | fill-form | send | review | approve | reject."""
+"""CLI: python -m agent run | dryrun | send | replies | followups | review | approve | reject."""
 
 import argparse
 import asyncio
@@ -12,8 +13,8 @@ from agentkit import db
 async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
     ap = argparse.ArgumentParser(prog="agent", description="Daily AOSP/embedded lead + blog agent")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="one bounded daily run (send approved -> leads -> blog)")
-    r.add_argument("--only", choices=["send", "leads", "blog"])
+    r = sub.add_parser("run", help="one bounded daily run (replies -> send approved -> follow-ups -> leads -> blog)")
+    r.add_argument("--only", choices=["replies", "send", "followups", "leads", "blog"])
     r.add_argument("--force", action="store_true", help="run even if today's run already succeeded")
     r.add_argument(
         "--redo-blog",
@@ -68,6 +69,8 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         help="companies to contact by hand: bot-protected sites and contact-form-only sites",
     )
     sub.add_parser("send", help="send approved emails now")
+    sub.add_parser("replies", help="classify new replies and queue approved answers now")
+    sub.add_parser("followups", help="draft follow-ups for unopened, unanswered intros now")
     sub.add_parser("review", help="list drafted emails awaiting approval")
     s = sub.add_parser("show", help="show one draft in full")
     s.add_argument("id")
@@ -147,6 +150,14 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
             from . import formfill  # noqa: PLC0415
 
             print(await formfill.run(a.company))  # noqa: T201
+        elif a.cmd == "replies":
+            from . import replies  # noqa: PLC0415
+
+            print(json.dumps(await replies.run()))  # noqa: T201
+        elif a.cmd == "followups":
+            from . import followups  # noqa: PLC0415
+
+            print(json.dumps(await followups.run()))  # noqa: T201
         elif a.cmd == "send":
             from . import mailer  # noqa: PLC0415
 

@@ -1,14 +1,12 @@
-"""Send APPROVED outreach emails over SMTP, with suppression, caps and an unsubscribe link."""
+"""Send APPROVED emails through Resend, with suppression, caps and an unsubscribe link."""
 
 import asyncio
 import hashlib
 import hmac
-import smtplib
-import ssl
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 
-from agentkit import db
+from agentkit import db, resend
 from agentkit.config import env
 from agentkit.log import get_logger
 
@@ -46,18 +44,28 @@ def build_message(row, to_addr: str) -> EmailMessage:
     msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid()
     msg["List-Unsubscribe"] = f"<{url}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+    if row.get("in_reply_to"):  # follow-ups and replies thread under the mail they answer
+        msg["In-Reply-To"] = msg["References"] = row["in_reply_to"]
+    if reply_to := env("REPLY_TO"):
+        msg["Reply-To"] = reply_to
     msg.set_content(row["body"] + footer)
     return msg
 
 
-def _smtp_send(msg: EmailMessage) -> None:
-    host, port = env("SMTP_HOST", required=True), int(env("SMTP_PORT", "587") or 587)
-    with smtplib.SMTP(host, port, timeout=60) as s:
-        s.starttls(context=ssl.create_default_context())
-        user = env("SMTP_USER")
-        if user:
-            s.login(user, env("SMTP_PASSWORD", required=True))
-        s.send_message(msg)
+def resend_payload(msg: EmailMessage, to_addr: str) -> dict:
+    """Map the built message to Resend's JSON body; everything but the core fields goes in headers."""
+    core = {"from", "to", "subject", "date", "reply-to", "content-type", "mime-version",
+            "content-transfer-encoding"}  # fmt: skip
+    payload = {
+        "from": msg["From"],
+        "to": [to_addr],
+        "subject": msg["Subject"],
+        "text": msg.get_content(),
+        "headers": {k: str(v) for k, v in msg.items() if k.lower() not in core},
+    }
+    if msg["Reply-To"]:
+        payload["reply_to"] = msg["Reply-To"]
+    return payload
 
 
 def _allowed_in_env(addr: str) -> bool:
@@ -103,10 +111,10 @@ async def send_approved(limit: int | None = None) -> dict:
                     )
                 break
             msg = build_message(row, addr)
-            await asyncio.to_thread(_smtp_send, msg)
+            provider_id = await resend.send_email(resend_payload(msg, addr), str(row["id"]))
             await db.execute(
-                "update emails set status='sent', sent_at=now(), message_id=$2, mailbox=$3, updated_at=now() where id=$1",
-                row["id"], msg["Message-ID"], mailbox,
+                "update emails set status='sent', sent_at=now(), message_id=$2, provider_id=$3, mailbox=$4, updated_at=now() where id=$1",
+                row["id"], msg["Message-ID"], provider_id, mailbox,
             )  # fmt: skip
             stats["sent"] += 1
             await asyncio.sleep(cfg.send_gap_seconds)
