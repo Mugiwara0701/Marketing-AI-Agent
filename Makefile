@@ -4,7 +4,7 @@ install:
 	pip install -r requirements-dev.txt yamllint sqlfluff shellcheck-py actionlint-py pre-commit
 
 test:
-	pytest libs/agentkit agent
+	pytest libs/agentkit agent sandbox
 
 lint:
 	ruff check .

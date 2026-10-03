@@ -33,6 +33,10 @@ async def _retry_without_contact(slots: int, deadline: float, stats: dict) -> in
         try:
             found = await contacts.find_contact(co["domain"])
             if not found:
+                if form := contacts.form_urls.get(co["domain"]):
+                    await store.set_form_url(co["id"], form)
+                if why := contacts.manual_reason(co["domain"]):
+                    await store.set_manual_reason(co["id"], why)
                 await store.touch_company(co["id"])  # go to the back of the queue
                 continue
             contact, url, c_problems = found
@@ -115,6 +119,8 @@ async def run(deadline: float) -> dict:  # noqa: PLR0915
                     source=sig.source,
                     source_url=sig.url,
                     review=True,
+                    form_url=contacts.form_urls.get(domain),
+                    manual_reason=contacts.manual_reason(domain),
                 )
                 await store.record_signal(sig, q.model_dump(), cid)
                 continue

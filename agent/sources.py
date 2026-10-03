@@ -5,10 +5,14 @@ continues with the others.
 """
 
 import hashlib
+import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from html import unescape
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -17,7 +21,7 @@ import yaml
 from agentkit.config import env
 from agentkit.log import get_logger
 
-from . import settings, web
+from . import chrome, settings, web
 
 log = get_logger("agent.sources")
 
@@ -26,13 +30,14 @@ log = get_logger("agent.sources")
 class Signal:
     """One public listing that might show a company needs AOSP / embedded engineering work."""
 
-    kind: str  # job_post | project_post | web_page
-    source: str  # hn_hiring | remoteok | remotive | weworkremotely | feed | search
+    kind: str  # job_post | project_post | web_page | company_page
+    source: str  # hn_hiring | remoteok | remotive | weworkremotely | feed | search | company_search
     url: str
     title: str
     text: str
     company_hint: str = ""
     domain_hint: str = ""  # company website when the source knows it (company hiring feeds)
+    published: float | None = None  # epoch seconds when the source says when it was posted
     hash: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -147,7 +152,8 @@ async def _hn_hiring(keywords: list[str]) -> list[Signal]:
                 text = strip_html(h.get("comment_text") or "")
                 url = f"https://news.ycombinator.com/item?id={h.get('objectID')}"
                 if text and matches(text, keywords):
-                    seen[url] = Signal(kind, "hn_hiring", url, text[:100], text[:3000])
+                    seen[url] = Signal(kind, "hn_hiring", url, text[:100], text[:3000],
+                                       published=h.get("created_at_i"))  # fmt: skip
     return list(seen.values())
 
 
@@ -162,7 +168,8 @@ async def _remoteok(keywords: list[str]) -> list[Signal]:
         )
         if matches(text, keywords):
             out.append(Signal("job_post", "remoteok", j.get("url") or "", j["position"],
-                              f"Company: {j.get('company', '')}. {text[:3000]}", j.get("company", "")))  # fmt: skip
+                              f"Company: {j.get('company', '')}. {text[:3000]}", j.get("company", ""),
+                              published=j.get("epoch")))  # fmt: skip
     return out
 
 
@@ -179,7 +186,8 @@ async def _remotive(keywords: list[str]) -> list[Signal]:
             if matches(text, keywords):
                 out[j["url"]] = Signal("job_post", "remotive", j["url"], j.get("title", ""),
                                        f"Company: {j.get('company_name', '')}. {text[:3000]}",
-                                       j.get("company_name", ""))  # fmt: skip
+                                       j.get("company_name", ""),
+                                       published=_iso_epoch(j.get("publication_date")))  # fmt: skip
     return list(out.values())
 
 
@@ -193,7 +201,7 @@ async def _arbeitnow(keywords: list[str]) -> list[Signal]:
         if matches(text, keywords):
             out.append(Signal("job_post", "arbeitnow", j.get("url", ""), j.get("title", ""),
                               f"Company: {j.get('company_name', '')}. Location: {j.get('location', '')}. {text[:3000]}",
-                              j.get("company_name", "")))  # fmt: skip
+                              j.get("company_name", ""), published=j.get("created_at")))  # fmt: skip
     return out
 
 
@@ -240,6 +248,10 @@ async def web_search(query: str, limit: int = 8) -> list[tuple[str, str]]:
     """(url, title) results. Prefers a self-hosted SearXNG (SEARXNG_URL, free, JSON enabled);
     falls back to DuckDuckGo's HTML page, which usually answers bots with a challenge page."""
     searx = env("SEARXNG_URL")
+    if chrome.enabled() and (
+        hits := await chrome.google(query, limit)
+    ):  # visible mode: Google in Chrome
+        return hits
     try:
         if searx:
             data = await _json(f"{searx.rstrip('/')}/search", q=query, format="json")
@@ -257,17 +269,136 @@ async def web_search(query: str, limit: int = 8) -> list[tuple[str, str]]:
     return results[:limit]
 
 
+# Pages the search steps already opened, so a new run goes to new sites instead of the same ones again.
+# Pages that did not match are skipped for a long time; matches only briefly (they are deduplicated by the
+# database once processed, but a run cut short by the daily cap must be able to come back to them).
+_VISITED_FILE = ".agent-visited.json"
+_SKIP_DAYS = {"rejected": 14, "matched": 3}
+_NEW_PER_QUERY = 8  # new pages opened per search query
+_RESULTS_PER_QUERY = 20  # ask for more results so enough are new after skipping visited ones
+
+
+def _visited_path() -> Path:
+    return Path(env("VISITED_CACHE", _VISITED_FILE) or _VISITED_FILE)
+
+
+def _load_visited() -> dict[str, dict]:
+    try:
+        return json.loads(_visited_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_visited(visited: dict[str, dict]) -> None:
+    cutoff = time.time() - 30 * 86400
+    keep = {k: v for k, v in visited.items() if v.get("at", 0) > cutoff}
+    try:
+        _visited_path().write_text(json.dumps(keep), encoding="utf-8")
+    except OSError:
+        log.warning("could not save the visited-pages cache")
+
+
+def _recently_visited(visited: dict[str, dict], key: str) -> bool:
+    v = visited.get(key)
+    return bool(v) and time.time() - v["at"] < _SKIP_DAYS.get(v.get("status", ""), 14) * 86400
+
+
 async def _search_signals(queries: list[str], keywords: list[str]) -> list[Signal]:
     out: dict[str, Signal] = {}
+    visited = _load_visited()
     for q in queries:
-        for url, title in await web_search(q):
+        opened = 0
+        for url, title in await web_search(q, limit=_RESULTS_PER_QUERY):
             dom = web.registrable_domain(url)
-            if url in out or not dom or web.blocked(url):
+            if url in out or not dom or web.blocked(url) or _recently_visited(visited, url):
                 continue
+            if opened >= _NEW_PER_QUERY:
+                break
+            opened += 1
             text = await web.fetch_page_text(url)
-            if text and matches(f"{title} {text}", keywords):
+            hit = bool(text) and matches(f"{title} {text}", keywords)
+            visited[url] = {"at": time.time(), "status": "matched" if hit else "rejected"}
+            if hit:
                 out[url] = Signal("web_page", "search", url, title, f"{title}. {text[:3000]}")
+    _save_visited(visited)
     return list(out.values())
+
+
+async def _company_signals(queries: list[str], keywords: list[str]) -> list[Signal]:
+    """Companies that BUILD Android / RFID / embedded products (not hiring pages): their own site is the signal."""
+    out: dict[str, Signal] = {}
+    visited = _load_visited()
+    for q in queries:
+        opened = 0
+        for url, title in await web_search(q, limit=_RESULTS_PER_QUERY):
+            dom = web.registrable_domain(
+                url
+            )  # one visit per company, whichever page the search returned
+            if not web.is_company_site(dom) or web.blocked(url) or dom in out:
+                continue
+            if _recently_visited(visited, f"company:{dom}"):
+                continue
+            if opened >= _NEW_PER_QUERY:
+                break
+            opened += 1
+            text = await web.fetch_page_text(url)
+            hit = bool(text) and matches(f"{title} {text}", keywords)
+            visited[f"company:{dom}"] = {
+                "at": time.time(),
+                "status": "matched" if hit else "rejected",
+            }
+            if hit:
+                out[dom] = Signal(
+                    "company_page", "company_search", url, title, f"{title}. {text[:3000]}",
+                    domain_hint=dom,
+                )  # fmt: skip
+    _save_visited(visited)
+    return list(out.values())
+
+
+_MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec"
+_DATE_YEARS = re.compile(
+    rf"(?:\b(?:{_MONTHS})[a-z]*\.?\s+(?:\d{{1,2}}(?:st|nd|rd|th)?,?\s+)?(20\d\d)\b"  # March 2025, Mar 3, 2025
+    r"|\b(20\d\d)-\d\d-\d\d\b"  # 2025-03-14
+    r"|\b\d{1,2}[./]\d{1,2}[./](20\d\d)\b"  # 14.03.2025
+    r"|/(20\d\d)/\d\d/)",  # /2025/03/ in a URL
+    re.I,
+)
+
+
+def _iso_epoch(value) -> float | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def is_stale(sig: Signal, max_age_days: int, now: float | None = None) -> bool:
+    """True if the post is older than max_age_days. Uses the source's date when it has one; otherwise the newest
+    date written in the text or URL (company pages are never judged by text, products do not expire)."""
+    now = now or time.time()
+    if sig.published:
+        return now - float(sig.published) > max_age_days * 86400
+    if sig.kind == "company_page":
+        return False
+    years = [
+        int(y)
+        for m in _DATE_YEARS.finditer(f"{sig.title} {sig.url} {sig.text}")
+        for y in m.groups()
+        if y
+    ]
+    if not years:
+        return False  # no date to judge by: keep it, the LLM and the human review decide
+    newest_possible = datetime(max(years), 12, 31, tzinfo=UTC).timestamp()  # most generous reading
+    return now - newest_possible > max_age_days * 86400
+
+
+def is_project_work(sig: Signal, project_kw: list[str]) -> bool:
+    """Contract / freelance / outsourced project work, not a permanent job. Company pages (their own products)
+    and freelancer-thread posts always pass; anything else needs a project word such as 'contract' or 'RFP'."""
+    if sig.kind in ("company_page", "project_post"):
+        return True
+    return matches(f"{sig.title} {sig.text}", project_kw)
 
 
 def balance(signals: list[Signal], max_items: int, per_company: int = 2) -> list[Signal]:
@@ -324,6 +455,21 @@ async def collect_signals(max_items: int) -> list[Signal]:
         if apis.get(flag, True):
             found += await fn(kws)
     found += await _search_signals(cfg.get("search_queries", []), kws)
+    found += await _company_signals(
+        cfg.get("company_queries", []), cfg.get("company_keywords") or kws
+    )
+    max_age = int(cfg.get("max_age_days", 45))
+    fresh = [s for s in found if not is_stale(s, max_age)]
+    log.info(
+        "dropped old posts",
+        extra={"ctx": {"old": len(found) - len(fresh), "max_age_days": max_age}},
+    )
+    found = fresh
+    if cfg.get("work_type", "projects") == "projects":
+        pk = cfg.get("project_keywords") or []
+        before = len(found)
+        found = [s for s in found if is_project_work(s, pk)]
+        log.info("kept project work only", extra={"ctx": {"before": before, "after": len(found)}})
     picked = balance(list({s.hash: s for s in found}.values()), max_items)
     log.info("signals collected", extra={"ctx": {"count": len(picked)}})
     return picked

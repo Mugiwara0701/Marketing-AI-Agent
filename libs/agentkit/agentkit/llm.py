@@ -103,7 +103,7 @@ async def _post(payload: dict, timeout: float) -> dict:
         except (httpx.TransportError, LLMError) as exc:
             last = exc
             await asyncio.sleep(2**attempt)
-    raise LLMError(f"llm unreachable: {last}")
+    raise LLMError(f"llm unreachable: {last!r}")
 
 
 async def complete(

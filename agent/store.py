@@ -39,16 +39,27 @@ async def record_signal(sig, extracted: dict, company_id: UUID | None = None) ->
 
 
 async def save_company(
-    *, name: str, domain: str, status: str, q, source: str, source_url: str, review: bool
+    *,
+    name: str,
+    domain: str,
+    status: str,
+    q,
+    source: str,
+    source_url: str,
+    review: bool,
+    form_url: str | None = None,
+    manual_reason: str | None = None,
 ) -> UUID:
     row = await db.fetchrow(
         """insert into companies (name, domain, status, fit_score, fit_reason, source, source_url,
-               needs_review, website, location, technologies, project_summary)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-           on conflict (domain) do update set updated_at = now()
+               needs_review, website, location, technologies, project_summary, contact_form_url, manual_reason)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           on conflict (domain) do update set updated_at = now(),
+               contact_form_url = coalesce(excluded.contact_form_url, companies.contact_form_url),
+               manual_reason = coalesce(excluded.manual_reason, companies.manual_reason)
            returning id""",
         name, domain, status, q.confidence, q.reason, source, source_url, review,
-        f"https://{domain}", q.location or None, q.technologies, q.project_summary,
+        f"https://{domain}", q.location or None, q.technologies, q.project_summary, form_url, manual_reason,
     )  # fmt: skip
     assert row is not None  # noqa: S101 - insert ... returning always yields a row
     return row["id"]
@@ -133,6 +144,38 @@ async def companies_without_contact(limit: int = 15) -> list:
 async def mark_contact_found(company_id: UUID) -> None:
     await db.execute(
         "update companies set status='contact_found', updated_at=now() where id=$1", company_id
+    )
+
+
+async def set_form_url(company_id: UUID, form_url: str) -> None:
+    await db.execute(
+        "update companies set contact_form_url=$2, updated_at=now() where id=$1",
+        company_id,
+        form_url,
+    )
+
+
+async def company_with_form(ref: str):
+    """A company that has a contact form, by domain or id."""
+    return await db.fetchrow(
+        "select id, name, domain, location, technologies, project_summary, contact_form_url "
+        "from companies where contact_form_url is not null and (domain=$1 or id::text=$1)",
+        ref,
+    )
+
+
+async def set_manual_reason(company_id: UUID, reason: str) -> None:
+    await db.execute(
+        "update companies set manual_reason=$2, updated_at=now() where id=$1", company_id, reason
+    )
+
+
+async def companies_to_contact_manually() -> list:
+    """Companies we could not read automatically: a bot check on their site, or only a contact form."""
+    return await db.fetch(
+        "select name, domain, manual_reason, contact_form_url, project_summary from companies "
+        "where (manual_reason is not null or contact_form_url is not null) and status <> 'contact_found' "
+        "order by created_at desc"
     )
 
 

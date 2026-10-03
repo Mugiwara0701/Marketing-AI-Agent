@@ -26,6 +26,9 @@ _USELESS = (
 )
 _MAX_TEXT = 7000
 
+# domain -> URL of a contact form seen during the last find_contact(domain). Read it when no email was found.
+form_urls: dict[str, str] = {}
+
 
 def emails_on_domain(text: str, domain: str) -> list[str]:
     found = {m.lower().rstrip(".") for m in _EMAIL.findall(text)}
@@ -51,6 +54,12 @@ _ROLE_ORDER = (
 )
 
 
+def manual_reason(domain: str) -> str | None:
+    """Why a company must be contacted by hand: its site refused automated visitors this run."""
+    blocked = web.bot_blocked & {domain, f"www.{domain}"}
+    return "site blocks automated access (bot check)" if blocked else None
+
+
 def pick_role_address(candidates: list[str]) -> str | None:
     """Rule-based fallback when the model fails: the best business role address published on the site."""
     ranked = [
@@ -65,6 +74,8 @@ def pick_role_address(candidates: list[str]) -> str | None:
 async def _base(domain: str) -> str | None:
     """'https://domain' or, if that host does not answer, 'https://www.domain'."""
     for host in (domain, f"www.{domain}"):
+        if host in web.bot_blocked:
+            break
         if await web.fetch(f"https://{host}/") is not None:
             return f"https://{host}"
     return None
@@ -72,15 +83,23 @@ async def _base(domain: str) -> str | None:
 
 async def find_contact(domain: str):
     """Returns (ContactResult, source_url, problems) or None when no public business address is found."""
+    form_urls.pop(domain, None)
     base = await _base(domain)
     if base is None:
+        if domain in web.bot_blocked or f"www.{domain}" in web.bot_blocked:
+            log.info(
+                "site blocks automated access, contact it manually",
+                extra={"ctx": {"domain": domain}},
+            )
         return None
     pages: list[tuple[str, str]] = []
     seen_text: set[str] = set()
     for path in _PATHS:
         url = f"{base}{path}"
-        body = await web.fetch(url)
+        body = await web.fetch_smart(url)
         text = web.html_to_text(body) if body else ""
+        if body and domain not in form_urls and web.has_contact_form(body):
+            form_urls[domain] = url
         if text and text not in seen_text:  # single-page sites answer every path with the same page
             seen_text.add(text)
             pages.append((url, text))
