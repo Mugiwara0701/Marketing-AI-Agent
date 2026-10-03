@@ -21,7 +21,9 @@ log = get_logger("agentkit.llm")
 T = TypeVar("T", bound=BaseModel)
 
 _sem: asyncio.Semaphore | None = None
-_MAX_CONCURRENT = 3
+_MAX_CONCURRENT = (
+    3  # LLM_MAX_CONCURRENT overrides; use 1 when one server swaps models in and out of memory
+)
 # Aliases in models.yaml -> served names on the vLLM host.
 SERVED = {"dev": "agent-dev", "primary": "agent-primary", "fast": "agent-fast"}
 
@@ -40,7 +42,10 @@ class Completion:
 
 
 def model_for(task: str) -> str:
-    """Resolve task -> served model name using config/routing.yaml."""
+    """Resolve task -> served model name. MODEL_<TASK> (e.g. MODEL_GUI_STEP=qwen3-vl:8b) wins over
+    config/routing.yaml, so a model can be swapped without editing files."""
+    if override := env("MODEL_" + re.sub(r"\W+", "_", task).upper()):
+        return override
     cfg = load_routing()
     alias = (cfg.get("tasks") or {}).get(task) or cfg.get("default", "dev")
     return SERVED.get(alias, alias)
@@ -49,7 +54,9 @@ def model_for(task: str) -> str:
 def _semaphore() -> asyncio.Semaphore:
     global _sem
     if _sem is None:
-        _sem = asyncio.Semaphore(_MAX_CONCURRENT)
+        _sem = asyncio.Semaphore(
+            int(env("LLM_MAX_CONCURRENT", str(_MAX_CONCURRENT)) or _MAX_CONCURRENT)
+        )
     return _sem
 
 

@@ -21,6 +21,13 @@ def sending_enabled() -> bool:
     return (env("EMAIL_SENDING_ENABLED", "false") or "false").lower() == "true"
 
 
+def test_recipient() -> str | None:
+    """TEST_RECIPIENT (comma separated) redirects every outgoing mail to those inboxes; the real contact
+    is never emailed. Returns the cleaned, comma-joined list."""
+    addrs = [a.strip() for a in (env("TEST_RECIPIENT", "") or "").split(",") if a.strip()]
+    return ", ".join(addrs) or None
+
+
 def unsubscribe_url(email_id: str) -> str:
     """Matches supabase/functions/unsubscribe: token = hex HMAC-SHA256 of the email id."""
     base = env("UNSUBSCRIBE_BASE_URL", required=True)
@@ -58,7 +65,7 @@ def resend_payload(msg: EmailMessage, to_addr: str) -> dict:
             "content-transfer-encoding"}  # fmt: skip
     payload = {
         "from": msg["From"],
-        "to": [to_addr],
+        "to": [a.strip() for a in to_addr.split(",")],
         "subject": msg["Subject"],
         "text": msg.get_content(),
         "headers": {k: str(v) for k, v in msg.items() if k.lower() not in core},
@@ -80,6 +87,26 @@ def _allowed_in_env(addr: str) -> bool:
     return addr.split("@", 1)[1].lower() in allowed
 
 
+async def deliver(row, recipients: str) -> tuple[str, str]:
+    """Send one request per address: Resend rejects the whole request if any single recipient is not
+    allowed (e.g. onboarding@resend.dev only reaches the account owner). Returns the first
+    (Message-ID, Resend id) that went out; raises only if every address failed."""
+    first: tuple[str, str] | None = None
+    errors: list[str] = []
+    for to in (a.strip() for a in recipients.split(",") if a.strip()):
+        msg = build_message(row, to)
+        try:
+            pid = await resend.send_email(resend_payload(msg, to), f"{row['id']}:{to}")
+        except Exception as exc:
+            errors.append(f"{to}: {exc}")
+            log.warning("send to one recipient failed", extra={"ctx": {"error": str(exc)}})
+            continue
+        first = first or (msg["Message-ID"], pid)
+    if first is None:
+        raise RuntimeError("; ".join(errors) or "no recipient")
+    return first
+
+
 async def send_approved(limit: int | None = None) -> dict:
     stats = {"sent": 0, "skipped": 0, "failed": 0}
     if not sending_enabled():
@@ -91,8 +118,13 @@ async def send_approved(limit: int | None = None) -> dict:
     for n, row in enumerate(rows):
         contact = await db.fetchrow("select email from contacts where id=$1", row["contact_id"])
         addr = contact["email"] if contact else None
+        override = test_recipient()
         try:
-            if not addr or await store.is_suppressed(addr) or not _allowed_in_env(addr):
+            if (
+                not addr
+                or await store.is_suppressed(addr)
+                or (not override and not _allowed_in_env(addr))
+            ):
                 await db.execute(
                     "update emails set status='skipped', updated_at=now() where id=$1", row["id"]
                 )
@@ -110,11 +142,14 @@ async def send_approved(limit: int | None = None) -> dict:
                         "update emails set status='approved' where id = any($1::uuid[])", rest
                     )
                 break
-            msg = build_message(row, addr)
-            provider_id = await resend.send_email(resend_payload(msg, addr), str(row["id"]))
+            to_addr = override or addr
+            outgoing = row
+            if override:  # test mode: show who it would have gone to
+                outgoing = {**row, "subject": f"[TEST for {addr}] {row['subject']}"}
+            message_id, provider_id = await deliver(outgoing, to_addr)
             await db.execute(
                 "update emails set status='sent', sent_at=now(), message_id=$2, provider_id=$3, mailbox=$4, updated_at=now() where id=$1",
-                row["id"], msg["Message-ID"], provider_id, mailbox,
+                row["id"], message_id, provider_id, mailbox,
             )  # fmt: skip
             stats["sent"] += 1
             await asyncio.sleep(cfg.send_gap_seconds)
