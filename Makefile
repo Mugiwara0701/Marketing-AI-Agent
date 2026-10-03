@@ -1,7 +1,11 @@
-.PHONY: llm-verify install test lint format typecheck check run demo
+.PHONY: llm-verify install hooks test lint format typecheck check run demo
 
 install:
 	pip install -r requirements-dev.txt yamllint sqlfluff shellcheck-py actionlint-py pre-commit
+
+# Install the git pre-commit hook so every commit lints the staged files
+hooks:
+	pre-commit install --install-hooks
 
 test:
 	pytest libs/agentkit agent sandbox
