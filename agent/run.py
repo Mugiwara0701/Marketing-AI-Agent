@@ -8,7 +8,8 @@ from collections.abc import Awaitable, Callable
 from agentkit import db
 from agentkit.log import get_logger
 
-from . import blog, followups, leads, mailer, notify, replies, settings
+from . import blog, followups, mailer, notify, replies, settings
+from .leadgen import service as leadgen
 
 log = get_logger("agent.run")
 SERVICE = "agent"
@@ -33,12 +34,6 @@ async def daily_run(
     *, force: bool = False, only: str | None = None, redo_blog: bool = False
 ) -> dict:
     cfg = settings.load()
-    if settings.desktop_mode():
-        # The desktop run only discovers and stores leads (with email drafts). No replies, follow-ups, sending
-        # or blog unless asked for with --only blog.
-        mailer.lock_sending()
-        log.info("desktop mode: email sending is locked off for this run")
-        only = only or "leads"
     if not force and await db.fetchrow(
         "select 1 from agent_runs where service=$1 and job='daily_run' and started_at::date = current_date "
         "and (status='succeeded' or (status='running' and started_at > now() - interval '3 hours'))",
@@ -61,7 +56,9 @@ async def daily_run(
         if only in (None, "replies"):
             out["replies"] = await _step("replies", replies.run, 20 * 60)
         if only == "send" or (only is None and mailer.sending_enabled()):
-            out["send"] = await _step("send", mailer.send_approved, 15 * 60)
+            out["send"] = await _step(
+                "send", leadgen.send, 15 * 60
+            )  # approved emails only (the gate)
         if only in (None, "followups"):
             deadline = time.monotonic() + 10 * 60
             out["followups"] = await _step("followups", lambda: followups.run(deadline), 12 * 60)
@@ -71,7 +68,11 @@ async def daily_run(
             )  # no blog follows: use it all
             budget = total - reserve - (time.monotonic() - start)
             deadline = time.monotonic() + budget
-            out["leads"] = await _step("leads", lambda: leads.run(deadline), max(budget, 60) + 120)
+            out["leads"] = await _step(
+                "leads",
+                lambda: leadgen.run_leads(dry_run=False, deadline=deadline),
+                max(budget, 60) + 120,
+            )
         if only in (None, "blog"):
             out["blog"] = await _step(
                 "blog", blog.run, max(total - (time.monotonic() - start), 300)

@@ -38,6 +38,7 @@ ignore = [
 "agent/portals.py" = ["PERF401"]
 "agent/research.py" = ["PERF401"]   # one parser per portal; explicit loops read better          # CLI prints its report
 "libs/agentkit/agentkit/db.py" = ["PLW0603", "S608"]   # pool singleton; table name is validated
+"agent/leadgen/repository/*" = ["S608"]   # SQL is built only from fixed class constants
 "libs/agentkit/agentkit/llm.py" = ["PLW0603", "PLR0915"]
 "libs/agentkit/agentkit/jobs.py" = ["PLR0915"]   # create_app is one closure by design
 "libs/agentkit/agentkit/retrieve.py" = ["S608"]  # table is checked against an allow-list

@@ -15,7 +15,9 @@ from .tasks import reply
 
 log = get_logger("agent.replies")
 _BATCH = 20
-_QUOTE_START = re.compile(r"^(on .{5,120} wrote:|-{2,}\s*original message|from: .+@)", re.IGNORECASE)
+_QUOTE_START = re.compile(
+    r"^(on .{5,120} wrote:|-{2,}\s*original message|from: .+@)", re.IGNORECASE
+)
 
 _RECEIVED_Q = """select r.id, r.contact_id, r.body, r.subject, r.message_id,
                         e.subject as sent_subject, e.body as sent_body
@@ -84,15 +86,23 @@ async def queue_approved(limit: int = _BATCH) -> int:
             subject = r["subject"] or r["sent_subject"] or "Your message"
             if not subject.lower().startswith("re:"):
                 subject = f"Re: {subject}"
-            thread = r["message_id"] if (r["message_id"] or "").startswith("<") else r["sent_message_id"]
-            await db.execute(
+            thread = (
+                r["message_id"] if (r["message_id"] or "").startswith("<") else r["sent_message_id"]
+            )
+            row = await db.fetchrow(
                 """insert into emails (contact_id, campaign_id, step, status, subject, body, reply_id,
                                        in_reply_to, idempotency_key)
                    select $1, $2, coalesce(max(step), 0) + 1, 'approved', $3, $4, $5, $6, $7
                      from emails where contact_id=$1 and campaign_id=$2
-                   on conflict do nothing""",
+                   on conflict do nothing returning id""",
                 r["contact_id"], cid, subject[:120], r["draft_response"], r["id"], thread, f"reply-{r['id']}",
             )  # fmt: skip
+            if row:  # the person approved this exact text in Slack: record it, the sending gate requires it
+                await db.execute(
+                    """insert into approvals (kind, ref_id, status, decided_by, decided_at, decision_note)
+                       values ('email', $1, 'approved', 'slack:reply-approval', now(), $2)""",
+                    row["id"], f"approved as the answer to reply {r['id']}",
+                )  # fmt: skip
             await db.execute(
                 "update replies set status='handled', updated_at=now() where id=$1", r["id"]
             )

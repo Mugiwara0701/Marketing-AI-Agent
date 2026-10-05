@@ -1,94 +1,97 @@
 # AI Marketing Agent
 
-A small autonomous B2B lead-generation and technical-content agent for an AOSP / embedded-engineering
-services company. It is **not** a general-purpose LLM system and it does **not** run continuously: once a
-day it runs for at most 1-2 hours, saves everything to the database and exits.
+B2B lead generation and outreach for an AOSP / BSP / embedded Linux engineering-services company, plus a daily
+technical blog. It finds **companies that may buy our engineering** (they build EV chargers, kiosks, industrial
+controllers, robots, medical devices, infotainment, IoT / edge devices... on Android or embedded Linux, or they ask for
+outside help), never sellers of boards or devices and never competitors. Every outreach email is **sent only after a
+person approved it**.
 
 ```text
-Daily run (python -m agent run, started by a systemd timer)
+Lead pipeline (agent/leadgen)                                         python -m agent leads run [--dry-run]
 │
-├── Send emails you approved after the previous run
-│
-├── Part 1: Lead generation  (max 10 new leads/day)
-│   ├── Search free public sources: job boards, HN hiring threads, project posts, web search
-│   ├── LLM qualifies each listing: does a named company need AOSP / BSP / Embedded Linux work done?
-│   ├── Extract company, project, technologies, location, website, source URL
-│   ├── Find a public business contact on the company's own site (never guessed)
-│   ├── Deduplicate (by listing and by company domain), save to the database
-│   └── LLM drafts a company-specific proposal email  ->  waits for your approval
-│
-└── Part 2: Daily blog  (1 post/day)
-    ├── Research current AOSP / Android / embedded Linux news and discussions
-    ├── LLM proposes ranked topics; code picks the best one that is not a repeat
-    ├── LLM writes one technical post
-    └── Save post + metadata (sources, tags, checks) to the database
+├── Search strategy      technology x business intent x product domain, 4 query families, no repeats (strategy.py)
+├── Browser              http (SearXNG + polite HTTP) | chrome (Playwright) | desktop (visible Chrome, xdotool + OCR)
+├── Page rules           shop / marketplace / distributor / docs / directory / competitor? -> rejected, no model call
+├── LLM reading          lead.assess: page type, company, product, signal, needs, quotes (one call per page)
+├── Code checks          company named on the page, quotes literally on the page, website never guessed, exclusions
+├── Score 0-100          company / technical / project signal / commercial / contact / evidence, with penalties
+├── Dedup                one company = one lead (domain, normalized name); new pages add evidence
+├── Contact discovery    company's own site: Contact / Team / About links only; decision makers first; never guessed
+├── Email draft          from the evidence only; invented technology and generic drafts are flagged
+├── Slack approval       full lead card + draft, Approve / Reject (or simulated in a dry-run)
+└── Sending              only APPROVED emails, through one gated sender (agent/leadgen/sender.py)
+
+Daily run (python -m agent run, systemd timer): replies -> send approved -> follow-ups -> leads -> blog
 ```
 
-We look for **companies that need this engineering work done** (to sell them our services), not for
-engineers to hire. A job post is only evidence that a company has the work and is short of capacity.
+## Lead states
+
+`DISCOVERED -> QUALIFIED -> CONTACT_FOUND -> EMAIL_DRAFTED -> PENDING_APPROVAL -> APPROVED -> SENT`, plus `REJECTED`
+and `FAILED` (`agent/leadgen/models.py`). Every state is stored (`companies.lead_status`), so a run that crashes is
+resumed by the next one: leads stuck half-way are moved on first, pages and queries already done are not redone.
+
+## Email safety
+
+- An email is sent only if, **in the database query that claims it**, it is `approved`, has an `approvals` row with a
+  recorded human decision (who, when) and, for an intro, its lead is `APPROVED`. The sender checks again right before
+  sending, and a transport refuses anything the gate did not clear. Rejected, pending and unknown emails cannot be sent.
+- Decisions are made in Slack (`supabase/functions/slack-interact` calls the SQL function `decide_email()`) or with
+  `python -m agent leads approve|reject <email id>`. Each draft can be decided exactly once.
+- `EMAIL_SENDING_ENABLED` must be `true` as well (default false). `APP_ENV=dev` limits recipients to
+  `ALLOWED_RECIPIENT_DOMAINS`; `TEST_RECIPIENT` redirects all mail; suppression list, send cap, unsubscribe footer.
+- `--dry-run`: a local SQLite store, Slack messages written to `out/leadgen/approvals/`, approved mail written to
+  `out/leadgen/outbox/`. Nothing leaves the machine.
+
+## Using it
+
+```bash
+cp .env.example .env                                     # fill in; never commit .env
+python -m agent migrate                                  # apply supabase/migrations (incl. 0007_lead_pipeline.sql)
+python -m agent leads queries                            # what the strategy will search next
+python -m agent leads run --dry-run --max-leads 3        # full pipeline, no database, no Slack, no email
+python -m agent leads review [--dry-run]                 # drafts waiting for a decision
+python -m agent leads show <email id> [--dry-run]        # lead, evidence, score, contact, draft, approval
+python -m agent leads approve <email id> [--dry-run]     # or reject; Slack buttons do the same
+python -m agent send [--dry-run]                         # send what was approved (dry-run: to the outbox folder)
+python -m agent run                                      # the daily run (replies, send, follow-ups, leads, blog)
+```
+
+Every run writes a Markdown report (`out/leadgen/run-*.md`): each lead with its score parts, penalties, evidence
+(quotes and URLs), contact, draft and approval state. Logs are one JSON object per line (`Search executed`,
+`Result rejected`, `Lead qualified`, `Contact found`, `Email generated`, `Slack approval requested`, `Email sent`...).
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `agent/` | The daily runner: `run.py` (orchestration + time budget), `leads.py`, `blog.py`, `sources.py`, `contacts.py`, `mailer.py`, `replies.py`, `followups.py`, `review.py`, `store.py`, `web.py` |
-| `agent/tasks/` | The LLM tasks (qualify, extract contact, proposal, reply, follow-up, topics, blog) with schemas and output checks; prompts in `agent/prompts/` |
-| `config/sources.yaml` | Keywords, job APIs, search queries, blog feeds (edit without touching code) |
+| `agent/leadgen/` | The lead pipeline (see its `__init__.py` for one line per module) |
+| `agent/tasks/` | LLM tasks with schemas: `assess` (page reading), `contact`, `proposal`, `search` (desktop SERP), replies, follow-ups, blog |
+| `agent/prompts/` | Prompt files (`lead_assess.txt`, `lead_extract_contact.txt`, `outreach_draft.txt`...) |
+| `agent/gui/` | Desktop Chrome driver (xdotool, OCR, vision fallback) and the sandboxed GUI agent |
+| `agent/` (rest) | Daily runner `run.py`, CLI `__main__.py`, mail building `mailer.py`, replies, follow-ups, blog, polite fetching `web.py`, job feeds `sources.py` |
+| `config/leadgen.yaml` | Search vocabulary, thresholds, exclusions, page budgets (edit without touching code) |
+| `config/sources.yaml` | Job / project feed APIs (optional for leads) and blog research feeds |
 | `config/routing.yaml` | Task -> model alias |
-| `libs/agentkit` | Shared LLM client, DB access, prompts, checks |
-| `services/llm-service` | Self-hosted open-source LLM (vLLM + embeddings) on the office GPU machine |
-| `supabase/` | Migrations and the Edge Functions (`unsubscribe`, `slack-interact`, `resend-webhook`) |
-| `deploy/` | systemd timer + service, approval workflow |
-| `eval/` | Eval sets and runners for prompts/models |
+| `libs/agentkit` | Shared LLM client, DB access, prompts, checks, Slack, Resend |
+| `supabase/` | Migrations and Edge Functions (`slack-interact`, `resend-webhook`, `unsubscribe`) |
+| `deploy/` | systemd timer + service, desktop set-up, remote control |
+| `eval/` | Eval sets and runners for prompts/models (`make llm-verify`) |
 
-## Rules built in
+## Models
 
-- **Limits:** `MAX_NEW_LEADS_PER_DAY=10`, one blog per day (idempotent), `AGENT_MAX_MINUTES=120` hard stop with
-  25 minutes always reserved for the blog; a failing step never blocks the next.
-- **Sending is off by default** (`EMAIL_SENDING_ENABLED=false`): the run still scrapes, qualifies, saves leads and
-  drafts proposals. When enabled, emails are saved as `drafted` and only approved ones are sent (`python -m agent approve`).
-- **Replies and follow-ups:** mail goes out through Resend. Its webhook (`supabase/functions/resend-webhook`)
-  records delivery, opens, bounces and inbound replies. `python -m agent run` classifies replies and drafts an
-  answer for interested people and questions; an intro with no open and no reply after `FOLLOWUP_DELAY_DAYS=4`
-  gets one drafted follow-up. Both are posted to Slack and **sent only after a person approves**.
-  Unsubscribes and bounces are suppressed automatically. Opens are a weak signal (image blocking, Apple Mail
-  privacy), so replies always win. Resend setup: verify the sending domain, turn on open tracking, add a
-  receiving address (MX) and point the webhook at the function; put the address in `REPLY_TO`.
-- **Contacts:** only addresses that appear literally on the company's own website and belong to its own domain.
-- **Polite scraping:** robots.txt respected, per-host delay, identifiable user agent, no private addresses.
-- **Compliance:** suppression list, one-click unsubscribe link and headers, identity + postal address footer
-  (CAN-SPAM / GDPR / DPDP), send cap, `APP_ENV=dev` restricts recipients to `ALLOWED_RECIPIENT_DOMAINS`.
-- **Free sources only:** no paid APIs. Reliable open-web search needs a self-hosted SearXNG (`SEARXNG_URL`);
-  DuckDuckGo's page is used as a fallback but usually blocks bots.
-- LinkedIn is not scraped (its terms forbid it).
+Open models behind an OpenAI-compatible endpoint (`LLM_BASE_URL`: vLLM on the office GPU, or Ollama). Text model:
+`lead.assess` (one call per page that passes the rules), `lead.extract_contact` (only on pages that name people or show
+addresses), `outreach.draft`. The desktop backend also uses `lead.search` to list results from the screen and a vision
+model (`gui.step`) only as a fallback for clicking. Everything else (page intent, prices, job boards, scoring, dedup,
+contact guards, state) is deterministic code.
 
-## Status
+## Research rules
 
-Implemented and unit-tested (31 tests, ruff, mypy): sources, qualification flow, contact guard, proposal drafting,
-blog pipeline, mailer, approval CLI, time-budgeted runner. Free feeds were checked live. **Not yet run end to end**:
-there has been no run against a real LLM host or a live Supabase project (apply `supabase/migrations/*.sql`,
-including `0003_daily_agent.sql`). Expect to tune `config/sources.yaml` and the prompts once real data flows;
-10 qualified leads with public contacts per day is a target, and free sources may yield fewer.
-Design documents in `docs/` describe the earlier multi-service design and are superseded by this README.
-
-## Desktop lead search (Xubuntu)
-
-`python -m agent run --desktop` finds leads with a visible Chrome window driven by mouse and keyboard (xdotool, clipboard,
-OCR), stores them and drafts emails; sending is locked off. See `deploy/desktop-lead-search.md`.
-
-## Quick start
-
-```bash
-cp .env.example .env                 # fill in values
-make install && make test
-python -m agent run --only blog      # try one part (needs LLM_BASE_URL and DATABASE_URL)
-python -m agent run                  # full daily run
-python -m agent replies              # classify new replies, queue approved answers
-python -m agent followups            # draft follow-ups for unopened, unanswered intros
-python -m agent review               # drafted emails (intros, follow-ups); then: approve <id> | --all, reject <id>
-```
-
-LLM host: see `services/llm-service/README.md` (`make llm-verify`). Scheduling: `deploy/README.md`.
+- Only pages a search result or a link on the page leads to are opened: no URL is built from a guess, no crawling.
+  Per-run and per-domain page budgets, a per-host pause, robots.txt (HTTP backend), identifiable user agent.
+- A CAPTCHA, Cloudflare check, login wall or rate limit is never worked around: the engine or site is rested / skipped
+  for the run and recorded. LinkedIn, Indeed, Naukri, Glassdoor and similar portals are never fetched.
+- Business exclusions (big brands, autonomous driving, competitors, Canada / UK / Germany) are in `config/leadgen.yaml`.
 
 ## Code quality and CI
 

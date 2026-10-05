@@ -26,7 +26,9 @@ def _validate(result: llm.Completion) -> list[str]:
     p = result.parsed
     if not isinstance(p, ReplyResult):
         return []
-    problems = checks.run_checks(checks.check_label(p.label, LABELS), checks.check_confidence(p.confidence))
+    problems = checks.run_checks(
+        checks.check_label(p.label, LABELS), checks.check_confidence(p.confidence)
+    )
     if p.label in NEEDS_REPLY:
         problems += checks.run_checks(
             checks.check_length(p.reply_body, 40, 1200),

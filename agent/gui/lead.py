@@ -3,16 +3,14 @@
 The vision model only proposes an email. The harness re-reads the page itself (select all + copy, a
 GUI-level read) and accepts the contact only if the address appears literally on that page and belongs to
 the page's own company domain. Accepted leads are saved, drafted by the text LLM and posted to Slack with
-Approve / Skip, exactly like leads from the scripted path. Nothing is sent without that approval.
+Approve / Reject, exactly like discovered leads. Nothing is sent without that approval.
 """
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 
 from agentkit.log import get_logger
 
-from .. import contacts, notify, store, web
-from ..tasks import proposal
+from .. import contacts, web
 from .executor_client import ExecutorClient
 from .loop import current_url, run_task
 from .policy import Policy
@@ -71,36 +69,24 @@ async def find_company(
 
 
 async def save_and_post(name: str, found: Found) -> str:
-    """Save the lead, draft the email, post it to Slack. Returns a one-line report."""
-    q = SimpleNamespace(
-        confidence=0.7,
-        reason="found by the GUI agent",
-        location=None,
-        technologies=[],
-        project_summary="",
-    )
-    company_id = await store.save_company(
-        name=name,
-        domain=found.domain,
-        status="contact_found",
-        q=q,
-        source="gui-agent",
-        source_url=found.page_url,
-        review=True,  # a person looks closely: this contact came from a vision model
-    )
-    contact = SimpleNamespace(email=found.email, name=found.name, role=found.role)
-    contact_id = await store.save_contact(company_id, contact, found.page_url)
-    ctx = (
-        f"Company: {name}\nWebsite: {found.domain}\nProject: not stated\nTechnologies: not stated\n"
-        f"Contact name: {found.name or 'unknown'}\nContact role: {found.role or 'business contact'}\n"
-    )
-    draft, problems = await proposal.draft_proposal(ctx)
-    note = "; ".join(["found by GUI agent: verify the contact", *problems])
-    email_id = await store.save_email_draft(contact_id, draft.subject, draft.body, note)
-    if not email_id:
-        return "contact saved; an intro email already exists for it"
-    posted = await notify.post_email(email_id)
-    return "draft posted to Slack for approval" if posted else "draft saved (Slack not posted)"
+    """Store the lead, draft the email, request approval (the same states and gate as discovered leads)."""
+    from ..leadgen import config, service  # noqa: PLC0415 - avoids a cycle at import time
+    from ..leadgen.models import Contact, Evidence, Lead  # noqa: PLC0415
+    from ..leadgen.repository import open_repository  # noqa: PLC0415
+
+    lead = Lead(
+        company_name=name, company_website=found.domain, source_urls=[found.page_url],
+        evidence=[Evidence(url=found.page_url, reason="company named by an operator; contact found by the GUI agent",
+                           source="contact")],
+    )  # fmt: skip
+    contact = Contact(name=found.name, role=found.role or "business contact", email=found.email,
+                      source=found.page_url, confidence=0.6, rank=13)  # fmt: skip
+    repo = await open_repository(config.runtime(dry_run=False))
+    try:
+        _, report = await service.submit_lead(repo, lead, contact, source="gui-agent")
+    finally:
+        await repo.close()
+    return report
 
 
 async def find_many(

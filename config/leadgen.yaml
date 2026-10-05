@@ -1,0 +1,142 @@
+# Lead pipeline configuration (python -m agent leads ...). No secrets here: those live in .env.
+#
+# We look for BUYERS of AOSP / BSP / embedded Linux / driver / firmware engineering: companies that build a product or
+# system and may need outside engineering. Sellers of boards, kits and chargers are not leads.
+
+# ---------------------------------------------------------------------------------------------------------- search
+search:
+  # Each run takes the next queries from the strategy (least recently run first). A query run in the last
+  # `repeat_after_days` is not repeated.
+  queries_per_run: 12
+  repeat_after_days: 14
+  results_per_query: 10
+  use_job_feeds: false # also read the job / project feed APIs of config/sources.yaml (hiring signals)
+  feed_items: 40
+  pages_per_query: 4 # results opened per query (after the cheap pre-filter)
+  # Added to every query typed into an engine, so job boards and shops stay out of the results.
+  query_suffix: "-site:indiamart.com -site:amazon.com -site:alibaba.com -site:aliexpress.com"
+
+  # The strategy combines these lists. Families and their share of the queries are in strategy.py:
+  #   need      "<need phrase> <tech> <domain>"            (explicit project / outsourcing requests)
+  #   rfp       "<rfp word> <tech> <domain>"               (tenders, RFQs)
+  #   builder   "<domain> company <builder phrase> <tech>"  (product companies building on our stack)
+  #   hiring    "<domain> company hiring <tech> engineer"  (a named company short of embedded capacity)
+  tech:
+    - AOSP
+    - Android BSP
+    - embedded Android
+    - custom Android
+    - Android HAL
+    - Linux BSP
+    - embedded Linux
+    - Yocto
+    - Linux kernel driver
+    - device driver
+    - board bring-up
+    - U-Boot bootloader
+    - device tree
+    - embedded firmware
+    - i.MX8
+    - Rockchip
+    - Qualcomm Snapdragon
+    - MediaTek
+    - NXP
+    - TI Sitara
+    - STM32
+    - ARM64
+  need_phrases:
+    - looking for embedded developer
+    - looking for engineering partner
+    - need developer for
+    - outsourcing
+    - development partner
+    - contract developer
+    - freelance project
+    - subcontractor
+    - implementation partner
+    - custom development
+  rfp_words:
+    - RFP
+    - RFQ
+    - tender
+    - request for proposal
+  builder_phrases:
+    - developing
+    - building
+    - our product runs
+    - we design
+    - startup building
+  domains:
+    - EV charging station
+    - EV charger
+    - charging dock
+    - self-service kiosk
+    - digital signage
+    - industrial automation
+    - robotics
+    - medical device
+    - automotive infotainment
+    - smart display
+    - POS terminal
+    - payment terminal
+    - smart home
+    - IoT device
+    - edge computing gateway
+    - industrial gateway
+    - telematics
+    - fleet tracking
+    - access control
+    - vending machine
+    - connected device
+    - rugged handheld
+    - RFID reader
+
+# --------------------------------------------------------------------------------------------- qualification
+qualification:
+  # 0-100 score (scoring.py). Below min_qualify the company is REJECTED; below min_draft no email is drafted.
+  min_qualify: 50
+  min_draft: 60
+  min_confidence: 0.5 # the model's own confidence in its reading of the page
+  # A named company hiring an embedded/AOSP engineer has the work and lacks capacity: a real (weaker) signal.
+  accept_hiring_signals: true
+  max_age_days: 120 # pages with only older dates are skipped
+  # Pages without at least this many technical OR product-domain terms are not sent to the model at all.
+  min_relevance_terms: 2
+
+# Never leads. Autonomous-driving firms and big brands build their platform in-house; embedded-software vendors are
+# competitors; distributors sell parts.
+exclude_terms:
+  [robotaxi, "autonomous vehicle", "autonomous vehicles", "autonomous driving", self-driving,
+   "self driving", driverless, lidar]
+exclude_companies:
+  [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber,
+   lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo, fairphone, arrow, avnet,
+   mouser, digikey, farnell, canonical, redhat, "red hat", suse, windriver, "wind river", timesys,
+   montavista, linaro, mender, balena]
+# Business decision: companies based in these countries are not pitched (checked on the site ending and on the
+# location read from the page).
+exclude_countries:
+  [canada, "united kingdom", uk, "u.k.", "great britain", england, scotland, wales,
+   "northern ireland", germany, deutschland]
+exclude_tlds: [".ca", ".uk", ".co.uk", ".de"]
+
+# ------------------------------------------------------------------------------------------------- contacts
+contacts:
+  max_pages: 4 # pages read on a company's own site (home + links a person would click)
+  link_labels:
+    - [Contact us, Contact, Get in touch, Reach us]
+    - [Team, Our team, Leadership, Management, About us, About, Company, Imprint, Impressum]
+
+# --------------------------------------------------------------------------------------------------- limits
+limits:
+  max_new_leads_per_run: 10 # leads that reach EMAIL_DRAFTED in one run
+  max_pages_per_run: 60
+  max_pages_per_domain: 6
+  host_delay_seconds: 2.0
+  engine_rest_minutes: 30 # a search engine that shows a CAPTCHA is not used again for this long
+
+# Desktop browser (BROWSER_BACKEND=desktop): search engines typed into the visible Chrome, in turn.
+desktop_engines:
+  - default
+  - https://duckduckgo.com/?q={q}
+  - https://www.bing.com/search?q={q}

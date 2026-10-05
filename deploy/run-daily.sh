@@ -6,7 +6,8 @@ set -a
 # shellcheck disable=SC1091
 . ./.env
 set +a
-# The scheduled run drives a visible Chrome on the desktop session (X11) and never sends email.
+# Lead research drives the visible Chrome on the desktop session (X11). Email is sent only when
+# EMAIL_SENDING_ENABLED=true AND a person approved it (Slack / `python -m agent leads approve`).
 export DISPLAY="${DISPLAY:-:0}"
-export LEADS_MODE="${LEADS_MODE:-desktop}"
+export BROWSER_BACKEND="${BROWSER_BACKEND:-desktop}"
 exec .venv/bin/python -m agent run "$@"

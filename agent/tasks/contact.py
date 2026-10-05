@@ -1,44 +1,49 @@
-"""Extract a public business contact from a company page with the LLM."""
+"""LLM task lead.extract_contact: the people and business addresses a company publishes on one of its own pages.
 
-from pydantic import BaseModel, Field
+The model only reads. Code keeps a person only if the name and the address are literally on the page, the address
+is on the company's own domain, and the role is one we may contact (agent.leadgen.contacts)."""
 
-from agentkit import checks, llm, task_runner
+from typing import Annotated
+
+from pydantic import BaseModel, BeforeValidator, Field
+
+from agentkit import task_runner
 
 TASK = "lead.extract_contact"
 PROMPT_DIR = "agent/prompts"
 
 
+def _clip(n: int):
+    return BeforeValidator(lambda v: v[:n] if isinstance(v, str) else v)
+
+
+class Person(BaseModel):
+    name: Annotated[str, _clip(100)] = ""
+    role: Annotated[str, _clip(100)] = ""
+    email: Annotated[str, _clip(120)] = ""
+    linkedin: Annotated[str, _clip(200)] = ""
+
+
 class ContactResult(BaseModel):
-    found: bool
-    email: str = ""
-    name: str = ""
-    role: str = ""
-    evidence: str = Field(default="", max_length=300)
-    confidence: float = Field(ge=0, le=1)
+    people: Annotated[
+        list[Person], BeforeValidator(lambda v: v[:8] if isinstance(v, list) else v)
+    ] = Field(default_factory=list)
+    business_emails: Annotated[
+        list[str], BeforeValidator(lambda v: v[:6] if isinstance(v, list) else v)
+    ] = Field(default_factory=list)
 
 
-def _validate(result: llm.Completion) -> list[str]:
-    p = result.parsed
-    if not isinstance(p, ContactResult):
-        return []
-    problems = checks.check_confidence(p.confidence)
-    if p.found and "@" not in p.email:
-        problems.append("found=true but no email")
-    return problems
-
-
-async def extract_contact(page_text: str) -> tuple[ContactResult, list[str]]:
-    completion, problems = await task_runner.run_task(
+async def extract_contacts(page_text: str, links: str = "") -> ContactResult:
+    completion, _ = await task_runner.run_task(
         TASK,
-        page_text,
+        f"{page_text}\n\nLinks on the page:\n{links}" if links else page_text,
         schema=ContactResult,
         prompt_dir=PROMPT_DIR,
         use_examples=False,
-        validate=_validate,
-        max_tokens=300,
+        max_tokens=600,
         reasoning_effort="none",  # a thinking model otherwise spends the whole budget before the JSON
     )
     parsed = completion.parsed
     if not isinstance(parsed, ContactResult):
-        raise TypeError("extract_contact returned no structured result")
-    return parsed, problems
+        raise TypeError("extract_contacts returned no structured result")
+    return parsed

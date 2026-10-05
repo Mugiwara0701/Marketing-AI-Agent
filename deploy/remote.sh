@@ -28,7 +28,7 @@ Commands:
   sync               copy this repo to the office machine (no .env, .venv, Chrome profile, output)
   deps               sync, then install/update Python dependencies there
   run <args>         sync, then run: python -m agent run <args>   (e.g. run --desktop --force)
-  agent <args>       python -m agent <args>, no sync           (e.g. agent leads-today)
+  agent <args>       python -m agent <args>, no sync           (e.g. agent leads review)
   test               sync, then run the tests there
   exec <cmd...>      run any shell command in the remote repo
   shell              interactive shell in the remote repo

@@ -1,7 +1,7 @@
 # task -> model alias (aliases defined in services/llm-service/config/models.yaml)
 default: dev
 tasks:
-  lead.qualify: dev
+  lead.assess: dev
   lead.extract_contact: dev
   lead.search: dev
   outreach.draft: dev

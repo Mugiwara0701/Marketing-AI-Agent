@@ -5,6 +5,7 @@ import ipaddress
 import re
 import socket
 import time
+from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import urlparse
@@ -15,11 +16,13 @@ import httpx
 from agentkit.config import env
 from agentkit.log import get_logger
 
-from . import chrome, settings
+from . import settings
 
 log = get_logger("agent.web")
 
-_HOST_DELAY = 1.5
+_HOST_DELAY = float(
+    env("HOST_DELAY_SECONDS", "2") or 2
+)  # pause between two requests to the same host
 _MAX_BYTES = 800_000
 _last_hit: dict[str, float] = {}
 _robots: dict[str, RobotFileParser | None] = {}
@@ -126,40 +129,78 @@ async def _allowed(client: httpx.AsyncClient, url: str) -> bool:
     return cached is not None and cached.can_fetch(settings.load().user_agent, url)
 
 
-async def fetch(  # noqa: PLR0911 - every refusal returns None
+_BOT_CHECK = re.compile(
+    r"verifying you are human|just a moment\.\.\.|checking your browser|attention required|"
+    r"security service to protect against malicious bots|enable javascript and cookies to continue|"
+    r"verify you are human|performing security verification",
+    re.I,
+)
+
+
+def bot_check(html: str) -> bool:
+    """True if this is a site's bot-protection page (Cloudflare and similar), not the real content."""
+    return bool(_BOT_CHECK.search(html[:6000])) and len(html) < 60_000
+
+
+@dataclass
+class Fetched:
+    url: str  # final URL after redirects
+    status: int
+    html: str
+    blocked: str | None = None  # "bot check" / "robots.txt" / "blocked portal" / "private address"
+
+
+async def _wait_for_host(host: str) -> None:
+    wait = _last_hit.get(host, 0) + _HOST_DELAY - time.monotonic()
+    if wait > 0:
+        await asyncio.sleep(wait)
+    _last_hit[host] = time.monotonic()
+
+
+async def fetch_page(  # noqa: PLR0911 - every refusal returns early
     url: str, *, check_robots: bool = True, accept: str = "text/html"
-) -> str | None:
-    """GET a public page and return its body text (None on any refusal/failure)."""
+) -> Fetched | None:
+    """GET a public page politely: robots.txt, per-host delay, no private addresses, no blocked portals, bot checks
+    recognised (and the host remembered, never retried this run). None when the request itself failed."""
     u = urlparse(url)
-    if u.scheme not in ("http", "https") or not u.hostname or blocked(url):
+    if u.scheme not in ("http", "https") or not u.hostname:
         return None
-    if u.hostname in bot_blocked or not await asyncio.to_thread(_public_host, u.hostname):
-        return None
+    if blocked(url):
+        return Fetched(url, 0, "", "portal whose terms forbid scraping")
+    if u.hostname in bot_blocked:
+        return Fetched(url, 0, "", "bot check (earlier this run)")
+    if not await asyncio.to_thread(_public_host, u.hostname):
+        return Fetched(url, 0, "", "not a public address")
     headers = {"User-Agent": settings.load().user_agent, "Accept": accept}
     async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20) as c:
         if check_robots and not await _allowed(c, url):
-            return None
-        wait = _last_hit.get(u.hostname, 0) + _HOST_DELAY - time.monotonic()
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last_hit[u.hostname] = time.monotonic()
-        if (
-            accept == "text/html" and chrome.enabled()
-        ):  # visible mode: open the page in the Chrome window
-            html = await chrome.goto(url)
-            return html[:_MAX_BYTES] if html else None
+            return Fetched(url, 0, "", "robots.txt disallows it")
+        await _wait_for_host(u.hostname)
         try:
             r = await c.get(url)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            log.info(
+                "fetch failed", extra={"ctx": {"host": u.hostname, "error": type(exc).__name__}}
+            )
             return None
-    if r.status_code != 200:
-        if r.status_code in (403, 429, 503) and chrome.bot_check(r.text):
-            bot_blocked.add(u.hostname)
-        return None
-    if chrome.bot_check(r.text):  # a 200 page that is only the site's bot check
+    final = str(r.url)
+    if blocked(final):  # redirected onto a portal we must not read
+        return Fetched(final, r.status_code, "", "redirected to a blocked portal")
+    if bot_check(r.text):
         bot_blocked.add(u.hostname)
+        log.info(
+            "bot check, site skipped", extra={"ctx": {"host": u.hostname, "status": r.status_code}}
+        )
+        return Fetched(final, r.status_code, "", "bot check")
+    return Fetched(final, r.status_code, r.text[:_MAX_BYTES])
+
+
+async def fetch(url: str, *, check_robots: bool = True, accept: str = "text/html") -> str | None:
+    """Body of a public page, or None on any refusal or failure (see fetch_page)."""
+    got = await fetch_page(url, check_robots=check_robots, accept=accept)
+    if got is None or got.blocked or got.status != 200:
         return None
-    return r.text[:_MAX_BYTES]
+    return got.html
 
 
 async def fetch_page_text(url: str) -> str | None:
@@ -187,10 +228,7 @@ async def fetch_rendered(url: str) -> str | None:
     ) as c:
         if not await _allowed(c, url):
             return None
-    wait = _last_hit.get(u.hostname, 0) + _HOST_DELAY - time.monotonic()
-    if wait > 0:
-        await asyncio.sleep(wait)
-    _last_hit[u.hostname] = time.monotonic()
+    await _wait_for_host(u.hostname)
     try:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=not env("BROWSER_HEADED"))
@@ -200,16 +238,16 @@ async def fetch_rendered(url: str) -> str | None:
                 return (await page.content())[:_MAX_BYTES]
             finally:
                 await browser.close()
-    except Exception:
-        log.info("browser fetch failed", extra={"ctx": {"host": u.hostname}})
+    except Exception as exc:
+        log.info(
+            "browser fetch failed", extra={"ctx": {"host": u.hostname, "error": type(exc).__name__}}
+        )
         return None
 
 
 async def fetch_smart(url: str) -> str | None:
     """Plain HTTP first; if the page answers but has almost no text, retry in a real browser."""
     body = await fetch(url)
-    if chrome.enabled():  # already rendered in the window
-        return body
     if body is not None and len(html_to_text(body)) < _MIN_TEXT:
         return await fetch_rendered(url) or body
     return body
