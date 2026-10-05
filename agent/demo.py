@@ -28,7 +28,7 @@ async def _check_llm() -> bool:
     _line(True, "LLM host", env("LLM_BASE_URL") or "")
     try:
         msg = [{"role": "user", "content": 'Reply with JSON {"word":"ping"}'}]
-        c = await llm.complete("lead.qualify", msg, _Ping, max_tokens=30)
+        c = await llm.complete("lead.qualify", msg, _Ping, max_tokens=30, reasoning_effort="none")
     except Exception as exc:
         _line(False, "LLM structured reply", type(exc).__name__)
         return False

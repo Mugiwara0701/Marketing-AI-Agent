@@ -63,8 +63,12 @@ async def _retry_without_contact(slots: int, deadline: float, stats: dict) -> in
     return slots
 
 
-async def run(deadline: float) -> dict:  # noqa: PLR0915
+async def run(deadline: float) -> dict:  # noqa: PLR0912, PLR0915
     """deadline: time.monotonic() value after which no new work starts."""
+    if settings.desktop_mode():  # visible Chrome on the desktop instead of the HTTP sources below
+        from .gui import discover  # noqa: PLC0415
+
+        return await discover.run(deadline)
     cfg = settings.load()
     slots = cfg.max_new_leads - await store.new_leads_today()
     stats = {"processed": 0, "failed": 0, "signals": 0, "qualified": 0, "leads": 0, "drafted": 0}

@@ -1,11 +1,14 @@
 [Unit]
 Description=AOSP marketing agent: one bounded daily run (leads + blog)
-After=network-online.target docker.service
+After=network-online.target docker.service graphical-session.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/Marketing-AI-Agent
+# The desktop run needs the logged-in Xubuntu (Xorg) session: auto-login must be on, screen lock and blanking off.
+Environment=DISPLAY=:0
+Environment=LEADS_MODE=desktop
 ExecStart=%h/Marketing-AI-Agent/deploy/run-daily.sh
 # Hard stop slightly above AGENT_MAX_MINUTES (default 120) so a hung run cannot go on.
 TimeoutStartSec=135min

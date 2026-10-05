@@ -1,7 +1,5 @@
 """CLI: python -m agent run | dryrun | browse | fill-form | send | review | approve | reject."""
 
-"""CLI: python -m agent run | dryrun | send | replies | followups | review | approve | reject."""
-
 import argparse
 import asyncio
 import json
@@ -11,7 +9,7 @@ import sys
 from agentkit import db
 
 
-async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
+async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     ap = argparse.ArgumentParser(prog="agent", description="Daily AOSP/embedded lead + blog agent")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser(
@@ -28,6 +26,11 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
     r.add_argument(
         "--visible", action="store_true", help="do the web work in a visible Chrome window (Google)"
     )
+    r.add_argument(
+        "--desktop",
+        action="store_true",
+        help="find leads by driving a visible Chrome on the Xubuntu desktop (mouse + keyboard); leads only, no email",
+    )
     d = sub.add_parser(
         "dryrun", help="live scraping + real LLM, no database, no email; writes out/*.md"
     )
@@ -40,6 +43,10 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
         action="store_true",
         help="skip lead search; research, write and adapt one post",
     )
+    sub.add_parser(
+        "desktop-check", help="check the desktop tools Chrome automation needs (xdotool, ...)"
+    )
+    sub.add_parser("leads-today", help="print the leads the desktop search stored today")
     sub.add_parser("migrate", help="apply supabase/migrations/*.sql to DATABASE_URL (idempotent)")
     sub.add_parser(
         "notify", help="post unreviewed drafts to Slack (done automatically after each run)"
@@ -117,11 +124,14 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
     a = ap.parse_args(argv)
     if getattr(a, "visible", False):
         os.environ["BROWSER_VISIBLE"] = "1"
+    if getattr(a, "desktop", False):
+        os.environ["LEADS_MODE"] = "desktop"
 
     try:
         if a.cmd not in (
             "dryrun",
             "check",
+            "desktop-check",
             "slack-setup",
             "browse",
             "test-email",
@@ -136,6 +146,24 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915
 
             result = await run.daily_run(force=a.force, only=a.only, redo_blog=a.redo_blog)
             print(json.dumps(result, default=str))  # noqa: T201
+        elif a.cmd == "desktop-check":
+            from .gui import desktop  # noqa: PLC0415
+
+            checks = desktop.preflight()
+            for ok, name, detail, required in checks:
+                print(f"{'ok  ' if ok else 'FAIL' if required else 'warn'}  {name}: {detail}")  # noqa: T201
+            return 0 if all(ok for ok, _, _, required in checks if required) else 1
+        elif a.cmd == "leads-today":
+            from . import store  # noqa: PLC0415
+
+            rows = await store.todays_desktop_leads()
+            for r in rows:
+                score = int(float(r["fit_score"] or 0) * 100)
+                print(  # noqa: T201
+                    f"{r['name']}  https://{r['domain']}  score={score}  [{r['status']}]  contact={r['emails'] or '-'}  drafts={r['drafts']}"
+                )
+                print(f"    {r['project_summary'] or ''}\n    {r['source_url']}")  # noqa: T201
+            print(f"{len(rows)} lead(s) stored today")  # noqa: T201
         elif a.cmd == "dryrun":
             from . import dryrun  # noqa: PLC0415
 

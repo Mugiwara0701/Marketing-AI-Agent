@@ -30,6 +30,34 @@ async def new_leads_today() -> int:
     return int(row["n"]) if row else 0
 
 
+async def desktop_leads_today() -> int:
+    """Leads the desktop search stored today, with or without a contact found."""
+    row = await db.fetchrow(
+        "select count(*) as n from companies where created_at::date = current_date and source like 'desktop%'"
+    )
+    return int(row["n"]) if row else 0
+
+
+async def company_name_known(name: str) -> bool:
+    """Same company under a slightly different domain: compare names ignoring case and punctuation."""
+    row = await db.fetchrow(
+        "select 1 from companies where regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = $1",
+        "".join(ch for ch in name.lower() if ch.isalnum()),
+    )
+    return row is not None
+
+
+async def todays_desktop_leads() -> list:
+    return await db.fetch(
+        """select co.name, co.domain, co.status, co.fit_score, co.project_summary, co.source_url, co.technologies,
+                  (select string_agg(c.email, ', ') from contacts c where c.company_id = co.id) as emails,
+                  (select count(*) from emails e join contacts c on c.id = e.contact_id
+                    where c.company_id = co.id) as drafts
+             from companies co where co.created_at::date = current_date and co.source like 'desktop%'
+            order by co.created_at"""
+    )
+
+
 async def record_signal(sig, extracted: dict, company_id: UUID | None = None) -> None:
     await db.execute(
         """insert into lead_signals (company_id, kind, source_url, raw_text, extracted, content_hash)

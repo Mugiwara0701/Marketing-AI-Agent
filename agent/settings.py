@@ -22,6 +22,13 @@ class Settings:
     user_agent: str
     sources_file: str
     platforms_file: str
+    lead_target: int  # stop the desktop search once this many qualified leads are stored
+    lead_max: int  # hard cap on stored leads per day
+    leads_mode: str  # "api" (job APIs, HTTP) or "desktop" (visible Chrome on the desktop)
+
+
+def desktop_mode() -> bool:
+    return (env("LEADS_MODE", "api") or "api").lower() == "desktop"
 
 
 def load() -> Settings:
@@ -37,5 +44,8 @@ def load() -> Settings:
         user_agent=env("AGENT_USER_AGENT", "AOSPMarketingAgent/1.0 (business research bot)")
         or "AOSPMarketingAgent/1.0",
         sources_file=env("SOURCES_CONFIG", "config/sources.yaml") or "config/sources.yaml",
+        lead_target=_int("DAILY_LEAD_TARGET", 5),
+        lead_max=_int("MAX_DAILY_LEADS", 6),
+        leads_mode=(env("LEADS_MODE", "api") or "api").lower(),
         platforms_file=env("PLATFORMS_CONFIG", "config/platforms.yaml") or "config/platforms.yaml",
     )

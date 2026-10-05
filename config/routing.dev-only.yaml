@@ -4,6 +4,7 @@ default: dev
 tasks:
   lead.qualify: dev
   lead.extract_contact: dev
+  lead.search: dev
   outreach.draft: dev
   content.plan: dev
   content.adapt: dev
