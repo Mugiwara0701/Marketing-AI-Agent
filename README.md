@@ -71,6 +71,11 @@ including `0003_daily_agent.sql`). Expect to tune `config/sources.yaml` and the 
 10 qualified leads with public contacts per day is a target, and free sources may yield fewer.
 Design documents in `docs/` describe the earlier multi-service design and are superseded by this README.
 
+## Desktop lead search (Xubuntu)
+
+`python -m agent run --desktop` finds leads with a visible Chrome window driven by mouse and keyboard (xdotool, clipboard,
+OCR), stores them and drafts emails; sending is locked off. See `deploy/desktop-lead-search.md`.
+
 ## Quick start
 
 ```bash

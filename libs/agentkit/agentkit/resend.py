@@ -1,5 +1,7 @@
 """Resend client: send one email. Webhook events come back through supabase/functions/resend-webhook."""
 
+import os
+
 import httpx
 
 from .config import env
@@ -13,6 +15,10 @@ async def send_email(payload: dict, idempotency_key: str) -> str:
     The idempotency key makes a retry after a timeout a no-op instead of a second mail.
     The error text carries only the status and Resend's error name, never addresses or bodies.
     """
+    if os.environ.get(
+        "EMAIL_SENDING_LOCKED"
+    ):  # set by agent.mailer.lock_sending(): nothing may leave
+        raise RuntimeError("email sending is locked for this run")
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(
             f"{API}/emails",

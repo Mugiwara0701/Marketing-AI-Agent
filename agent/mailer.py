@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import hmac
+import os
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 
@@ -16,8 +17,16 @@ log = get_logger("agent.mailer")
 _MAX_ATTEMPTS = 3
 
 
+def lock_sending() -> None:
+    """Make sending impossible for the rest of this process, whatever the settings say. The desktop lead run
+    calls this first: it only discovers leads and stores drafts."""
+    os.environ["EMAIL_SENDING_LOCKED"] = "1"  # also stops agentkit.resend.send_email
+
+
 def sending_enabled() -> bool:
-    """Off unless EMAIL_SENDING_ENABLED=true. Drafts are still generated and saved while it is off."""
+    """Off unless EMAIL_SENDING_ENABLED=true (and not locked). Drafts are still generated and saved while off."""
+    if os.environ.get("EMAIL_SENDING_LOCKED"):
+        return False
     return (env("EMAIL_SENDING_ENABLED", "false") or "false").lower() == "true"
 
 
@@ -91,6 +100,8 @@ async def deliver(row, recipients: str) -> tuple[str, str]:
     """Send one request per address: Resend rejects the whole request if any single recipient is not
     allowed (e.g. onboarding@resend.dev only reaches the account owner). Returns the first
     (Message-ID, Resend id) that went out; raises only if every address failed."""
+    if not sending_enabled():
+        raise RuntimeError("email sending is disabled")
     first: tuple[str, str] | None = None
     errors: list[str] = []
     for to in (a.strip() for a in recipients.split(",") if a.strip()):

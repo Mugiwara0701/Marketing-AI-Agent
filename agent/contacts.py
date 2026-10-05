@@ -81,30 +81,9 @@ async def _base(domain: str) -> str | None:
     return None
 
 
-async def find_contact(domain: str):
-    """Returns (ContactResult, source_url, problems) or None when no public business address is found."""
-    form_urls.pop(domain, None)
-    base = await _base(domain)
-    if base is None:
-        if domain in web.bot_blocked or f"www.{domain}" in web.bot_blocked:
-            log.info(
-                "site blocks automated access, contact it manually",
-                extra={"ctx": {"domain": domain}},
-            )
-        return None
-    pages: list[tuple[str, str]] = []
-    seen_text: set[str] = set()
-    for path in _PATHS:
-        url = f"{base}{path}"
-        body = await web.fetch_smart(url)
-        text = web.html_to_text(body) if body else ""
-        if body and domain not in form_urls and web.has_contact_form(body):
-            form_urls[domain] = url
-        if text and text not in seen_text:  # single-page sites answer every path with the same page
-            seen_text.add(text)
-            pages.append((url, text))
-        if len(pages) >= 5:
-            break
+async def pick_contact(domain: str, pages: list[tuple[str, str]]):
+    """From already-read pages (url, visible text) choose a public business contact on `domain`.
+    Returns (ContactResult, source_url, problems) or None. Shared by the HTTP and the desktop pipelines."""
     for url, text in pages:
         candidates = emails_on_domain(text, domain)
         if not candidates:
@@ -132,3 +111,30 @@ async def find_contact(domain: str):
             return res, url, ["chosen by rule (role address on company site), not by the model"]
         log.info("contact rejected by guard", extra={"ctx": {"domain": domain}})
     return None
+
+
+async def find_contact(domain: str):
+    """Returns (ContactResult, source_url, problems) or None when no public business address is found."""
+    form_urls.pop(domain, None)
+    base = await _base(domain)
+    if base is None:
+        if domain in web.bot_blocked or f"www.{domain}" in web.bot_blocked:
+            log.info(
+                "site blocks automated access, contact it manually",
+                extra={"ctx": {"domain": domain}},
+            )
+        return None
+    pages: list[tuple[str, str]] = []
+    seen_text: set[str] = set()
+    for path in _PATHS:
+        url = f"{base}{path}"
+        body = await web.fetch_smart(url)
+        text = web.html_to_text(body) if body else ""
+        if body and domain not in form_urls and web.has_contact_form(body):
+            form_urls[domain] = url
+        if text and text not in seen_text:  # single-page sites answer every path with the same page
+            seen_text.add(text)
+            pages.append((url, text))
+        if len(pages) >= 5:
+            break
+    return await pick_contact(domain, pages)
