@@ -229,3 +229,7 @@ out/
 
 # office-machine address for deploy/remote.sh
 .remote.env
+
+# credential files: never commit; send with `bash deploy/remote.sh push-secrets`
+credentials.json
+credential.json

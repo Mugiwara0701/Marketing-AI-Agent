@@ -37,7 +37,7 @@ on the office desktop (`DISPLAY=:0`), so the visible Chrome run works from here.
    This saves the address in `.remote.env` (git-ignored) and does a first sync.
 3. Copy your `.env` (secrets) to the office machine. It asks before copying:
    ```bash
-   bash deploy/remote.sh push-env
+   bash deploy/remote.sh push-secrets
    ```
    On the office machine make sure `LLM_BASE_URL=http://127.0.0.1:11434`, `LEADS_MODE=desktop` and `MODEL_GUI_STEP=qwen3-vl:8b`.
 4. Check the setup:
@@ -77,7 +77,7 @@ on the office desktop (`DISPLAY=:0`), so the visible Chrome run works from here.
 | `stop` / `resume` | set / remove the kill switch (`/tmp/gui-agent.stop`) |
 | `logs` | last run of the daily timer |
 | `shots` | download the run screenshots |
-| `push-env` | copy your local `.env` to the office machine |
+| `push-secrets` | copy your local `.env` and `credentials.json` to the office machine (asks first; `push-env` is the same) |
 
 ## E. Daily schedule on the office machine
 

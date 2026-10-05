@@ -7,7 +7,7 @@
 #   bash deploy/remote.sh <command> ...            see the list below
 #
 # Settings come from the environment or .remote.env (git-ignored): REMOTE (user@host), REMOTE_DIR (default
-# ~/Marketing-AI-Agent on the office machine). Secrets: .env is never synced unless you run push-env.
+# ~/Marketing-AI-Agent on the office machine). Secrets: .env and credentials.json are never synced, only by push-secrets.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -36,7 +36,7 @@ Commands:
   resume             remove the kill switch
   logs               last run of the daily timer
   shots              download the screenshots of the latest runs into ./out/remote/
-  push-env           copy YOUR local .env to the office machine (asks first)
+  push-secrets       copy YOUR local .env and credentials.json to the office machine (asks first; push-env is the same)
 EOF
 }
 
@@ -58,7 +58,7 @@ do_sync() {
   need_remote
   rssh "mkdir -p ~/$REMOTE_DIR"
   rsync -az --delete --info=stats0,name1 -e "ssh ${SSH_OPTS[*]}" \
-    --exclude='.git/' --exclude='.venv/' --exclude='.env' --exclude='.remote.env' \
+    --exclude='.git/' --exclude='.venv/' --exclude='.env' --exclude='credentials.json' --exclude='credential.json' --exclude='.remote.env' \
     --exclude='.chrome-profile/' --exclude='.chrome-desktop-profile/' --exclude='out/' \
     --exclude='.cache/' --exclude='__pycache__/' --exclude='.*_cache/' --exclude='.agent-visited.json' \
     --exclude='node_modules/' --exclude='*.pyc' \
@@ -124,15 +124,19 @@ case "$cmd" in
     rsync -az -e "ssh ${SSH_OPTS[*]}" "$REMOTE:$REMOTE_DIR/out/desktop/" out/remote/
     echo "saved to out/remote/"
     ;;
-  push-env)
+  push-secrets | push-env)
     need_remote
-    [ -f .env ] || { echo "no local .env" >&2; exit 1; }
-    read -r -p "Copy your local .env (secrets) to $REMOTE:$REMOTE_DIR/.env ? [y/N] " yn
+    files=()
+    for f in .env credentials.json credential.json; do [ -f "$f" ] && files+=("$f"); done
+    [ ${#files[@]} -gt 0 ] || { echo "no local .env or credentials.json" >&2; exit 1; }
+    read -r -p "Copy ${files[*]} (secrets) to $REMOTE:$REMOTE_DIR/ ? [y/N] " yn
     [ "$yn" = y ] || exit 1
     do_sync
-    scp "${SSH_OPTS[@]}" .env "$REMOTE:$REMOTE_DIR/.env"
-    rssh "chmod 600 ~/$REMOTE_DIR/.env"
-    echo "done; remember the office machine needs its own LLM_BASE_URL / EXECUTOR_* values if they differ"
+    for f in "${files[@]}"; do
+      scp "${SSH_OPTS[@]}" "$f" "$REMOTE:$REMOTE_DIR/$f"
+      rssh "chmod 600 ~/$REMOTE_DIR/$f"
+    done
+    echo "done: ${files[*]} copied (mode 600). The office machine needs its own LLM_BASE_URL / EXECUTOR_* values if they differ"
     ;;
   help | -h | --help) usage ;;
   *) echo "unknown command: $cmd" >&2; usage >&2; exit 1 ;;
