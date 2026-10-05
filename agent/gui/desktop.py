@@ -153,7 +153,11 @@ class Desktop:
         self._shots = 0
         self.screen = (0, 0)
         self.last_look: vision.Look | None = None  # what the vision model saw on the latest page
+        # DESKTOP_VISION=0 turns the vision model off. It also works on a CPU (use a small model, e.g. qwen3-vl:2b);
+        # a call over the time limit twice in a row turns it off for the run and OCR takes over.
         self.use_vision = (env("DESKTOP_VISION", "1") or "1") != "0"
+        self.vision_timeout = float(env("DESKTOP_VISION_TIMEOUT", "120") or 120)
+        self._vision_fails = 0
 
     # --- start-up and recovery ------------------------------------------------------------------
 
@@ -394,30 +398,40 @@ class Desktop:
         await self.glide(x, y)
         await self.act(action="click", x=x, y=y)
 
+    async def _vision_call(self, make):
+        """Run one vision-model request with a time limit. Two failures in a row switch vision off for the run
+        (OCR and the keyboard take over), so a slow or broken model can never stall it. None on failure."""
+        try:
+            shot = (await self.act(action="screenshot"))["screenshot"]
+            out = await asyncio.wait_for(make(shot), self.vision_timeout)
+        except Exception as exc:  # model down, bad reply, timeout: never stop the run for this
+            self._vision_fails += 1
+            detail = str(exc)[:160] or type(exc).__name__
+            log.warning("vision unavailable", extra={"ctx": {"error": detail}})
+            if self._vision_fails >= 2:
+                self.use_vision = False
+                log.warning(
+                    "vision turned off for this run: too slow or failing, using OCR instead"
+                )
+            return None
+        self._vision_fails = 0
+        return out
+
     async def see(self) -> vision.Look | None:
         """Ask the vision model what is on screen. None when it is off or unreachable (OCR takes over)."""
         if not self.use_vision:
             return None
-        try:
-            shot = (await self.act(action="screenshot"))["screenshot"]
-            look = await vision.look(shot)
-        except Exception as exc:  # model down, bad reply, timeout: never stop the run for this
-            log.warning("vision unavailable", extra={"ctx": {"error": type(exc).__name__}})
-            return None
-        self.last_look = look
+        look = await self._vision_call(vision.look)
+        if look is not None:
+            self.last_look = look
         return look
 
     async def _locate(self, what: str) -> tuple[int, int] | None:
         """Where the vision model sees `what` on screen, in screenshot pixels."""
         if not self.use_vision:
             return None
-        try:
-            shot = (await self.act(action="screenshot"))["screenshot"]
-            target = await vision.locate(shot, what)
-        except Exception as exc:
-            log.warning("vision locate failed", extra={"ctx": {"error": type(exc).__name__}})
-            return None
-        if not target.found:
+        target = await self._vision_call(lambda shot: vision.locate(shot, what))
+        if target is None or not target.found:
             return None
         w, h = self._shot_size()
         return vision.to_pixels(target.x, target.y, w, h)

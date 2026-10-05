@@ -58,6 +58,7 @@ if [ -z "${SKIP_MODELS:-}" ]; then
   ollama pull "$TEXT_MODEL"
   ollama cp "$TEXT_MODEL" agent-dev            # routing alias "dev" -> agent-dev
   ollama pull "$VISION_MODEL"
+  ollama cp "$VISION_MODEL" vlm                # routing alias "vlm" (gui.step) works without MODEL_GUI_STEP
 fi
 
 echo "==> 5/8 Python 3.12 environment"

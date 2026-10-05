@@ -127,6 +127,8 @@ async def complete(
     model = model_for(task)
     if timeout is None:
         timeout = 30.0 if schema is not None else 120.0
+    # LLM_MIN_TIMEOUT: a floor in seconds for every call, for a model that is slow (CPU-only machine)
+    timeout = max(timeout, float(env("LLM_MIN_TIMEOUT", "0") or 0))
     payload: dict = {
         "model": model,
         "messages": list(messages),

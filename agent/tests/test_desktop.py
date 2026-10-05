@@ -313,3 +313,49 @@ def test_glide_stops_one_pixel_short_of_the_target(monkeypatch):
     assert len(moves) > 5  # a glide, not a jump
     assert moves[-1] != (720, 450)
     assert abs(moves[-1][1] - 450) <= 1
+
+
+def test_slow_vision_is_switched_off_after_two_failures(monkeypatch):
+    from agent.gui import desktop, vision
+
+    async def fake_act(self, **body):
+        return {"screenshot": "x"}
+
+    async def slow_look(shot):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(desktop.Desktop, "act", fake_act)
+    monkeypatch.setattr(vision, "look", slow_look)
+    monkeypatch.setenv("DESKTOP_VISION", "1")
+    monkeypatch.setenv("DESKTOP_VISION_TIMEOUT", "0.05")
+    d = desktop.Desktop("t")
+    assert d.use_vision
+    assert asyncio.run(d.see()) is None
+    assert d.use_vision  # one failure is tolerated
+    assert asyncio.run(d.see()) is None
+    assert not d.use_vision  # two in a row: off for the rest of the run
+
+
+def test_vision_is_on_by_default_even_without_a_gpu(monkeypatch):
+    from agent.gui import desktop
+
+    monkeypatch.delenv("DESKTOP_VISION", raising=False)
+    monkeypatch.setattr(desktop.shutil, "which", lambda name: None)
+    assert desktop.Desktop("t").use_vision
+    monkeypatch.setenv("DESKTOP_VISION", "0")
+    assert not desktop.Desktop("t").use_vision
+
+
+def test_llm_min_timeout_raises_short_limits(monkeypatch):
+    from agentkit import llm
+
+    seen = []
+
+    async def fake_post(payload, timeout):
+        seen.append(timeout)
+        return {"choices": [{"message": {"content": "hi"}}], "usage": {}}
+
+    monkeypatch.setattr(llm, "_post", fake_post)
+    monkeypatch.setenv("LLM_MIN_TIMEOUT", "300")
+    asyncio.run(llm.complete("outreach.draft", [{"role": "user", "content": "x"}], timeout=30))
+    assert seen == [300.0]

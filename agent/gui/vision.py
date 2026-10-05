@@ -4,6 +4,7 @@ It never acts and never supplies page content for the lead (an email must still 
 text). Coordinates come back on a 0-1000 grid so they do not depend on the screenshot size.
 """
 
+import asyncio
 import base64
 from pathlib import Path
 
@@ -45,7 +46,22 @@ def to_pixels(x: int | None, y: int | None, width: int, height: int) -> tuple[in
     return (min(width - 1, x * width // GRID), min(height - 1, y * height // GRID))
 
 
+async def shrink(shot_b64: str, width: int = 768) -> str:
+    """The screenshot scaled down to `width` px (ImageMagick): fewer image tokens, much faster on a CPU. The model's
+    coordinates use a 0-1000 grid, so the size does not matter to them. Unchanged if ImageMagick fails."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "convert", "png:-", "-resize", f"{width}x", "png:-",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )  # fmt: skip
+        out, _ = await asyncio.wait_for(proc.communicate(base64.b64decode(shot_b64)), 20)
+    except (OSError, TimeoutError):
+        return shot_b64
+    return base64.b64encode(out).decode() if proc.returncode == 0 and out else shot_b64
+
+
 async def _ask(system: Path, text: str, shot_b64: str, schema, max_tokens: int):
+    shot_b64 = await shrink(shot_b64)
     messages: list[dict] = [
         {"role": "system", "content": system.read_text(encoding="utf-8")},  # noqa: ASYNC240 - tiny file
         {
@@ -66,7 +82,7 @@ async def _ask(system: Path, text: str, shot_b64: str, schema, max_tokens: int):
 
 async def look(shot_b64: str) -> Look:
     """What is on screen: popup to close, 404 / blocked page, one-line summary."""
-    out = await _ask(_LOOK, "Describe this screen.", shot_b64, Look, 300)
+    out = await _ask(_LOOK, "Describe this screen.", shot_b64, Look, 200)
     out.summary = out.summary[:300]
     return out
 

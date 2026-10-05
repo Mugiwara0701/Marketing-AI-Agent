@@ -86,7 +86,22 @@ systemctl --user start aosp-agent.timer
 systemctl --user list-timers aosp-agent.timer
 ```
 
-## F. Troubleshooting
+## F. No GPU on the office machine (testing)
+
+On a CPU-only machine the 8-9B models run at about 4 tokens per second, and one vision call takes over a minute.
+Use small models for testing. On the office machine:
+
+```bash
+ollama pull qwen3:4b-instruct-2507-q4_K_M && ollama cp qwen3:4b-instruct-2507-q4_K_M agent-dev   # text
+ollama pull qwen3-vl:2b && ollama cp qwen3-vl:2b vlm                                              # vision
+```
+
+Both models then run on the CPU. The agent detects a machine without an NVIDIA GPU and raises every model call's
+time limit to 300 s (`LLM_MIN_TIMEOUT`). Screenshots are shrunk before the vision model sees them, and a vision call
+over `DESKTOP_VISION_TIMEOUT` (120 s) twice in a row turns vision off for the run so OCR takes over
+(`DESKTOP_VISION=0` turns it off from the start). Small models are weaker: expect fewer and noisier leads.
+
+## G. Troubleshooting
 
 - **`Connection timed out`**: not on the same network. Use Tailscale, or check `ping` and the office firewall (`sudo ufw allow OpenSSH`).
 - **`Permission denied (publickey)`**: run `init` again, or `ssh-copy-id user@host`.

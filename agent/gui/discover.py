@@ -11,7 +11,9 @@ a blocked site or engine is logged, rested, and the run moves to another source.
 import asyncio
 import hashlib
 import json
+import os
 import re
+import shutil
 import time
 import uuid
 from collections import deque
@@ -583,6 +585,10 @@ async def run(deadline: float) -> dict:  # noqa: PLR0915
     """Search until the daily target is stored, the search space is used up, or `deadline` (time.monotonic())."""
     mailer.lock_sending()
     log.info("Email sending disabled", extra={"ctx": {"locked": True}})
+    if not shutil.which("nvidia-smi"):
+        # No GPU: the models run on the CPU, a call takes tens of seconds. Give every call time to finish.
+        os.environ.setdefault("LLM_MIN_TIMEOUT", "300")
+        log.info("No NVIDIA GPU: models run on the CPU, call time limits raised")
     cfg = settings.load()
     conf = sources.load_config()
     dcfg = conf.get("desktop") or {}
