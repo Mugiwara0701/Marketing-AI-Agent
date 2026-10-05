@@ -35,7 +35,18 @@ from .policy import Policy
 
 log = get_logger("agent.discover")
 
-_CONTACT_PATHS = ("", "/contact", "/contact-us", "/about", "/impressum")
+# Link texts a person clicks to find a company's contact details. No URL is ever guessed: a link that is not on
+# the page is not visited.
+_CONTACT_LABELS = (
+    "Contact us",
+    "Contact",
+    "Get in touch",
+    "About us",
+    "About",
+    "Imprint",
+    "Impressum",
+)
+_MAX_CONTACT_PAGES = 4
 _DOMAIN = re.compile(
     r"(?<![@\w.-])((?:[a-z0-9-]+\.)+(?:com|io|ai|net|org|co|de|eu|in|tech|dev|app|cloud|systems|"
     r"se|fr|uk|us|nl|jp|kr|cn|tw|it|es|ch|at|pl|ca|au|fi|no|dk|il|sg))\b",
@@ -43,6 +54,10 @@ _DOMAIN = re.compile(
 )
 _UNREACHABLE = re.compile(
     r"this site can.t be reached|err_[a-z_]+|dns_probe|server ip address could not", re.I
+)
+_NOT_FOUND = re.compile(
+    r"404|page (could not|couldn.t|can.t|cannot) be found|page not found|not found|no longer available",
+    re.I,
 )
 _MAX_VISITED = 800
 
@@ -242,27 +257,59 @@ async def find_website(ctx: Ctx, company: str) -> str:
 
 
 async def visible_contact(ctx: Ctx, domain: str):
-    """Open the company's own pages in the window and choose a public business email from what is shown."""
+    """Open the company's home page in the window, then click its Contact / About link (header, else footer)
+    and choose a public business email from what is shown. Never types a made-up address."""
     desk = ctx.desk
+    home = f"https://{domain}"
+    host = urlparse(home).hostname or ""
+    if web.blocked(home) or not await asyncio.to_thread(web._public_host, host):
+        return None
     pages: list[tuple[str, str]] = []
-    for path in _CONTACT_PATHS:
-        url = f"https://{domain}{path}"
-        host = urlparse(url).hostname or ""
-        if web.blocked(url) or not await asyncio.to_thread(web._public_host, host):
-            break
-        await desk.navigate(url)
-        text, why = await _read_checked(ctx, f"contact {domain}{path}")
+
+    async def read(label: str) -> tuple[str, str | None]:
+        text, why = await _read_checked(ctx, label)
         if why:
-            web.bot_blocked.add(
-                domain
-            )  # the lead is kept, flagged for manual contact (contacts.manual_reason)
+            web.bot_blocked.add(domain)  # the lead is kept, flagged for manual contact
             _rest(ctx, domain, why)
+        return text, why
+
+    await desk.navigate(home)
+    text, why = await read(f"home {domain}")
+    if why or _UNREACHABLE.search(text[:500]) or _NOT_FOUND.search(await desk.title()):
+        return None
+    pages.append((home, text))
+    tried = {home}
+    for label in _CONTACT_LABELS:
+        if len(pages) >= _MAX_CONTACT_PAGES or contacts.emails_on_domain(pages[-1][1], domain):
             break
-        if _UNREACHABLE.search(text[:500]):
+        for key in (
+            "Home",
+            "End",
+        ):  # header links first, then the footer, like a person scrolling down
+            await desk.act(action="key", key=key)
+            await asyncio.sleep(1)
+            if await desk.click_text(label):
+                break
+        else:
+            continue  # no such link on this page: do not guess a URL
+        url = await desk.current_url()
+        if (
+            not url
+            or url in tried
+            or urlparse(url).hostname not in (host, f"www.{host}", host.removeprefix("www."))
+        ):
+            await desk.back()
+            continue
+        tried.add(url)
+        text, why = await read(f"contact {domain} {label}")
+        if why:
             break
+        if _NOT_FOUND.search(await desk.title()) or _UNREACHABLE.search(text[:500]):
+            await desk.back()
+            continue
         pages.append((url, text))
-        if contacts.emails_on_domain(text, domain):
-            break
+        if not contacts.emails_on_domain(text, domain):
+            await desk.back()
     return await contacts.pick_contact(domain, pages) if pages else None
 
 

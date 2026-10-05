@@ -30,6 +30,20 @@ _MIN_PAGE_TEXT = 80  # less copied text than this: the page is canvas/image base
 _CHROME_BINARIES = ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser")
 
 
+# Text that shows a popup is covering the page, and its buttons in the order to try them (refuse before accept).
+_POPUP_HINTS = re.compile(
+    r"cookie|consent|your privacy|privacy (choices|preferences|settings)|"
+    r"(select|choose) your (country|region|language)|country and language|"
+    r"subscribe to our newsletter|sign up for our newsletter",
+    re.I,
+)
+_POPUP_BUTTONS = (
+    "Decline All", "Reject All", "Reject non-essential", "Only necessary", "Necessary only", "Deny",
+    "No thanks", "Not now", "Maybe later", "Accept All", "Accept cookies", "Allow all", "I agree",
+    "Agree", "Accept", "Save", "Confirm", "Continue", "Got it", "Close",
+)  # fmt: skip
+
+
 class DesktopError(ExecutorError):
     """The desktop could not do what was asked (tool missing, window gone, X11 command failed)."""
 
@@ -265,18 +279,30 @@ class Desktop:
     # --- browsing -------------------------------------------------------------------------------
 
     async def navigate(self, target: str) -> None:
-        """Click-free address bar use, like a person: Ctrl+L, type, Return. `target` is a URL or a search."""
+        """Address bar use, like a person: mouse to the address bar, click, type, Return. `target` is a URL
+        or a search."""
         await self.ensure_chrome()
         if wins := await self.chrome_windows():
             with contextlib.suppress(DesktopError):
                 await self._run(["xdotool", "windowactivate", "--sync", wins[-1]])
-        await self.act(action="key", key="ctrl+l")
+        await self._click_address_bar()
+        await self.act(
+            action="key", key="ctrl+l"
+        )  # also selects the whole address, whatever the click hit
         await self.act(action="type", text=target)
         await self.act(
             action="key", key="Delete"
         )  # drop the inline autocomplete so Return opens what was typed
         await self.act(action="key", key="Return")
         await self._loaded()
+        await self.dismiss_popups()
+
+    async def _click_address_bar(self) -> None:
+        """Move the pointer to the middle of Chrome's address bar and click it (the window is maximised)."""
+        w, _ = self._shot_size()
+        y = int(env("DESKTOP_OMNIBOX_Y", "88") or 88) * w // max(self.screen[0], 1)
+        with contextlib.suppress(DesktopError):
+            await self.act(action="click", x=w // 2, y=y)
 
     async def _loaded(self) -> None:
         await asyncio.sleep(self.page_wait)
@@ -328,6 +354,29 @@ class Desktop:
             if await self.click_text(label, min_y=0):
                 return True
         return False
+
+    async def dismiss_popups(self) -> int:
+        """Close what covers the page (cookie banner, country/language picker, newsletter box) by clicking its
+        button with the mouse, the way a person would. Looks at the screen once per round; up to 3 rounds.
+        Only acts when the screen text says it is a popup, so ordinary page buttons are never clicked."""
+        if (env("DESKTOP_DISMISS_POPUPS", "1") or "1") == "0" or not shutil.which("tesseract"):
+            return 0
+        closed = 0
+        for _ in range(3):
+            tsv = await self._ocr("tsv")
+            words = parse_tsv(tsv)
+            if not _POPUP_HINTS.search(" ".join(w.text for w in words)):
+                break
+            spot = next((p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110))), None)
+            if spot is None:
+                await self.act(action="key", key="Escape")  # many modals close on Escape
+            else:
+                await self.act(action="click", x=spot[0], y=spot[1])
+            closed += 1
+            await asyncio.sleep(1.5)
+        if closed:
+            log.info("popup closed", extra={"ctx": {"rounds": closed}})
+        return closed
 
     # --- seeing: OCR, clicking ------------------------------------------------------------------
 

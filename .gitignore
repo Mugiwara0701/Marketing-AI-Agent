@@ -226,3 +226,6 @@ out/
 .chrome-profile/
 .chrome-desktop-profile/
 .agent-visited.json
+
+# office-machine address for deploy/remote.sh
+.remote.env
