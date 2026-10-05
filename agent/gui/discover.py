@@ -359,6 +359,11 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
 
     if leadscore.is_job_posting(text, canon):
         return await reject("job posting, not a project", "rejected_job")
+    if why := leadscore.exclusion_reason(
+        f"{hit.title} {text[:3000]}", urlparse(canon).hostname or "", "",
+        ctx.cfg.get("exclude_terms") or [], ctx.cfg.get("exclude_companies") or [],
+    ):  # fmt: skip
+        return await reject(why, "rejected_irrelevant")
     kws = sum(1 for k in ctx.keywords if sources.matches(text, [k]))
     if kws < max(1, ctx.min_keywords):
         return await reject(
@@ -376,6 +381,8 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
         "Opportunity evaluated",
         extra={"ctx": {"relevant": q.relevant, "confidence": q.confidence, "company": name}},
     )
+    if why := leadscore.exclusion_reason("", "", name, [], ctx.cfg.get("exclude_companies") or []):
+        return await reject(why, "rejected_irrelevant", company=name)
     if not q.relevant or problems or not name:
         return await reject(f"not a qualified project: {q.reason[:120]}", "rejected_irrelevant")
     if q.confidence < ctx.min_confidence:
@@ -521,7 +528,14 @@ async def process_query(ctx: Ctx, platform: str, query: str, queue: deque, limit
         },
     )
     known = [k.split("|", 1)[-1] for k in ctx.state.done] + [q for _, q in queue]
+    cfg = ctx.cfg
     for nq in read.next_queries:  # follow-ups chosen from what the results showed
+        if not leadscore.query_on_topic(
+            nq, cfg.get("query_service_terms") or [], cfg.get("query_project_terms") or [],
+            cfg.get("exclude_terms") or [],
+        ):  # fmt: skip
+            log.info("Follow-up query dropped (off topic)", extra={"ctx": {"query": nq}})
+            continue
         if leadscore.new_query(nq, known):
             queue.appendleft(("web", nq))
             known.append(nq)
@@ -544,6 +558,12 @@ async def process_query(ctx: Ctx, platform: str, query: str, queue: deque, limit
                 or web.registrable_domain(dom) in leadscore.INDIVIDUAL_HIRING_SITES
             )
         ) or any(leadscore.similar(hit.title, t) for t in seen_titles):
+            continue
+        if why := leadscore.exclusion_reason(
+            f"{hit.title} {hit.snippet}", dom, "", ctx.cfg.get("exclude_terms") or [],
+            ctx.cfg.get("exclude_companies") or [],
+        ):  # fmt: skip
+            log.info("Result skipped", extra={"ctx": {"why": why, "title": hit.title[:80]}})
             continue
         seen_titles.append(hit.title)
         try:

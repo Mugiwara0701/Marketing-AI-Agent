@@ -397,3 +397,48 @@ def test_evaluate_needs_two_keywords_and_enough_confidence(monkeypatch):
         == "rejected"
     )
     assert not saved["companies"]  # confidence 0.55 < 0.7
+
+
+def test_exclusions_block_autonomous_driving_and_big_brands():
+    terms, companies = ["robotaxi", "autonomous driving"], ["nuro", "zoox", "google"]
+    assert "robotaxi" in leadscore.exclusion_reason(
+        "Zoox robotaxi launch", "zoox.com", "", terms, companies
+    )
+    assert "nuro" in leadscore.exclusion_reason("home page", "www.nuro.ai", "", terms, companies)
+    assert "google" in leadscore.exclusion_reason("", "", "Google LLC", terms, companies)
+    assert (
+        leadscore.exclusion_reason(
+            "Android BSP bring-up for rugged handhelds",
+            "acme-devices.com",
+            "Acme Devices",
+            terms,
+            companies,
+        )
+        == ""
+    )
+    assert (
+        leadscore.exclusion_reason(
+            "", "googleplex-partners.io", "Googleplex Partners", [], companies
+        )
+        == ""
+    )  # not a prefix match
+
+
+def test_followup_queries_must_stay_on_topic():
+    service, project, exclude = (
+        ["aosp", "bsp", "embedded"],
+        ["outsourcing", "vendor", "rfp"],
+        ["robotaxi"],
+    )
+    ok = leadscore.query_on_topic
+    assert ok("AOSP BSP bring-up outsourcing vendor for rugged tablets", service, project, exclude)
+    assert not ok(
+        "companies like Nuro autonomous delivery", service, project, exclude
+    )  # no service/project wording
+    assert not ok(
+        "embedded vendor for robotaxi sensors", service, project, exclude
+    )  # excluded topic
+    assert not ok(
+        "android app development company", service, project, exclude
+    )  # no project need word
+    assert ok("anything", [], [], [])  # nothing configured: nothing filtered

@@ -9,10 +9,10 @@ Return:
   - title: copy the result title EXACTLY as written on the page (it is used to find the link on screen).
   - domain: the site shown with the result (for example "acme.io"), empty if not shown.
   - snippet: the description under the title, shortened.
-  - likely_project: true only if the title/snippet suggests a company seeking or offering a project for outside engineering help, or a company building Android / embedded Linux devices. false for job vacancies, careers pages, internships, courses, tutorials, documentation, generic articles, forum questions without a project, and agencies advertising their own services.
+  - likely_project: true only if the title/snippet suggests a company seeking or offering a project for outside engineering help, or a small or mid-size maker of Android / embedded Linux hardware (readers, terminals, handhelds, kiosks, set-top boxes, IoT devices) that would buy outside engineering help. Autonomous-driving / robotaxi companies, car makers and large consumer-electronics or tech brands are NOT leads: they build their platform software in-house, so likely_project is false for them. false for job vacancies, careers pages, internships, courses, tutorials, documentation, generic articles, forum questions without a project, and agencies advertising their own services.
   - score: 0 to 1, how likely opening it leads to a real project opportunity for us.
   Skip ads, "People also ask", videos, images and navigation text.
-- next_queries: up to 4 NEW search queries (5 to 12 words) inspired by what you saw, to find more companies like the good results. Plain text, no quotes needed, no site: operators.
+- next_queries: up to 4 NEW search queries (5 to 12 words). Each must name our kind of work (AOSP, Android platform, BSP, board bring-up, embedded Linux, Yocto, firmware, drivers) AND a project need (outsourcing, vendor, partner, agency, RFP, contract). Vary the work or the need; do not search for "more companies like" a result and never use a company name. Plain text, no quotes needed, no site: operators.
 
 Reply with a single JSON object only, matching this shape:
 {"hits": [{"title": "...", "domain": "...", "snippet": "...", "likely_project": true, "score": 0.7}], "next_queries": ["..."]}

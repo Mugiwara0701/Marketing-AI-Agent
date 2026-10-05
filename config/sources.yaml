@@ -199,3 +199,12 @@ desktop:
     - Android embedded software vendor request for proposal
     - looking for agency to build Android based hardware product
     - need external team Yocto embedded Linux board bring-up
+  # Follow-up queries the model invents from the results must contain one SERVICE word and one PROJECT word,
+  # so the search cannot drift to "more companies like the last one" (e.g. robotaxi makers).
+  query_service_terms: [aosp, android, bsp, embedded, yocto, buildroot, firmware, kernel, driver, drivers, aaos, hal, linux, bring-up, iot]
+  query_project_terms: [outsourcing, outsourced, vendor, partner, agency, rfp, contract, contractor, external, proposal, project, needed, "looking for", services, company]
+  # Never a lead. Autonomous-driving firms and big car makers / brands build their platform software in-house.
+  # exclude_terms are matched as whole words in the result and the first part of the page; exclude_companies
+  # against the site name (nuro.ai -> nuro) and the company name.
+  exclude_terms: [robotaxi, "autonomous vehicle", "autonomous vehicles", "autonomous driving", self-driving, "self driving", driverless, lidar]
+  exclude_companies: [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber, lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo]

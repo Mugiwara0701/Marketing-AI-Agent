@@ -175,3 +175,32 @@ def evidence_snippet(text: str, keywords: list[str], width: int = 160) -> str:
     if best < 0:
         return " ".join(text[: width * 2].split())
     return " ".join(text[max(0, best - width) : best + width].split())
+
+
+def _has_word(text: str, word: str) -> bool:
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(word.lower())}(?![a-z0-9])", text.lower()))
+
+
+def exclusion_reason(
+    text: str, host: str, name: str, terms: list[str], companies: list[str]
+) -> str:
+    """Why a result or page is never a lead: an excluded topic (autonomous driving...) in `text`, or an excluded
+    company as the site name (nuro.ai -> nuro) or the company name. "" when nothing excludes it."""
+    if hit := next((t for t in terms if _has_word(text, t)), None):
+        return f"excluded topic '{hit}'"
+    label = (host or "").lower().removeprefix("www.").split(".")[0]
+    words = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower()).split()
+    for c in (x.lower() for x in companies):
+        if label == c or (words and (words[0] == c or " ".join(words) == c)):
+            return f"excluded company '{c}'"
+    return ""
+
+
+def query_on_topic(query: str, service: list[str], project: list[str], exclude: list[str]) -> bool:
+    """A model-invented follow-up query is kept only if it names our kind of work AND a project/vendor need,
+    and no excluded topic. With no lists configured every query passes."""
+    if any(_has_word(query, t) for t in exclude):
+        return False
+    if service and not any(_has_word(query, t) for t in service):
+        return False
+    return not project or any(_has_word(query, t) for t in project)
