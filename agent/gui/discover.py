@@ -228,7 +228,14 @@ async def _read_checked(ctx: Ctx, label: str) -> tuple[str, str | None]:
     if leadscore.is_consent_page(text) and await desk.dismiss_consent():
         text = await desk.read_page()
     await desk.shot(label)
-    return text, leadscore.block_reason(text, await desk.title())
+    why = leadscore.block_reason(text, await desk.title())
+    if not why and desk.last_look and desk.last_look.blocked:
+        why = "the vision model sees a CAPTCHA, login wall or access-denied page"
+    if desk.last_look and desk.last_look.summary:
+        log.info(
+            "Screen seen", extra={"ctx": {"label": label[:60], "summary": desk.last_look.summary}}
+        )
+    return text, why
 
 
 async def search_page(ctx: Ctx, query: str, n: int) -> tuple[str, str, str] | None:
@@ -256,6 +263,14 @@ async def find_website(ctx: Ctx, company: str) -> str:
     return domains_in(got[0], company) if got else ""
 
 
+def _page_missing(desk: Desktop, title: str, text: str) -> bool:
+    """A 404 / error page, by what the vision model saw or by the title and text."""
+    seen = desk.last_look
+    return bool(seen and seen.not_found) or bool(
+        _NOT_FOUND.search(title) or _UNREACHABLE.search(text[:500])
+    )
+
+
 async def visible_contact(ctx: Ctx, domain: str):
     """Open the company's home page in the window, then click its Contact / About link (header, else footer)
     and choose a public business email from what is shown. Never types a made-up address."""
@@ -275,7 +290,7 @@ async def visible_contact(ctx: Ctx, domain: str):
 
     await desk.navigate(home)
     text, why = await read(f"home {domain}")
-    if why or _UNREACHABLE.search(text[:500]) or _NOT_FOUND.search(await desk.title()):
+    if why or _page_missing(desk, await desk.title(), text):
         return None
     pages.append((home, text))
     tried = {home}
@@ -288,7 +303,7 @@ async def visible_contact(ctx: Ctx, domain: str):
         ):  # header links first, then the footer, like a person scrolling down
             await desk.act(action="key", key=key)
             await asyncio.sleep(1)
-            if await desk.click_text(label):
+            if await desk.click_link(*label):
                 break
         else:
             continue  # no such link on this page: do not guess a URL
@@ -301,10 +316,10 @@ async def visible_contact(ctx: Ctx, domain: str):
             await desk.back()
             continue
         tried.add(url)
-        text, why = await read(f"contact {domain} {label}")
+        text, why = await read(f"contact {domain} {label[0]}")
         if why:
             break
-        if _NOT_FOUND.search(await desk.title()) or _UNREACHABLE.search(text[:500]):
+        if _page_missing(desk, await desk.title(), text):
             await desk.back()
             continue
         pages.append((url, text))

@@ -20,6 +20,7 @@ from agentkit.config import env
 from agentkit.log import get_logger
 from sandbox.executor import ActionError, Config, ExecError, Executor, LimitError, subprocess_runner
 
+from . import vision
 from .executor_client import ExecutorError
 from .loop import run_task
 from .policy import Policy
@@ -151,6 +152,8 @@ class Desktop:
         self._proc: subprocess.Popen | None = None
         self._shots = 0
         self.screen = (0, 0)
+        self.last_look: vision.Look | None = None  # what the vision model saw on the latest page
+        self.use_vision = (env("DESKTOP_VISION", "1") or "1") != "0"
 
     # --- start-up and recovery ------------------------------------------------------------------
 
@@ -219,7 +222,7 @@ class Desktop:
         with contextlib.suppress(OSError):
             await asyncio.to_thread(
                 subprocess.run,
-                ["pkill", "-f", f"--user-data-dir={self.profile}"],
+                ["pkill", "-f", "--", f"--user-data-dir={self.profile}"],
                 check=False,
                 timeout=10,
             )
@@ -285,6 +288,7 @@ class Desktop:
         if wins := await self.chrome_windows():
             with contextlib.suppress(DesktopError):
                 await self._run(["xdotool", "windowactivate", "--sync", wins[-1]])
+        self.last_look = None
         await self._click_address_bar()
         await self.act(
             action="key", key="ctrl+l"
@@ -302,7 +306,7 @@ class Desktop:
         w, _ = self._shot_size()
         y = int(env("DESKTOP_OMNIBOX_Y", "88") or 88) * w // max(self.screen[0], 1)
         with contextlib.suppress(DesktopError):
-            await self.act(action="click", x=w // 2, y=y)
+            await self.click_at(w // 2, y)
 
     async def _loaded(self) -> None:
         await asyncio.sleep(self.page_wait)
@@ -321,6 +325,7 @@ class Desktop:
     async def scroll(self, times: int = 2, amount: int = 8) -> None:
         """Scroll the page with the mouse wheel, pointer in the middle of the page, pausing like a reader."""
         w, h = self._shot_size()
+        await self.glide(w // 2, h // 2)
         for _ in range(times):
             await self.act(action="scroll", direction="down", amount=amount, x=w // 2, y=h // 2)
             await asyncio.sleep(1.2)
@@ -355,23 +360,94 @@ class Desktop:
                 return True
         return False
 
+    async def glide(self, x: int, y: int) -> None:
+        """Move the pointer to (x, y), in screenshot pixels, in small eased steps like a hand, so it is seen moving."""
+        shot_w, _ = self._shot_size()
+        scale = max(self.screen[0], 1) / shot_w
+        tx, ty = int(x * scale), int(y * scale)
+        # Stop one pixel short: the click/scroll that follows moves there with `xdotool mousemove --sync`, which
+        # waits for a movement and hangs when the pointer is already exactly on the spot.
+        ty = ty - 1 if ty > 0 else 1
+        cx, cy = tx, ty
+        with contextlib.suppress(DesktopError, AttributeError):
+            where = (await self._run(["xdotool", "getmouselocation"])).decode()
+            cx = int(re.search(r"x:(\d+)", where).group(1))  # type: ignore[union-attr]
+            cy = int(re.search(r"y:(\d+)", where).group(1))  # type: ignore[union-attr]
+        steps = max(1, int(env("DESKTOP_MOUSE_STEPS", "14") or 14))
+        for i in range(1, steps + 1):
+            t = i / steps
+            e = t * t * (3 - 2 * t)  # ease in and out
+            with contextlib.suppress(DesktopError):
+                await self._run(
+                    [
+                        "xdotool",
+                        "mousemove",
+                        str(int(cx + (tx - cx) * e)),
+                        str(int(cy + (ty - cy) * e)),
+                    ]
+                )
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.15)
+
+    async def click_at(self, x: int, y: int) -> None:
+        """Glide to (x, y) and click there."""
+        await self.glide(x, y)
+        await self.act(action="click", x=x, y=y)
+
+    async def see(self) -> vision.Look | None:
+        """Ask the vision model what is on screen. None when it is off or unreachable (OCR takes over)."""
+        if not self.use_vision:
+            return None
+        try:
+            shot = (await self.act(action="screenshot"))["screenshot"]
+            look = await vision.look(shot)
+        except Exception as exc:  # model down, bad reply, timeout: never stop the run for this
+            log.warning("vision unavailable", extra={"ctx": {"error": type(exc).__name__}})
+            return None
+        self.last_look = look
+        return look
+
+    async def _locate(self, what: str) -> tuple[int, int] | None:
+        """Where the vision model sees `what` on screen, in screenshot pixels."""
+        if not self.use_vision:
+            return None
+        try:
+            shot = (await self.act(action="screenshot"))["screenshot"]
+            target = await vision.locate(shot, what)
+        except Exception as exc:
+            log.warning("vision locate failed", extra={"ctx": {"error": type(exc).__name__}})
+            return None
+        if not target.found:
+            return None
+        w, h = self._shot_size()
+        return vision.to_pixels(target.x, target.y, w, h)
+
     async def dismiss_popups(self) -> int:
         """Close what covers the page (cookie banner, country/language picker, newsletter box) by clicking its
-        button with the mouse, the way a person would. Looks at the screen once per round; up to 3 rounds.
-        Only acts when the screen text says it is a popup, so ordinary page buttons are never clicked."""
-        if (env("DESKTOP_DISMISS_POPUPS", "1") or "1") == "0" or not shutil.which("tesseract"):
+        button with the mouse, the way a person would. The vision model looks at the screen; if it is
+        unavailable, OCR looks for popup wording and known button labels. Up to 3 rounds."""
+        if (env("DESKTOP_DISMISS_POPUPS", "1") or "1") == "0":
             return 0
         closed = 0
         for _ in range(3):
-            tsv = await self._ocr("tsv")
-            words = parse_tsv(tsv)
-            if not _POPUP_HINTS.search(" ".join(w.text for w in words)):
+            look = await self.see()
+            if look is not None:
+                if not look.popup:
+                    break
+                w, h = self._shot_size()
+                spot = vision.to_pixels(look.x, look.y, w, h)
+                log.info("popup seen", extra={"ctx": {"button": look.label, "at": spot}})
+            elif shutil.which("tesseract"):
+                words = parse_tsv(await self._ocr("tsv"))
+                if not _POPUP_HINTS.search(" ".join(w.text for w in words)):
+                    break
+                spot = next((p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110))), None)
+            else:
                 break
-            spot = next((p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110))), None)
             if spot is None:
                 await self.act(action="key", key="Escape")  # many modals close on Escape
             else:
-                await self.act(action="click", x=spot[0], y=spot[1])
+                await self.click_at(*spot)
             closed += 1
             await asyncio.sleep(1.5)
         if closed:
@@ -402,9 +478,25 @@ class Desktop:
         spot = find_phrase(words, phrase, min_y)
         if spot is None:
             return False
-        await self.act(action="click", x=spot[0], y=spot[1])
+        await self.click_at(*spot)
         await self._loaded()
         return True
+
+    async def click_link(self, *labels: str) -> bool:
+        """Click a link the way a person would: the vision model finds it on screen, the mouse glides there and
+        clicks; if the model does not see it, OCR looks for the text. `labels` are alternative link texts."""
+        if spot := await self._locate(
+            "a link or button reading " + " or ".join(f"'{x}'" for x in labels)
+        ):
+            self.last_look = None
+            await self.click_at(*spot)
+            await self._loaded()
+            await self.dismiss_popups()
+            return True
+        for label in labels:
+            if await self.click_text(label):
+                return True
+        return False
 
     async def activate_by_find(self, phrase: str) -> None:
         """Fallback for clicking: Ctrl+F the link text, close the find bar, press Return on the selected link."""
@@ -422,9 +514,10 @@ class Desktop:
         return out.status == "done"
 
     async def open_link(self, title: str, results_url: str) -> str:
-        """Open the on-screen link whose text starts with `title`. Mouse click via OCR first, then keyboard
-        find, then the vision model. Returns the new page address, or "" when nothing opened."""
+        """Open the on-screen link whose text starts with `title`. The vision model finds it and the mouse clicks it; then OCR,
+        then keyboard find, then the vision step loop. Returns the new page address, or "" when nothing opened."""
         attempts = (
+            ("vision click", lambda: self.click_link(title)),
             ("ocr click", lambda: self.click_text(title)),
             ("find on page", lambda: self.activate_by_find(title)),
             ("vision", lambda: self.vision_open(title)),

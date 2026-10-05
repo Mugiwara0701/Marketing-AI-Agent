@@ -250,3 +250,66 @@ def test_popup_hints_and_buttons():
 def test_not_found_page_detected():
     assert discover._NOT_FOUND.search("404 - Page not found - Murena")
     assert not discover._NOT_FOUND.search("Contact Philips Support")
+
+
+def test_vision_points_to_pixels():
+    from agent.gui import vision
+
+    assert vision.to_pixels(500, 500, 1280, 800) == (640, 400)
+    assert vision.to_pixels(1000, 1000, 1280, 800) == (1279, 799)  # corner stays on screen
+    assert vision.to_pixels(None, 10, 1280, 800) is None
+    assert vision.to_pixels(900, 1100, 1280, 800) == (900, 799)  # beyond the grid: already pixels
+
+
+def test_popup_closed_by_vision_click(monkeypatch):
+    from agent.gui import desktop, vision
+
+    clicks = []
+    looks = iter(
+        [vision.Look(popup=True, label="Decline All", x=700, y=470), vision.Look(popup=False)]
+    )
+
+    async def fake_see(self):
+        self.last_look = next(looks)
+        return self.last_look
+
+    async def fake_click(self, x, y):
+        clicks.append((x, y))
+
+    monkeypatch.setattr(desktop.Desktop, "see", fake_see)
+    monkeypatch.setattr(desktop.Desktop, "click_at", fake_click)
+    monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(desktop.asyncio, "sleep", no_sleep)
+    d = desktop.Desktop("t")
+    assert asyncio.run(d.dismiss_popups()) == 1
+    assert clicks == [(896, 376)]
+
+
+def test_glide_stops_one_pixel_short_of_the_target(monkeypatch):
+    """`xdotool mousemove --sync` hangs when the pointer is already on the spot, so glide must not land on it."""
+    from agent.gui import desktop
+
+    moves = []
+
+    async def fake_run(self, cmd, timeout=10):
+        if cmd[1] == "getmouselocation":
+            return b"x:10 y:10 screen:0 window:1"
+        moves.append((int(cmd[2]), int(cmd[3])))
+        return b""
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(desktop.Desktop, "_run", fake_run)
+    monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
+    monkeypatch.setattr(desktop.asyncio, "sleep", no_sleep)
+    d = desktop.Desktop("t")
+    d.screen = (1440, 900)
+    asyncio.run(d.glide(640, 400))  # screen target (720, 450)
+    assert len(moves) > 5  # a glide, not a jump
+    assert moves[-1] != (720, 450)
+    assert abs(moves[-1][1] - 450) <= 1

@@ -27,8 +27,8 @@ Commands:
   init user@host     one-time setup (SSH key, remote folder)
   sync               copy this repo to the office machine (no .env, .venv, Chrome profile, output)
   deps               sync, then install/update Python dependencies there
-  run <args>         sync, then run: python -m agent <args>   (e.g. run --desktop --force)
-  agent <args>       like run, but without syncing first       (e.g. agent leads-today)
+  run <args>         sync, then run: python -m agent run <args>   (e.g. run --desktop --force)
+  agent <args>       python -m agent <args>, no sync           (e.g. agent leads-today)
   test               sync, then run the tests there
   exec <cmd...>      run any shell command in the remote repo
   shell              interactive shell in the remote repo
@@ -87,7 +87,7 @@ case "$cmd" in
     ;;
   run)
     do_sync
-    remote_run .venv/bin/python -m agent "$@"
+    remote_run .venv/bin/python -m agent run "$@"
     ;;
   agent)
     need_remote

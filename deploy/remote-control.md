@@ -69,7 +69,7 @@ on the office desktop (`DISPLAY=:0`), so the visible Chrome run works from here.
 | `init user@host` | one-time: SSH key, remote folder, saves `.remote.env` |
 | `sync` | copy the repo (no `.git`, `.venv`, `.env`, Chrome profile, `out/`) |
 | `deps` | sync, then install Python dependencies there |
-| `run <args>` | sync, then `python -m agent <args>` |
+| `run <args>` | sync, then `python -m agent run <args>` |
 | `agent <args>` | `python -m agent <args>` without syncing |
 | `test` | sync, then run the tests there |
 | `exec <cmd>` | run any command in the remote repo |
