@@ -39,14 +39,9 @@ log = get_logger("agent.discover")
 
 # Link texts a person clicks to find a company's contact details. No URL is ever guessed: a link that is not on
 # the page is not visited.
-_CONTACT_LABELS = (
-    "Contact us",
-    "Contact",
-    "Get in touch",
-    "About us",
-    "About",
-    "Imprint",
-    "Impressum",
+_CONTACT_LABELS = (  # tried in this order; each group is "any of these link texts"
+    ("Contact us", "Contact", "Get in touch"),
+    ("About us", "About", "Imprint", "Impressum"),
 )
 _MAX_CONTACT_PAGES = 4
 _DOMAIN = re.compile(
@@ -189,6 +184,8 @@ class Ctx:
     min_score: int
     hits_per_query: int
     min_hit_score: float
+    min_keywords: int = 2
+    min_confidence: float = 0.7
     blocked: set[str] = field(default_factory=set)
     domains_seen: set[str] = field(default_factory=set)
     engine_name: str = "default"
@@ -362,8 +359,12 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
 
     if leadscore.is_job_posting(text, canon):
         return await reject("job posting, not a project", "rejected_job")
-    if not sources.matches(text, ctx.keywords):
-        return await reject("no AOSP/Android platform/embedded wording", "rejected_irrelevant")
+    kws = sum(1 for k in ctx.keywords if sources.matches(text, [k]))
+    if kws < max(1, ctx.min_keywords):
+        return await reject(
+            f"only {kws} AOSP/Android platform/embedded keyword(s), need {ctx.min_keywords}",
+            "rejected_irrelevant",
+        )
     if sources.is_stale(sig, ctx.max_age_days):
         return await reject("older than max_age_days", "rejected_irrelevant")
 
@@ -377,6 +378,11 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
     )
     if not q.relevant or problems or not name:
         return await reject(f"not a qualified project: {q.reason[:120]}", "rejected_irrelevant")
+    if q.confidence < ctx.min_confidence:
+        return await reject(
+            f"model confidence {q.confidence:.2f} below {ctx.min_confidence}: {q.reason[:100]}",
+            "rejected_irrelevant",
+        )
     st["qualified"] += 1
 
     domain = ""
@@ -401,7 +407,6 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
         await store.record_signal(sig, {"duplicate_company": name, "domain": domain})
         return "duplicate"
 
-    kws = sum(1 for k in ctx.keywords if sources.matches(text, [k]))
     own = bool(domain_from_page(canon, name))
     vendor = leadscore.vendor_hits(text)
     args: dict[str, Any] = {"confidence": q.confidence, "vendor": vendor, "keyword_hits": kws, "text_len": len(text),
@@ -620,7 +625,9 @@ async def run(deadline: float) -> dict:  # noqa: PLR0915
               state=state, deadline=deadline, stats=stats,
               min_score=int(env("DESKTOP_MIN_SCORE", "60") or 60),
               hits_per_query=int(env("DESKTOP_HITS_PER_QUERY", "4") or 4),
-              min_hit_score=float(env("DESKTOP_MIN_HIT_SCORE", "0.4") or 0.4))  # fmt: skip
+              min_hit_score=float(env("DESKTOP_MIN_HIT_SCORE", "0.4") or 0.4),
+              min_keywords=int(env("DESKTOP_MIN_KEYWORDS", "2") or 2),
+              min_confidence=float(env("DESKTOP_MIN_CONFIDENCE", "0.7") or 0.7))  # fmt: skip
     queue = build_queue(dcfg)
     queue = deque(item for item in queue if f"{item[0]}|{item[1]}" not in state.done)
     gap = float(env("DESKTOP_SEARCH_GAP", "8") or 8)

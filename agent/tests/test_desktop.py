@@ -359,3 +359,41 @@ def test_llm_min_timeout_raises_short_limits(monkeypatch):
     monkeypatch.setenv("LLM_MIN_TIMEOUT", "300")
     asyncio.run(llm.complete("outreach.draft", [{"role": "user", "content": "x"}], timeout=30))
     assert seen == [300.0]
+
+
+def test_contact_labels_are_groups_of_link_texts():
+    """A flat string here was spread into single letters ('C', 'o', 'n'...) by click_link(*label)."""
+    assert all(isinstance(g, tuple) and len(g) > 1 for g in discover._CONTACT_LABELS)
+    assert all(isinstance(t, str) and len(t) > 2 for g in discover._CONTACT_LABELS for t in g)
+
+
+def test_evaluate_needs_two_keywords_and_enough_confidence(monkeypatch):
+    saved: dict[str, list] = {"signals": [], "companies": []}
+    _fake_store(monkeypatch, saved)
+
+    async def boom(*_a, **_k):
+        raise AssertionError("model must not be called")
+
+    monkeypatch.setattr(discover.qualify, "qualify_signal", boom)
+    ctx = _ctx()
+    hit = search.Hit(title="Robotaxi", domain="x.com", snippet="", likely_project=True, score=0.8)
+    one = "Our robotaxi company is hiring. We do some AOSP on the side. " * 30
+    assert (
+        asyncio.run(discover.evaluate(ctx, hit, "https://x.com/", one, "q", "default"))
+        == "rejected"
+    )
+    assert ctx.stats["rejected_irrelevant"] == 1  # one keyword is not enough, model never asked
+
+    weak = qualify.QualifyResult(relevant=True, service_fit=["AOSP"], confidence=0.55, reason="vague",
+                                 company_name="X", project_summary="s", technologies=[], location="", website="x.com")  # fmt: skip
+
+    async def fake_q(_text):
+        return weak, []
+
+    monkeypatch.setattr(discover.qualify, "qualify_signal", fake_q)
+    two = "We build devices. AOSP and BSP work for our hardware. " * 30
+    assert (
+        asyncio.run(discover.evaluate(_ctx(), hit, "https://x.com/a", two, "q", "default"))
+        == "rejected"
+    )
+    assert not saved["companies"]  # confidence 0.55 < 0.7
