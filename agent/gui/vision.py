@@ -76,7 +76,7 @@ async def _ask(system: Path, text: str, shot_b64: str, schema, max_tokens: int):
     # A "thinking" model (the plain qwen3-vl tags) reasons before it answers and needs a large budget; an instruct
     # build only needs a few dozen tokens. VISION_MAX_TOKENS overrides the budget for both calls.
     budget = int(env("VISION_MAX_TOKENS", "") or max_tokens)
-    wait = float(env("DESKTOP_VISION_TIMEOUT", "400") or 400) + 30
+    wait = float(env("DESKTOP_VISION_TIMEOUT", "240") or 240) + 30
     done = await llm.complete(
         TASK, messages, schema, temperature=0.0, max_tokens=budget, timeout=wait
     )

@@ -597,13 +597,23 @@ def _killed() -> bool:
     return Policy().kill_file.exists()
 
 
-async def retry_missing_contacts(ctx: Ctx, limit: int = 3) -> None:
+async def retry_missing_contacts(ctx: Ctx, limit: int | None = None) -> None:
     """Companies saved earlier without a contact get another visible look at their own site. A company that the
     exclusion lists rule out (saved before they existed) is rejected without opening its site."""
+    limit = int(env("DESKTOP_RETRY_LIMIT", "1") or 1) if limit is None else limit
     visited = 0
     for co in await store.companies_without_contact():
         if visited >= limit or time.monotonic() > ctx.deadline or _killed():
             return
+        if leadscore.looks_like_job("", co["source_url"] or ""):
+            await store.reject_company(
+                co["id"]
+            )  # stored from a job ad before the job filters existed
+            log.info(
+                "Stored company dropped",
+                extra={"ctx": {"company": co["name"], "why": "found via a job ad"}},
+            )
+            continue
         if why := leadscore.exclusion_reason(
             co["project_summary"] or "", co["domain"] or "", co["name"] or "",
             ctx.cfg.get("exclude_terms") or [], ctx.cfg.get("exclude_companies") or [],

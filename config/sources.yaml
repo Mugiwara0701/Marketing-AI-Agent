@@ -257,7 +257,7 @@ desktop:
   # Never a lead. Autonomous-driving firms and big brands build their platform software in-house; embedded-software
   # vendors (Canonical, Wind River...) sell software, not devices, and are mostly competitors.
   exclude_terms: [robotaxi, "autonomous vehicle", "autonomous vehicles", "autonomous driving", self-driving, "self driving", driverless, lidar]
-  exclude_companies: [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber, lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo, fairphone, canonical, redhat, "red hat", suse, windriver, "wind river", timesys, montavista, linaro, mender, balena]
+  exclude_companies: [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber, lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo, fairphone, arrow, avnet, mouser, digikey, farnell, canonical, redhat, "red hat", suse, windriver, "wind river", timesys, montavista, linaro, mender, balena]
   # Not pitched: companies based in these countries. Checked on the site ending, on the location the model reads from
   # the page, and on follow-up queries.
   exclude_countries: [canada, "united kingdom", uk, "u.k.", "great britain", england, scotland, wales, "northern ireland", germany, deutschland]

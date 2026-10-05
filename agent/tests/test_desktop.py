@@ -276,6 +276,7 @@ def test_popup_closed_by_vision_click(monkeypatch):
     async def fake_click(self, x, y):
         clicks.append((x, y))
 
+    monkeypatch.setenv("DESKTOP_VISION_FIRST", "1")
     monkeypatch.setattr(desktop.Desktop, "see", fake_see)
     monkeypatch.setattr(desktop.Desktop, "click_at", fake_click)
     monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
@@ -315,7 +316,7 @@ def test_glide_stops_one_pixel_short_of_the_target(monkeypatch):
     assert abs(moves[-1][1] - 450) <= 1
 
 
-def test_slow_vision_is_switched_off_after_two_failures(monkeypatch):
+def test_one_vision_timeout_switches_it_off_for_the_run(monkeypatch):
     from agent.gui import desktop, vision
 
     async def fake_act(self, **body):
@@ -331,9 +332,26 @@ def test_slow_vision_is_switched_off_after_two_failures(monkeypatch):
     d = desktop.Desktop("t")
     assert d.use_vision
     assert asyncio.run(d.see()) is None
-    assert d.use_vision  # one failure is tolerated
+    assert not d.use_vision  # too slow once: off for the rest of the run
+
+
+def test_other_vision_errors_get_a_second_chance(monkeypatch):
+    from agent.gui import desktop, vision
+
+    async def fake_act(self, **body):
+        return {"screenshot": "x"}
+
+    async def broken_look(shot):
+        raise ValueError("bad reply")
+
+    monkeypatch.setattr(desktop.Desktop, "act", fake_act)
+    monkeypatch.setattr(vision, "look", broken_look)
+    monkeypatch.setenv("DESKTOP_VISION", "1")
+    d = desktop.Desktop("t")
     assert asyncio.run(d.see()) is None
-    assert not d.use_vision  # two in a row: off for the rest of the run
+    assert d.use_vision  # one bad reply is tolerated
+    assert asyncio.run(d.see()) is None
+    assert not d.use_vision  # two in a row: off
 
 
 def test_vision_is_on_by_default_even_without_a_gpu(monkeypatch):
@@ -598,3 +616,62 @@ def test_evaluate_rejects_a_job_ad_by_title(monkeypatch):
     )
     out = asyncio.run(discover.evaluate(ctx, hit, "https://acme.io/p", PROJECT, "q", "default"))
     assert out == "rejected" and ctx.stats["rejected_job"] == 1
+
+
+def test_popup_closed_by_ocr_without_calling_the_vision_model(monkeypatch):
+    from agent.gui import desktop
+
+    rows = ["level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext"]
+    for ln, x, t in [
+        (1, 100, "We use cookies"),
+        (2, 730, "Decline"),
+        (2, 790, "All"),
+    ]:  # "Decline All" on one line
+        rows.append(f"5\t1\t1\t1\t{ln}\t1\t{x}\t400\t50\t20\t90\t{t}")
+    tsv = "\n".join(rows)
+    clicks, looks = [], []
+
+    async def fake_ocr(self, mode):
+        return tsv if clicks == [] else ""  # the popup is gone after the click
+
+    async def fake_see(self):
+        looks.append(1)
+
+    async def fake_click(self, x, y):
+        clicks.append((x, y))
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(desktop.Desktop, "_ocr", fake_ocr)
+    monkeypatch.setattr(desktop.Desktop, "see", fake_see)
+    monkeypatch.setattr(desktop.Desktop, "click_at", fake_click)
+    monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
+    monkeypatch.setattr(desktop.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(desktop.asyncio, "sleep", no_sleep)
+    monkeypatch.delenv("DESKTOP_VISION_FIRST", raising=False)
+    assert asyncio.run(desktop.Desktop("t").dismiss_popups()) == 1
+    assert (
+        clicks and clicks[0][0] > 700 and not looks
+    )  # clicked "Decline All"; the model was never asked
+
+
+def test_retry_drops_stored_job_ad_leads(monkeypatch):
+    rows = [{"id": "1", "name": "Arrow Electronics", "domain": "arrow.com", "project_summary": "", "location": "India", "technologies": None, "source": "desktop",
+             "source_url": "https://careers.arrow.com/us/en/job/R1/Engineer-Linux-BSP"}]  # fmt: skip
+    rejected, visited = [], []
+
+    async def fetch():
+        return rows
+
+    async def reject(cid):
+        rejected.append(cid)
+
+    async def visit(ctx, domain):
+        visited.append(domain)
+
+    monkeypatch.setattr(discover.store, "companies_without_contact", fetch)
+    monkeypatch.setattr(discover.store, "reject_company", reject)
+    monkeypatch.setattr(discover, "visible_contact", visit)
+    asyncio.run(discover.retry_missing_contacts(_ctx()))
+    assert rejected == ["1"] and not visited

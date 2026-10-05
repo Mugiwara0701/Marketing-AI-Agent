@@ -156,7 +156,10 @@ class Desktop:
         # DESKTOP_VISION=0 turns the vision model off. It also works on a CPU (use a small model, e.g. qwen3-vl:2b);
         # a call over the time limit twice in a row turns it off for the run and OCR takes over.
         self.use_vision = (env("DESKTOP_VISION", "1") or "1") != "0"
-        self.vision_timeout = float(env("DESKTOP_VISION_TIMEOUT", "400") or 400)
+        # OCR first (seconds), the vision model only when OCR cannot find the popup button or the link. On a CPU one
+        # vision call takes minutes. DESKTOP_VISION_FIRST=1 asks the vision model first (fast only on a GPU).
+        self.vision_first = (env("DESKTOP_VISION_FIRST", "0") or "0") == "1"
+        self.vision_timeout = float(env("DESKTOP_VISION_TIMEOUT", "240") or 240)
         self._vision_fails = 0
 
     # --- start-up and recovery ------------------------------------------------------------------
@@ -399,8 +402,8 @@ class Desktop:
         await self.act(action="click", x=x, y=y)
 
     async def _vision_call(self, make):
-        """Run one vision-model request with a time limit. Two failures in a row switch vision off for the run
-        (OCR and the keyboard take over), so a slow or broken model can never stall it. None on failure."""
+        """Run one vision-model request with a time limit. A timeout, or two other failures in a row, switch vision off
+        for the run (OCR and the keyboard take over), so a slow or broken model can never stall it. None on failure."""
         try:
             shot = (await self.act(action="screenshot"))["screenshot"]
             out = await asyncio.wait_for(make(shot), self.vision_timeout)
@@ -408,7 +411,9 @@ class Desktop:
             self._vision_fails += 1
             detail = str(exc)[:160] or type(exc).__name__
             log.warning("vision unavailable", extra={"ctx": {"error": detail}})
-            if self._vision_fails >= 2:
+            # One timeout already shows the model is too slow on this machine (a CPU with a thinking model);
+            # other errors get a second chance.
+            if isinstance(exc, TimeoutError) or self._vision_fails >= 2:
                 self.use_vision = False
                 log.warning(
                     "vision turned off for this run: too slow or failing, using OCR instead"
@@ -436,27 +441,33 @@ class Desktop:
         w, h = self._shot_size()
         return vision.to_pixels(target.x, target.y, w, h)
 
+    async def _popup_spot(self) -> tuple[bool, tuple[int, int] | None]:
+        """(is a popup covering the page, where to click to close it). OCR looks first: popup wording plus a known
+        button label. The vision model is asked when OCR sees popup wording but no button, or when OCR is missing or
+        DESKTOP_VISION_FIRST=1."""
+        w, h = self._shot_size()
+        if shutil.which("tesseract") and not self.vision_first:
+            words = parse_tsv(await self._ocr("tsv"))
+            if not _POPUP_HINTS.search(" ".join(x.text for x in words)):
+                return False, None
+            spot = next((p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110))), None)
+            if spot is not None:
+                return True, spot
+        look = await self.see()
+        if look is None:
+            return (False, None) if not shutil.which("tesseract") else (True, None)
+        log.info("popup seen", extra={"ctx": {"popup": look.popup, "button": look.label}})
+        return look.popup, vision.to_pixels(look.x, look.y, w, h) if look.popup else None
+
     async def dismiss_popups(self) -> int:
         """Close what covers the page (cookie banner, country/language picker, newsletter box) by clicking its
-        button with the mouse, the way a person would. The vision model looks at the screen; if it is
-        unavailable, OCR looks for popup wording and known button labels. Up to 3 rounds."""
+        button with the mouse, the way a person would. Up to 3 rounds."""
         if (env("DESKTOP_DISMISS_POPUPS", "1") or "1") == "0":
             return 0
         closed = 0
         for _ in range(3):
-            look = await self.see()
-            if look is not None:
-                if not look.popup:
-                    break
-                w, h = self._shot_size()
-                spot = vision.to_pixels(look.x, look.y, w, h)
-                log.info("popup seen", extra={"ctx": {"button": look.label, "at": spot}})
-            elif shutil.which("tesseract"):
-                words = parse_tsv(await self._ocr("tsv"))
-                if not _POPUP_HINTS.search(" ".join(w.text for w in words)):
-                    break
-                spot = next((p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110))), None)
-            else:
+            popup, spot = await self._popup_spot()
+            if not popup:
                 break
             if spot is None:
                 await self.act(action="key", key="Escape")  # many modals close on Escape
@@ -497,18 +508,30 @@ class Desktop:
         return True
 
     async def click_link(self, *labels: str) -> bool:
-        """Click a link the way a person would: the vision model finds it on screen, the mouse glides there and
-        clicks; if the model does not see it, OCR looks for the text. `labels` are alternative link texts."""
-        if spot := await self._locate(
-            "a link or button reading " + " or ".join(f"'{x}'" for x in labels)
-        ):
-            self.last_look = None
-            await self.click_at(*spot)
-            await self._loaded()
-            await self.dismiss_popups()
-            return True
-        for label in labels:
-            if await self.click_text(label):
+        """Click a link the way a person would. OCR finds the text on screen and the mouse glides there and clicks;
+        when OCR cannot find it, the vision model looks (first, with DESKTOP_VISION_FIRST=1). `labels` are alternative
+        link texts."""
+
+        async def by_ocr() -> bool:
+            for label in labels:
+                words = parse_tsv(await self._ocr("tsv"))
+                if spot := find_phrase(words, label, 110):
+                    await self.click_at(*spot)
+                    return True
+            return False
+
+        async def by_vision() -> bool:
+            what = "a link or button reading " + " or ".join(f"'{x}'" for x in labels)
+            if spot := await self._locate(what):
+                await self.click_at(*spot)
+                return True
+            return False
+
+        for how in (by_vision, by_ocr) if self.vision_first else (by_ocr, by_vision):
+            if await how():
+                self.last_look = None
+                await self._loaded()
+                await self.dismiss_popups()
                 return True
         return False
 
@@ -531,8 +554,7 @@ class Desktop:
         """Open the on-screen link whose text starts with `title`. The vision model finds it and the mouse clicks it; then OCR,
         then keyboard find, then the vision step loop. Returns the new page address, or "" when nothing opened."""
         attempts = (
-            ("vision click", lambda: self.click_link(title)),
-            ("ocr click", lambda: self.click_text(title)),
+            ("click", lambda: self.click_link(title)),
             ("find on page", lambda: self.activate_by_find(title)),
             ("vision", lambda: self.vision_open(title)),
         )
