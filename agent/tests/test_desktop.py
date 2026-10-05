@@ -553,3 +553,48 @@ def test_exclusion_matches_multi_word_company_names():
     assert (
         leadscore.exclusion_reason("", "", "Red Hatter Devices", [], c) == ""
     )  # a word, not a prefix of one
+
+
+def test_job_ads_are_caught_by_title_url_and_host_even_with_vendor_wording():
+    lj = leadscore.looks_like_job
+    assert lj("Senior Android Engineer - Acme", "https://acme.io/x")
+    assert lj("Embedded Linux Developer", "https://acme.io/careers/embedded-linux")
+    assert lj("RFID Firmware - we're hiring", "")
+    assert lj("Acme", "https://jobs.acme.io/123")
+    assert lj("Android BSP Engineer", "https://in.indeed.com/viewjob")
+    assert not lj("RFID reader manufacturer - Acme Devices", "https://acme.io/products/readers")
+    assert not lj("Android BSP porting RFQ for custom board", "https://acme.io/rfq")
+    # an ad that mentions OEM / partner / vendor is still an ad
+    ad = (
+        "We are hiring. Full-time role, salary offered, apply now. Our OEM partner and vendor network. "
+        * 3
+    )
+    assert leadscore.is_job_posting(ad, "https://acme.io/news", "Android engineer")
+    assert leadscore.is_job_posting(ad, "https://acme.io/news")  # three employment markers
+
+
+def test_project_request_is_not_a_job():
+    text = "Request for quotation: Android BSP porting and RFID reader app for our custom board. Vendor proposals by June."
+    assert not leadscore.is_job_posting(
+        text, "https://acme.io/rfq", "RFQ: Android BSP porting for our board"
+    )
+
+
+def test_evaluate_rejects_a_job_ad_by_title(monkeypatch):
+    saved: dict[str, list] = {"signals": [], "companies": []}
+    _fake_store(monkeypatch, saved)
+
+    async def boom(*_a, **_k):
+        raise AssertionError("model must not be called for a job ad")
+
+    monkeypatch.setattr(discover.qualify, "qualify_signal", boom)
+    ctx = _ctx()
+    hit = search.Hit(
+        title="Senior Android Engineer",
+        domain="acme.io",
+        snippet="",
+        likely_project=True,
+        score=0.8,
+    )
+    out = asyncio.run(discover.evaluate(ctx, hit, "https://acme.io/p", PROJECT, "q", "default"))
+    assert out == "rejected" and ctx.stats["rejected_job"] == 1

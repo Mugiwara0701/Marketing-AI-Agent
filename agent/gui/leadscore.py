@@ -58,20 +58,38 @@ def employment_hits(text: str) -> int:
     return _count(text, _EMPLOYMENT)
 
 
-def is_job_posting(text: str, url: str = "") -> bool:
-    """True when the page is hiring a person rather than offering a project to a vendor."""
-    host = urlparse(url).hostname or ""
-    parts = host.lower().removeprefix("www.").split(".")
-    domain = ".".join(parts[-2:])
+_JOB_TITLE = re.compile(
+    r"\b(jobs?|careers?|hiring|we.re hiring|vacanc(y|ies)|openings?|recruit(ing|ment|er)?|internships?|"
+    r"full[- ]time|part[- ]time|permanent|walk-?in|apply (now|today|online)|salary|work from home|"
+    r"(senior|junior|lead|staff|principal|sr\.?|jr\.?) (\w+ ){0,2}(engineer|developer|programmer|architect))\b",
+    re.I,
+)  # fmt: skip
+
+
+def looks_like_job(title: str, url: str = "") -> bool:
+    """Hard signals that a result or page is an employment ad, whatever else its text says: a job board, a jobs /
+    careers address, or a job-ad title. Vendor-sounding words (OEM, partner, agency) do not override these."""
+    u = urlparse(url if "//" in url else f"https://{url}") if url else urlparse("")
+    host = (u.hostname or "").lower().removeprefix("www.")
+    domain = ".".join(host.split(".")[-2:])
     if (
         domain in INDIVIDUAL_HIRING_SITES
-        or host.lower().removeprefix("www.") in INDIVIDUAL_HIRING_SITES
+        or host in INDIVIDUAL_HIRING_SITES
+        or host.startswith(("jobs.", "careers.", "career.", "recruit."))
     ):
         return True
-    vendor = vendor_hits(text)
-    if vendor:
-        return False
+    return bool(_JOB_URL.search(u.path or "")) or bool(_JOB_TITLE.search(title or ""))
+
+
+def is_job_posting(text: str, url: str = "", title: str = "") -> bool:
+    """True when the page is hiring a person rather than offering a project to a vendor."""
+    if looks_like_job(title, url):
+        return True
     jobs = employment_hits(text)
+    if jobs >= 3:  # plainly a job ad, even if it says "OEM" or "partner" somewhere
+        return True
+    if vendor_hits(text) >= 2:
+        return False
     return jobs >= 2 or (jobs >= 1 and bool(_JOB_URL.search(urlparse(url).path or "")))
 
 

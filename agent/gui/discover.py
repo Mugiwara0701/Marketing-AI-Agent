@@ -245,7 +245,8 @@ async def search_page(ctx: Ctx, query: str, n: int) -> tuple[str, str, str] | No
         if engine is None:
             return None
         log.info("Search started", extra={"ctx": {"engine": engine, "query": query}})
-        await desk.navigate(engine_target(engine, query))
+        suffix = str(ctx.cfg.get("query_suffix") or "").strip()
+        await desk.navigate(engine_target(engine, f"{query} {suffix}".strip()))
         text, why = await _read_checked(ctx, f"search {query}")
         if why:
             _rest(ctx, engine, why)
@@ -357,7 +358,7 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
         await store.record_signal(sig, {"rejected": True, "why": why, **extra})
         return "rejected"
 
-    if leadscore.is_job_posting(text, canon):
+    if leadscore.is_job_posting(text, canon, hit.title):
         return await reject("job posting, not a project", "rejected_job")
     if why := leadscore.exclusion_reason(
         f"{hit.title} {text[:3000]}", urlparse(canon).hostname or "", "",
@@ -518,7 +519,7 @@ async def process_hit(ctx: Ctx, hit: search.Hit, results_url: str, query: str, e
         await _back_to_results(ctx, url, results_url)
 
 
-async def process_query(ctx: Ctx, platform: str, query: str, queue: deque, limit_left: int) -> int:
+async def process_query(ctx: Ctx, platform: str, query: str, queue: deque, limit_left: int) -> int:  # noqa: PLR0912
     """One search: returns how many leads it stored."""
     st = ctx.stats
     before = st["stored"]
@@ -566,6 +567,9 @@ async def process_query(ctx: Ctx, platform: str, query: str, queue: deque, limit
                 or web.registrable_domain(dom) in leadscore.INDIVIDUAL_HIRING_SITES
             )
         ) or any(leadscore.similar(hit.title, t) for t in seen_titles):
+            continue
+        if leadscore.looks_like_job(hit.title, dom):
+            log.info("Result skipped", extra={"ctx": {"why": "job ad", "title": hit.title[:80]}})
             continue
         if why := leadscore.country_excluded(
             dom, "", [], ctx.cfg.get("exclude_tlds") or []

@@ -177,6 +177,8 @@ desktop:
   # github) are about projects and people, not companies that build devices.
   platforms:
     - {name: web, template: "{q}"}
+  # Added to every search so job ads stay out of the results (minus operators work in Google, Bing and DuckDuckGo).
+  query_suffix: -jobs -careers -hiring -vacancy -vacancies -salary -internship
   # Opening queries: device makers worldwide (never Canada, the United Kingdom or Germany). The agent adds follow-ups
   # from what it sees, but only ones that pass query_topic_terms / query_actor_terms below.
   queries:
@@ -234,12 +236,24 @@ desktop:
     - queue management kiosk manufacturer USA
     - handheld data terminal supplier
     - handheld data terminal supplier China
+    - need Android BSP porting for our custom board
+    - looking for partner to develop Android firmware for our RFID reader
+    - RFID reader Android app development partner
+    - RFQ Android handheld firmware development
+    - tender embedded Linux board bring-up project
+    - hardware startup needs embedded Android firmware partner
+    - outsource Android firmware development hardware company
+    - custom board AOSP bring-up UART bootloader project
+    - need Linux BSP and RFID reader integration for our device
+    - looking for vendor to customize Android OS for rugged handheld
+    - IoT device company needs firmware and app development team
+    - contract project Android board bring-up peripheral integration
   # Follow-up queries invented by the model must name a kind of device (topic) AND a who (actor), and nothing excluded.
   query_topic_terms: [rfid, nfc, smart card, biometric, fingerprint, face, access control, attendance, handheld, rugged, pos, payment, terminal, barcode, scanner, mobile computer, tablet, signage, kiosk, set-top, iot, gateway, gps, tracker, telematics, meter, printer, shelf label, reader, identity, device, devices]
-  query_actor_terms: [manufacturer, manufacturers, maker, makers, supplier, suppliers, provider, producer, company, companies, oem, odm, solutions]
+  query_actor_terms: [need, needed, looking for, rfq, rfp, tender, partner, outsource, outsourcing, vendor, project, contract, manufacturer, manufacturers, maker, makers, supplier, suppliers, provider, producer, company, companies, oem, odm, solutions]
   # A page is looked at only if it shows at least DESKTOP_MIN_KEYWORDS (default 2) different words from keywords (top of
   # this file: AOSP, BSP, Yocto...) plus product_keywords: what a company that builds devices writes about itself.
-  product_keywords: [android, linux, embedded, firmware, rfid, nfc, reader, readers, smart card, biometric, fingerprint, access control, attendance, handheld, terminal, pos, kiosk, tablet, barcode, scanner, signage, set-top, iot, gateway, telematics, tracker, meter, printer, manufacturer, oem, odm, hardware]
+  product_keywords: [uart, bootloader, board, bring-up, porting, sdk, android, linux, embedded, firmware, rfid, nfc, reader, readers, smart card, biometric, fingerprint, access control, attendance, handheld, terminal, pos, kiosk, tablet, barcode, scanner, signage, set-top, iot, gateway, telematics, tracker, meter, printer, manufacturer, oem, odm, hardware]
   # Never a lead. Autonomous-driving firms and big brands build their platform software in-house; embedded-software
   # vendors (Canonical, Wind River...) sell software, not devices, and are mostly competitors.
   exclude_terms: [robotaxi, "autonomous vehicle", "autonomous vehicles", "autonomous driving", self-driving, "self driving", driverless, lidar]

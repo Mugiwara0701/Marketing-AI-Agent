@@ -65,7 +65,20 @@ Queries, search engines and platforms (`site:` filters) are in `config/sources.y
 Models: `lead.search`, `lead.qualify`, `lead.extract_contact`, `outreach.draft` use the dev text model; `gui.step` (vision) is only a fallback for clicking.
 The scheduled run (`deploy/aosp-agent.service`) sets `DISPLAY=:0` and `LEADS_MODE=desktop`.
 
+## What we sell, and who the leads are
+
+We deliver **B2B projects**, not people. Typical project: a company sends its board, we flash AOSP or Linux, unlock UART and the
+bootloader, expose every interface, then build the Android app (for example for an RFID reader) and connect the reader to the board.
+Leads are therefore (1) companies that make their own devices and may need this, and (2) project requests: a named company asking an
+outside team, vendor or partner to deliver custom board bring-up, porting, firmware or an app (RFQ, tender, partner search).
+**Employment is never a lead:** full-time, part-time, permanent or internship roles, "we are hiring", careers pages, job boards.
+
 ## What counts as a lead, and what never does
+
+- **Jobs are cut at four points:** `query_suffix` (`-jobs -careers -hiring ...`) is added to every search; a result whose title, address or
+  site is a job ad or job board is not opened; the opened page is checked again (title, `/jobs/` or `/careers/` address, three or more
+  employment phrases such as "apply now", "salary", "full-time"); and the model is told that employment is not relevant. Words like
+  "OEM" or "partner" no longer excuse a job ad.
 
 - **Device maker:** the page must show at least `DESKTOP_MIN_KEYWORDS` (2) different words from `keywords` (AOSP, BSP...) plus
   `desktop.product_keywords` (rfid, reader, biometric, terminal, manufacturer...), and the model (prompt
