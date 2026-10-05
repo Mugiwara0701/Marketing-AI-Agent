@@ -173,38 +173,77 @@ desktop:
     - https://duckduckgo.com/?q={q}
     - https://www.bing.com/search?q={q}
   engine_rest_minutes: 30
-  # Where to look. {q} is the query. "web" is the open web; the others restrict the search to one platform.
+  # Where to look. {q} is the query. Device makers are found on the open web; the platform sites (reddit, hacker news,
+  # github) are about projects and people, not companies that build devices.
   platforms:
     - {name: web, template: "{q}"}
-    - {name: reddit, template: "site:reddit.com {q}"}
-    - {name: hackernews, template: "site:news.ycombinator.com {q}"}
-    - {name: github, template: "site:github.com {q} looking for vendor OR partner OR contractor"}
-  # Opening queries. The agent adds its own from what it sees on the results pages.
+  # Opening queries: device makers worldwide (never Canada, the United Kingdom or Germany). The agent adds follow-ups
+  # from what it sees, but only ones that pass query_topic_terms / query_actor_terms below.
   queries:
-    - AOSP development project outsourcing
-    - Android platform development project vendor
-    - Android BSP development outsourcing
-    - Android device bring-up project
-    - Android framework customization partner
-    - Android HAL development project
-    - Android Automotive AAOS development partner
-    - embedded Linux development outsourcing
-    - embedded systems development project partner
-    - Linux BSP project vendor
-    - device driver development outsourcing
-    - firmware development outsourced project
-    - embedded software outsourcing company needed
-    - IoT embedded development project RFP
-    - custom Android OS development for our device
-    - Android embedded software vendor request for proposal
-    - looking for agency to build Android based hardware product
-    - need external team Yocto embedded Linux board bring-up
-  # Follow-up queries the model invents from the results must contain one SERVICE word and one PROJECT word,
-  # so the search cannot drift to "more companies like the last one" (e.g. robotaxi makers).
-  query_service_terms: [aosp, android, bsp, embedded, yocto, buildroot, firmware, kernel, driver, drivers, aaos, hal, linux, bring-up, iot]
-  query_project_terms: [outsourcing, outsourced, vendor, partner, agency, rfp, contract, contractor, external, proposal, project, needed, "looking for", services, company]
-  # Never a lead. Autonomous-driving firms and big car makers / brands build their platform software in-house.
-  # exclude_terms are matched as whole words in the result and the first part of the page; exclude_companies
-  # against the site name (nuro.ai -> nuro) and the company name.
+    - RFID reader manufacturer
+    - RFID reader manufacturer India
+    - UHF RFID handheld reader manufacturer
+    - UHF RFID handheld reader manufacturer USA
+    - smart card reader manufacturer
+    - smart card reader manufacturer China
+    - NFC reader manufacturer
+    - NFC reader manufacturer Taiwan
+    - biometric fingerprint device manufacturer
+    - biometric fingerprint device manufacturer Singapore
+    - face recognition terminal manufacturer
+    - face recognition terminal manufacturer UAE
+    - access control terminal manufacturer
+    - access control terminal manufacturer Brazil
+    - time attendance device manufacturer
+    - time attendance device manufacturer Australia
+    - rugged handheld terminal manufacturer
+    - rugged handheld terminal manufacturer Netherlands
+    - Android POS terminal manufacturer
+    - Android POS terminal manufacturer France
+    - payment terminal manufacturer
+    - payment terminal manufacturer Italy
+    - barcode scanner manufacturer
+    - barcode scanner manufacturer Spain
+    - mobile computer PDA manufacturer
+    - mobile computer PDA manufacturer Poland
+    - digital signage player manufacturer
+    - digital signage player manufacturer Turkey
+    - self-service kiosk manufacturer
+    - self-service kiosk manufacturer South Korea
+    - set-top box manufacturer
+    - set-top box manufacturer Japan
+    - IoT gateway manufacturer
+    - IoT gateway manufacturer Vietnam
+    - GPS tracker telematics device manufacturer
+    - GPS tracker telematics device manufacturer Israel
+    - smart meter manufacturer
+    - smart meter manufacturer Mexico
+    - thermal receipt printer manufacturer
+    - thermal receipt printer manufacturer South Africa
+    - industrial Android tablet manufacturer
+    - industrial Android tablet manufacturer Malaysia
+    - electronic shelf label manufacturer
+    - electronic shelf label manufacturer Sweden
+    - vehicle telematics unit manufacturer
+    - vehicle telematics unit manufacturer Switzerland
+    - RFID and identity solutions provider
+    - RFID and identity solutions provider Finland
+    - smart card and ID card printer manufacturer
+    - smart card and ID card printer manufacturer India
+    - queue management kiosk manufacturer
+    - queue management kiosk manufacturer USA
+    - handheld data terminal supplier
+    - handheld data terminal supplier China
+  # Follow-up queries invented by the model must name a kind of device (topic) AND a who (actor), and nothing excluded.
+  query_topic_terms: [rfid, nfc, smart card, biometric, fingerprint, face, access control, attendance, handheld, rugged, pos, payment, terminal, barcode, scanner, mobile computer, tablet, signage, kiosk, set-top, iot, gateway, gps, tracker, telematics, meter, printer, shelf label, reader, identity, device, devices]
+  query_actor_terms: [manufacturer, manufacturers, maker, makers, supplier, suppliers, provider, producer, company, companies, oem, odm, solutions]
+  # A page is looked at only if it shows at least DESKTOP_MIN_KEYWORDS (default 2) different words from keywords (top of
+  # this file: AOSP, BSP, Yocto...) plus product_keywords: what a company that builds devices writes about itself.
+  product_keywords: [android, linux, embedded, firmware, rfid, nfc, reader, readers, smart card, biometric, fingerprint, access control, attendance, handheld, terminal, pos, kiosk, tablet, barcode, scanner, signage, set-top, iot, gateway, telematics, tracker, meter, printer, manufacturer, oem, odm, hardware]
+  # Never a lead. Autonomous-driving firms and big brands build their platform software in-house.
   exclude_terms: [robotaxi, "autonomous vehicle", "autonomous vehicles", "autonomous driving", self-driving, "self driving", driverless, lidar]
   exclude_companies: [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber, lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo, fairphone]
+  # Not pitched: companies based in these countries. Checked on the site ending, on the location the model reads from
+  # the page, and on follow-up queries.
+  exclude_countries: [canada, "united kingdom", uk, "u.k.", "great britain", england, scotland, wales, "northern ireland", germany, deutschland]
+  exclude_tlds: [".ca", ".uk", ".co.uk", ".de"]

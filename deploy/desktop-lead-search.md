@@ -1,8 +1,11 @@
 # Desktop lead search (visible Chrome on Xubuntu)
 
-`python -m agent run --desktop` finds project leads by using a real, visible Chrome window the way a person
-does: Ctrl+L, type a search, Return, read the results, click a result, scroll, read, judge. It stores the
-qualified leads in the existing database and drafts (never sends) a proposal email for each lead that has a public contact.
+`python -m agent run --desktop` finds **companies that make their own electronic devices** (RFID / NFC / smart-card readers,
+biometric and access-control terminals, POS and payment terminals, rugged handhelds, kiosks, set-top boxes, IoT gateways,
+trackers and similar) anywhere in the world **except Canada, the United Kingdom and Germany**: companies we can pitch AOSP,
+BSP, firmware and embedded Linux engineering to. It uses a real, visible Chrome window the way a person does: Ctrl+L, type a
+search, read the results, click a result, scroll, read, judge. It stores the qualified leads in the existing database and drafts
+(never sends) a proposal email for each lead that has a public contact.
 
 ## How it works
 
@@ -61,3 +64,16 @@ The run prints a JSON summary: `searches`, `pages_inspected`, `qualified`, `stor
 Queries, search engines and platforms (`site:` filters) are in `config/sources.yaml` under `desktop:`.
 Models: `lead.search`, `lead.qualify`, `lead.extract_contact`, `outreach.draft` use the dev text model; `gui.step` (vision) is only a fallback for clicking.
 The scheduled run (`deploy/aosp-agent.service`) sets `DISPLAY=:0` and `LEADS_MODE=desktop`.
+
+## What counts as a lead, and what never does
+
+- **Device maker:** the page must show at least `DESKTOP_MIN_KEYWORDS` (2) different words from `keywords` (AOSP, BSP...) plus
+  `desktop.product_keywords` (rfid, reader, biometric, terminal, manufacturer...), and the model (prompt
+  `agent/prompts/device/lead_qualify.txt`) must call it a device maker with confidence of at least `DESKTOP_MIN_CONFIDENCE` (0.7).
+  The site does not need to mention Android or Linux.
+- **Countries:** `desktop.exclude_countries` and `desktop.exclude_tlds` in `config/sources.yaml`. A company is dropped when its site
+  ends in `.ca`, `.uk`, `.co.uk` or `.de`, or when the location the model reads from the page names one of those countries. A
+  `.com` company whose page shows no country is not dropped: check the location in the stored lead.
+- **Never:** `desktop.exclude_terms` (robotaxi, autonomous driving...) and `desktop.exclude_companies` (autonomous-driving firms, big brands).
+- **Queries:** the model's follow-up queries are kept only if they name a kind of device and a "who" (manufacturer, supplier...)
+  (`query_topic_terms`, `query_actor_terms`) and no excluded country or topic.

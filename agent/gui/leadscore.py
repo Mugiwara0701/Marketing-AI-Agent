@@ -154,13 +154,15 @@ def new_query(candidate: str, known: list[str]) -> bool:
 
 def score_lead(
     *, confidence: float, vendor: int, keyword_hits: int, text_len: int, has_summary: bool,
-    own_site: bool, contact: bool,
+    own_site: bool, contact: bool, product_hits: int = 0,
 ) -> tuple[int, dict[str, int]]:  # fmt: skip
     """0-100 qualification score from evidence, with the parts so a person can see why."""
     parts = {
         "model_confidence": round(max(0.0, min(confidence, 1.0)) * 40),
         "outsourcing_intent": min(vendor, 3) * 7,
         "technical_match": min(keyword_hits, 4) * 4,
+        "product_match": min(product_hits, 3)
+        * 7,  # words a device maker uses about itself (rfid, reader, pos...)
         "evidence": (4 if text_len >= 800 else 0) + (4 if has_summary else 0),
         "own_website": 5 if own_site else 0,
         "contactable": 10 if contact else 0,
@@ -204,3 +206,14 @@ def query_on_topic(query: str, service: list[str], project: list[str], exclude: 
     if service and not any(_has_word(query, t) for t in service):
         return False
     return not project or any(_has_word(query, t) for t in project)
+
+
+def country_excluded(host: str, location: str, countries: list[str], tlds: list[str]) -> str:
+    """Why a company is outside the countries we do not pitch: its site ends in an excluded domain (.de, .co.uk...)
+    or the location read from its page names one. "" when it is not excluded or the location is unknown."""
+    h = (host or "").lower().strip(".")
+    if t := next((t for t in tlds if h.endswith(t.lower())), None):
+        return f"site ends in {t}"
+    if c := next((c for c in countries if _has_word(location or "", c)), None):
+        return f"based in {c}"
+    return ""

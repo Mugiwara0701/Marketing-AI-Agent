@@ -365,22 +365,28 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
     ):  # fmt: skip
         return await reject(why, "rejected_irrelevant")
     kws = sum(1 for k in ctx.keywords if sources.matches(text, [k]))
-    if kws < max(1, ctx.min_keywords):
+    dev = sum(1 for k in ctx.cfg.get("product_keywords") or [] if sources.matches(text, [k]))
+    if kws + dev < max(1, ctx.min_keywords):
         return await reject(
-            f"only {kws} AOSP/Android platform/embedded keyword(s), need {ctx.min_keywords}",
+            f"only {kws + dev} platform / device keyword(s), need {ctx.min_keywords}",
             "rejected_irrelevant",
         )
     if sources.is_stale(sig, ctx.max_age_days):
         return await reject("older than max_age_days", "rejected_irrelevant")
 
     q, problems = await qualify.qualify_signal(
-        f"Page: {canon}\nTitle: {hit.title}\n\n{text[:6500]}"
+        f"Page: {canon}\nTitle: {hit.title}\n\n{text[:6500]}", "device"
     )
     name = (q.company_name or "").strip()
     log.info(
         "Opportunity evaluated",
         extra={"ctx": {"relevant": q.relevant, "confidence": q.confidence, "company": name}},
     )
+    if why := leadscore.country_excluded(
+        urlparse(canon).hostname or "", q.location, ctx.cfg.get("exclude_countries") or [],
+        ctx.cfg.get("exclude_tlds") or [],
+    ):  # fmt: skip
+        return await reject(why, "rejected_irrelevant", company=name)
     if why := leadscore.exclusion_reason("", "", name, [], ctx.cfg.get("exclude_companies") or []):
         return await reject(why, "rejected_irrelevant", company=name)
     if not q.relevant or problems or not name:
@@ -402,6 +408,8 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
         domain = await find_website(ctx, name)
     if not domain:
         return await reject("company website not found", "rejected_irrelevant", company=name)
+    if why := leadscore.country_excluded(domain, "", [], ctx.cfg.get("exclude_tlds") or []):
+        return await reject(why, "rejected_irrelevant", company=name)
     if (
         domain in ctx.domains_seen
         or await store.domain_known(domain)
@@ -417,7 +425,7 @@ async def evaluate(ctx: Ctx, hit: search.Hit, url: str, text: str, query: str, e
     own = bool(domain_from_page(canon, name))
     vendor = leadscore.vendor_hits(text)
     args: dict[str, Any] = {"confidence": q.confidence, "vendor": vendor, "keyword_hits": kws, "text_len": len(text),
-            "has_summary": bool(q.project_summary), "own_site": own}  # fmt: skip
+            "has_summary": bool(q.project_summary), "own_site": own, "product_hits": dev}  # fmt: skip
     pre, _ = leadscore.score_lead(contact=False, **args)
     if pre < ctx.min_score - 10:
         return await reject(f"score {pre} too low", "rejected_score", company=name, score=pre)
@@ -531,8 +539,8 @@ async def process_query(ctx: Ctx, platform: str, query: str, queue: deque, limit
     cfg = ctx.cfg
     for nq in read.next_queries:  # follow-ups chosen from what the results showed
         if not leadscore.query_on_topic(
-            nq, cfg.get("query_service_terms") or [], cfg.get("query_project_terms") or [],
-            cfg.get("exclude_terms") or [],
+            nq, cfg.get("query_topic_terms") or [], cfg.get("query_actor_terms") or [],
+            [*(cfg.get("exclude_terms") or []), *(cfg.get("exclude_countries") or [])],
         ):  # fmt: skip
             log.info("Follow-up query dropped (off topic)", extra={"ctx": {"query": nq}})
             continue
@@ -558,6 +566,11 @@ async def process_query(ctx: Ctx, platform: str, query: str, queue: deque, limit
                 or web.registrable_domain(dom) in leadscore.INDIVIDUAL_HIRING_SITES
             )
         ) or any(leadscore.similar(hit.title, t) for t in seen_titles):
+            continue
+        if why := leadscore.country_excluded(
+            dom, "", [], ctx.cfg.get("exclude_tlds") or []
+        ):  # fmt: skip
+            log.info("Result skipped", extra={"ctx": {"why": why, "title": hit.title[:80]}})
             continue
         if why := leadscore.exclusion_reason(
             f"{hit.title} {hit.snippet}", dom, "", ctx.cfg.get("exclude_terms") or [],
@@ -590,6 +603,9 @@ async def retry_missing_contacts(ctx: Ctx, limit: int = 3) -> None:
         if why := leadscore.exclusion_reason(
             co["project_summary"] or "", co["domain"] or "", co["name"] or "",
             ctx.cfg.get("exclude_terms") or [], ctx.cfg.get("exclude_companies") or [],
+        ) or leadscore.country_excluded(
+            co["domain"] or "", co["location"] or "", ctx.cfg.get("exclude_countries") or [],
+            ctx.cfg.get("exclude_tlds") or [],
         ):  # fmt: skip
             await store.reject_company(co["id"])
             log.info("Stored company dropped", extra={"ctx": {"company": co["name"], "why": why}})

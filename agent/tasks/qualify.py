@@ -30,13 +30,14 @@ def _validate(result: llm.Completion) -> list[str]:
     return checks.check_confidence(p.confidence, THRESHOLD) if isinstance(p, QualifyResult) else []
 
 
-async def qualify_signal(text: str) -> tuple[QualifyResult, list[str]]:
-    """Returns (result, problems). Non-empty problems mean low confidence: route to review, not auto-drop."""
+async def qualify_signal(text: str, profile: str = "") -> tuple[QualifyResult, list[str]]:
+    """Returns (result, problems). Non-empty problems mean low confidence: route to review, not auto-drop.
+    profile "device" uses agent/prompts/device/lead_qualify.txt: judge a device maker's own website."""
     completion, problems = await task_runner.run_task(
         TASK,
         text,
         schema=QualifyResult,
-        prompt_dir=PROMPT_DIR,
+        prompt_dir=f"{PROMPT_DIR}/{profile}" if profile else PROMPT_DIR,
         use_examples=False,
         validate=_validate,
         max_tokens=300,

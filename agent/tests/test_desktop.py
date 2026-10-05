@@ -193,7 +193,7 @@ def test_evaluate_stores_a_real_project_and_dedups_the_second_time(monkeypatch):
                               company_name="Acme Auto", project_summary="Head unit bring-up", technologies=["AAOS"],
                               location="Germany", website="acme-auto.com")  # fmt: skip
 
-    async def fake_q(_text):
+    async def fake_q(_text, _profile=""):
         return q, []
 
     async def no_contact(*_a, **_k):
@@ -387,7 +387,7 @@ def test_evaluate_needs_two_keywords_and_enough_confidence(monkeypatch):
     weak = qualify.QualifyResult(relevant=True, service_fit=["AOSP"], confidence=0.55, reason="vague",
                                  company_name="X", project_summary="s", technologies=[], location="", website="x.com")  # fmt: skip
 
-    async def fake_q(_text):
+    async def fake_q(_text, _profile=""):
         return weak, []
 
     monkeypatch.setattr(discover.qualify, "qualify_signal", fake_q)
@@ -471,3 +471,74 @@ def test_retry_drops_stored_excluded_companies_without_opening_them(monkeypatch)
     ctx.cfg = {"exclude_terms": ["robotaxi"], "exclude_companies": ["zoox"]}
     asyncio.run(discover.retry_missing_contacts(ctx))
     assert rejected == ["1"] and visited == ["acme-devices.com"]
+
+
+_RFID_PAGE = (
+    "ID Tech Solutions. The world's only 360 degree provider of RFID and identity solutions. "
+    "RFID readers fixed and handheld, smart card readers, card printers, biometric devices, "
+    "access control and attendance terminals. Manufacturer based in Gurgaon. "
+) * 12
+_DEVICE_CFG = {
+    "product_keywords": ["rfid", "reader", "smart card", "biometric", "terminal", "manufacturer"],
+    "exclude_countries": ["canada", "united kingdom", "uk", "germany"],
+    "exclude_tlds": [".ca", ".uk", ".co.uk", ".de"],
+}
+
+
+def _device_q(location="Gurgaon, India", website="idtech.example"):
+    return qualify.QualifyResult(relevant=True, service_fit=["Embedded Linux"], confidence=0.8, reason="RFID reader maker",
+                                 company_name="ID Tech Solutions", project_summary="RFID readers and biometric devices",
+                                 technologies=["UHF RFID"], location=location, website=website)  # fmt: skip
+
+
+def _run_device(monkeypatch, q, url="https://idtech.example/"):
+    saved: dict[str, list] = {"signals": [], "companies": []}
+    _fake_store(monkeypatch, saved)
+    seen_profile = []
+
+    async def fake_q(_text, profile=""):
+        seen_profile.append(profile)
+        return q, []
+
+    async def no_contact(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(discover.qualify, "qualify_signal", fake_q)
+    monkeypatch.setattr(discover, "visible_contact", no_contact)
+    ctx = _ctx()
+    ctx.cfg = dict(_DEVICE_CFG)
+    ctx.keywords = ["aosp", "bsp"]  # the page has none of these: only device wording
+    hit = search.Hit(
+        title="ID Tech", domain="idtech.example", snippet="", likely_project=True, score=0.8
+    )
+    out = asyncio.run(discover.evaluate(ctx, hit, url, _RFID_PAGE, "q", "default"))
+    return out, saved, seen_profile
+
+
+def test_device_maker_without_android_wording_is_a_lead(monkeypatch):
+    out, saved, profile = _run_device(monkeypatch, _device_q())
+    assert out == "stored" and saved["companies"]
+    assert profile == ["device"]  # judged with the device-maker prompt
+
+
+@pytest.mark.parametrize(
+    "location", ["Munich, Germany", "Toronto, Canada", "Leeds, United Kingdom", "UK"]
+)
+def test_excluded_country_is_rejected(monkeypatch, location):
+    out, saved, _ = _run_device(monkeypatch, _device_q(location=location))
+    assert out == "rejected" and not saved["companies"]
+
+
+def test_excluded_site_ending_is_rejected(monkeypatch):
+    out, saved, _ = _run_device(monkeypatch, _device_q(website="acme.de"), url="https://acme.de/")
+    assert out == "rejected" and not saved["companies"]
+
+
+def test_country_excluded_helper():
+    c, t = ["canada", "germany"], [".ca", ".de"]
+    assert leadscore.country_excluded("www.acme.de", "", c, t) == "site ends in .de"
+    assert leadscore.country_excluded("acme.com", "Berlin, Germany", c, t) == "based in germany"
+    assert leadscore.country_excluded("acme.in", "Gurgaon, India", c, t) == ""
+    assert (
+        leadscore.country_excluded("acme.com", "", c, t) == ""
+    )  # unknown location is not excluded
