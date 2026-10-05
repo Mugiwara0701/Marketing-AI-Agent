@@ -48,10 +48,25 @@ whole-word matcher `agent.sources.matches` can pre-tag a page before the model i
   directories, the Linux Foundation member lists, and searches such as "AOSP BSP services company",
   "Yocto consulting", "embedded Linux consultancy".
 - The examples are starting points only. Check that each one still exists and still fits.
+- Directory pages read automatically (`directory_pages`): the Yocto Project participants and members lists, the
+  Automotive Grade Linux and Linux Foundation member lists, and the Toradex, NXP, Renesas and ST partner pages.
+  Toradex and ST refuse automated visitors and NXP builds its list with JavaScript: such pages are reported
+  as "check manually". TI, Qualcomm, MediaTek and the Android partner lists have no page an automated visitor can
+  read (`directories_manual`) and are always in the report to check by hand.
 
 Several names on these lists are also in `desktop.exclude_companies` (Timesys, Mender, Linaro...) because the
 lead search must not pitch them. That list does not apply here: this task reads `config/sources.yaml` only for
 `keywords`, never for `exclude_*`.
+
+## Sites never used (strict)
+
+- E-commerce, marketplace and B2B listing sites are never searched, followed or cited: IndiaMART, TradeIndia, Alibaba,
+  AliExpress, Amazon, eBay, Flipkart, Fiverr, Upwork, Justdial, Sulekha, ExportersIndia and similar
+  (`excluded_sites` in `config/embedded_companies.yaml`: Made-in-China, Global Sources, Kompass, Thomasnet,
+  Clutch, GoodFirms...). A search result from one of them is ignored.
+- E-commerce companies are never targets: a found site whose pages read like an online shop is left out.
+- The verification pass checks every URL in every row (website, email source, careers page, job link, the
+  directory it came from) against that list.
 
 ## For each company, collect
 
@@ -64,9 +79,9 @@ lead search must not pitch them. That list does not apply here: this task reads 
 6. Careers page URL
 7. Relevant openings: for each one, the job title, location (including remote/hybrid), experience required (if
    stated) and the direct job link. Relevant means embedded, firmware, kernel, BSP, AOSP/Android platform, Yocto,
-   OTA, embedded security, HAL. If none: "No relevant opening found" in the opening columns.
+   OTA, embedded security, HAL. If none: "No relevant opening found (checked <date>)" in the opening columns.
 8. Date checked (today)
-9. Notes, e.g. "careers email not listed, only contact form", "acquired by X"
+9. Notes, e.g. "only a contact form, no email listed", "acquired by X"
 
 ## Rules
 
@@ -78,13 +93,13 @@ These match rules the project already enforces in code. Reuse that code instead 
 - **Company-level addresses only, no personal emails.** `agent.contacts` already ranks role mailboxes
   (`_ROLE_ORDER`); for this task put `careers`, `jobs`, `hr`, `recruit` first, then `info`, `contact`, `hello`.
 - **Every email, opening and URL must come from a page actually opened.** Keep the source URL in its own column.
-- **Careers pages first.** The fallback in the original task (LinkedIn, Indeed, Naukri) is not allowed in this
-  project: `agent.web.blocked()` refuses LinkedIn, Indeed, Glassdoor, Naukri, Monster and ZipRecruiter because
+- **Careers pages first.** The task allows LinkedIn, Indeed and Naukri as a fallback for openings. This project
+  does not: `agent.web.blocked()` refuses LinkedIn, Indeed, Glassdoor, Naukri, Monster and ZipRecruiter because
   their terms forbid scraping. When a company's openings are only on such a portal, write
   `Openings only on <portal> – check manually` in Notes and move on. The open job boards in `agent/portals.py`
   may be used as a fallback, marked as the source.
 - Skip openings that are clearly expired or closed.
-- **Do not loop on a site that blocks fetching.** Use `agent.gui.leadscore.block_reason` (CAPTCHA, Cloudflare,
+- **Do not loop on a site that blocks fetching, and do not work around it** (no browser tricks, no other address). Use `agent.gui.leadscore.block_reason` (CAPTCHA, Cloudflare,
   access denied, login wall): mark the company `Could not access – check manually` and move on.
 - Deduplicate companies, including subsidiaries and acquired brands. Compare on the registrable domain
   (`agent.web.registrable_domain`) and the normalised name.

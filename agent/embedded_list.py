@@ -31,7 +31,7 @@ log = get_logger("agent.embedded_list")
 CONFIG = Path("config/embedded_companies.yaml")
 OUT = Path("out/embedded_companies")
 NO_OPENING = "No relevant opening found"
-CANNOT_ACCESS = "Could not access - check manually"
+CANNOT_ACCESS = "Could not access \u2013 check manually"
 
 # --- what the pages say ------------------------------------------------------------------------------
 
@@ -109,12 +109,12 @@ _CLOSED = re.compile(
     re.I,
 )
 _LOCATION = re.compile(
-    r"(?:job location|work location|location|standort|lieu|based in)\s*[:\--]\s*([^\n|•]{2,80}?)(?=\s{2,}|$|"
+    r"(?:job location|work location|location|standort|lieu|based in)\s*[:\-\u2013]\s*([^\n|•]{2,80}?)(?=\s{2,}|$|"
     r"\b(department|type|experience|employment|team|salary|apply)\b)",
     re.I,
 )
 _EXPERIENCE = re.compile(
-    r"(\d{1,2})\s*(\+|plus)?\s*(?:(?:-|-|to)\s*(\d{1,2}))?\s*(?:years|yrs)\b(?:[^.]{0,40}?experience)?",
+    r"(\d{1,2})\s*(\+|plus)?\s*(?:(?:-|\u2013|to)\s*(\d{1,2}))?\s*(?:years|yrs)\b(?:[^.]{0,40}?experience)?",
     re.I,
 )
 
@@ -291,6 +291,25 @@ def is_ats(url: str) -> bool:
     return any(host == h or host.endswith("." + h) for h in ATS_HOSTS)
 
 
+def excluded_site(url: str, labels: list[str] | tuple[str, ...]) -> bool:
+    """A marketplace, e-commerce or B2B listing site (IndiaMART, Alibaba, Amazon, Upwork...): never a source and
+    never a target. Matched on any part of the host name, so 'amazon' covers amazon.in and aws.amazon.com."""
+    host = (urlparse(url if "//" in url else f"//{url}").hostname or "").lower()
+    parts = set(host.split("."))
+    return any(label.lower() in parts for label in labels)
+
+
+_STORE = re.compile(
+    r"add to (cart|basket)|shopping cart|\bcheckout\b|shop now|buy now|free shipping|wishlist|my cart",
+    re.I,
+)
+
+
+def looks_like_store(text: str) -> bool:
+    """An online shop's own pages: several different shopping phrases."""
+    return len({m.group(0).lower() for m in _STORE.finditer(text or "")}) >= 3
+
+
 def careers_link(page_links: list[tuple[str, str]], domains: set[str]) -> str:
     """The careers / jobs page linked from the site (own domain or an applicant system). "" if none."""
     for url, text in page_links:
@@ -321,13 +340,18 @@ def info_links(page_links: list[tuple[str, str]], domains: set[str], limit: int 
 
 
 def job_links(
-    page_links: list[tuple[str, str]], careers_url: str, domains: set[str]
+    page_links: list[tuple[str, str]],
+    careers_url: str,
+    domains: set[str],
+    excluded: list[str] | tuple[str, ...] = (),
 ) -> list[tuple[str, str]]:
     """(url, title) of the openings listed on a careers page or job board. Navigation links are skipped."""
     out: list[tuple[str, str]] = []
     for url, link_text in page_links:
-        if url.rstrip("/") == careers_url.rstrip("/") or not (
-            same_company(url, domains) or is_ats(url)
+        if (
+            url.rstrip("/") == careers_url.rstrip("/")
+            or not (same_company(url, domains) or is_ats(url))
+            or excluded_site(url, excluded)
         ):
             continue
         title = link_text
@@ -425,11 +449,18 @@ _SITE_NAME = re.compile(
 _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 
+def tidy_name(name: str) -> str:
+    """'DH electronics: DH electronics' -> 'DH electronics' (some sites repeat their name in og:site_name)."""
+    name = " ".join((name or "").split())
+    parts = [p.strip() for p in re.split(r"\s*[:|]\s*", name) if p.strip()]
+    return parts[0] if len(parts) > 1 and len({p.lower() for p in parts}) == 1 else name
+
+
 def site_name(html: str, url: str) -> str:
     """The company's name as its own home page states it: og:site_name, else the part of the <title> that holds
     the site's name (usually after '|' or ' - '), else the domain."""
     if m := _SITE_NAME.search(html[:200_000]):
-        return " ".join(unescape(m.group(1)).split())
+        return tidy_name(unescape(m.group(1)))
     label = web.registrable_domain(url).split(".")[0]
     if m := _TITLE.search(html[:200_000]):
         parts = [
@@ -493,7 +524,10 @@ async def _get(url: str) -> tuple[str, str] | None:
 
 
 async def research(  # noqa: PLR0912, PLR0915 - one company, step by step
-    c: Candidate, today: str, max_openings: int = 10
+    c: Candidate,
+    today: str,
+    max_openings: int = 10,
+    excluded: list[str] | tuple[str, ...] = (),
 ) -> tuple[CompanyRow, list[OpeningRow]]:
     """Open the company's site, its contact / about pages and careers page, and collect what they publish."""
     home = _url(c.website)
@@ -534,7 +568,7 @@ async def research(  # noqa: PLR0912, PLR0915 - one company, step by step
         else:
             c_html, c_text = cg
             pages.append((careers, c_html, c_text))
-            listed = job_links(links(c_html, careers), careers, domains)
+            listed = job_links(links(c_html, careers), careers, domains, excluded)
             # No relevant job on the careers page itself: it may only point to the openings ("View openings",
             # an applicant system). Follow that link.
             if not any(is_relevant(t) for _, t in listed):
@@ -548,7 +582,7 @@ async def research(  # noqa: PLR0912, PLR0915 - one company, step by step
                     "",
                 )
                 if board and (bg := await _get(board)) is not None:
-                    listed += job_links(links(bg[0], board), board, domains)
+                    listed += job_links(links(bg[0], board), board, domains, excluded)
             seen: set[str] = set()
             for url, title in listed:
                 if len(openings) >= max_openings:
@@ -585,6 +619,9 @@ async def research(  # noqa: PLR0912, PLR0915 - one company, step by step
     if not tags:
         row.fits = False
         notes.append("target-domain wording not found on the fetched pages - check fit")
+    if not c.found_via.startswith("seed") and len(tags) <= 1 and looks_like_store(all_text):
+        row.fits = False  # an online shop or marketplace is never a target
+        notes.append("online store / marketplace, not an engineering company")
 
     for url, _, t in pages:
         emails = company_emails(t, domains)
@@ -593,8 +630,12 @@ async def research(  # noqa: PLR0912, PLR0915 - one company, step by step
             break
     if not row.contact_email:
         form = next((u for u, h, _ in pages if web.has_contact_form(h)), "")
-        row.contact_email = f"Not listed - contact form: {form}" if form else "Not listed"
-        notes.append("no company email published on the site")
+        row.contact_email = f"Not listed \u2013 contact form: {form}" if form else "Not listed"
+        notes.append(
+            "only a contact form, no email listed"
+            if form
+            else "no email and no contact form on the site"
+        )
 
     info_texts = [t for u, _, t in pages[1:] if u != careers] or [text]
     row.country, others = guess_country(info_texts, web.registrable_domain(home))
@@ -611,23 +652,34 @@ def load_config(path: Path = CONFIG) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-async def _resolve_website(name: str, skip: set[str]) -> str:
-    """A seed without a website: the first company site a web search returns for its name."""
+async def _resolve_website(name: str, skip: set[str], excluded: list[str]) -> str:
+    """A seed without a website: the first company site a web search returns for its name (never a marketplace)."""
     for url, _ in await sources.web_search(f"{name} embedded engineering company", 8):
         d = web.registrable_domain(url)
-        if d and web.is_company_site(d) and d not in skip and not web.blocked(url):
+        if (
+            d
+            and web.is_company_site(d)
+            and d not in skip
+            and not web.blocked(url)
+            and not excluded_site(url, excluded)
+        ):
             return d
     return ""
 
 
+# One entry per directory page of the last candidates() call: was it readable, how many candidates it gave.
+directory_status: list[dict] = []
+
+
 async def candidates(cfg: dict, discover: bool = True) -> list[Candidate]:
     skip = set(cfg.get("skip_domains") or [])
+    excluded = list(cfg.get("excluded_sites") or [])
     out: list[Candidate] = []
     for s in cfg.get("seeds") or []:
         c = Candidate(name=s["name"], website=s.get("website") or "", category=s.get("category", ""),
                       aliases=list(s.get("aliases") or []))  # fmt: skip
         if not c.website:
-            c.website = await _resolve_website(c.name, skip)
+            c.website = await _resolve_website(c.name, skip, excluded)
             c.found_via = (
                 "seed (website found by search)" if c.website else "seed (website not found)"
             )
@@ -639,21 +691,37 @@ async def candidates(cfg: dict, discover: bool = True) -> list[Candidate]:
 
     def add(url: str, title: str, via: str) -> None:
         d = web.registrable_domain(url)
-        if not d or d in skip or d in known or not web.is_company_site(d) or web.blocked(url):
+        if (
+            not d
+            or d in skip
+            or d in known
+            or not web.is_company_site(d)
+            or web.blocked(url)
+            or excluded_site(url, excluded)  # a marketplace result is ignored, never followed
+        ):
             return
         known.add(d)
-        name = re.split(r"\s[|\--:·]\s", title or "")[0].strip() or d.split(".")[0].capitalize()
+        name = (
+            re.split(r"\s[|\-\u2013\u2014:\u00b7]\s", title or "")[0].strip()
+            or d.split(".")[0].capitalize()
+        )
         found.append(Candidate(name=name[:80], website=d, category="discovered", found_via=via))
 
-    for q in cfg.get("discovery_queries") or []:
-        for url, title in await sources.web_search(q, 10):
-            add(url, title, f"search: {q}")
+    directory_status.clear()
     for page in cfg.get("directory_pages") or []:
-        if (g := await _get(page)) is not None:
+        before = len(found)
+        g = await _get(page)
+        if g is not None:
             own = web.registrable_domain(page)
             for url, text in links(g[0], page):
                 if web.registrable_domain(url) != own:
                     add(url, text, f"directory: {page}")
+        directory_status.append(
+            {"page": page, "readable": g is not None, "candidates": len(found) - before}
+        )
+    for q in cfg.get("discovery_queries") or []:
+        for url, title in await sources.web_search(q, 10):
+            add(url, title, f"search: {q}")
     found = found[: int(cfg.get("max_discovered", 40))]
     return dedupe(out + found)
 
@@ -706,10 +774,29 @@ def _read_csv(path: Path, cls) -> list:
 # --- verification --------------------------------------------------------------------------------------
 
 
+def source_checks(
+    companies: list[CompanyRow], openings: list[OpeningRow], excluded: list[str]
+) -> list[dict]:
+    """Every URL in every row (website, email source, careers page, job link, the directory it was found in) is
+    checked against the excluded marketplace / e-commerce sites. Only failures are returned."""
+    bad = []
+    for c in companies:
+        via = c.found_via.removeprefix("directory: ")
+        for label, url in (("website", c.website), ("email source", c.email_source_url),
+                           ("careers page", c.careers_page), ("found via", via)):  # fmt: skip
+            if url.startswith("http") and excluded_site(url, excluded):
+                bad.append({"company": c.name, "kind": "source", "item": url, "ok": False,
+                            "why": f"{label} is an excluded marketplace / e-commerce site"})  # fmt: skip
+    bad += [{"company": o.company, "kind": "source", "item": o.job_link, "ok": False,
+             "why": "job link is on an excluded marketplace / e-commerce site"}
+            for o in openings if excluded_site(o.job_link, excluded)]  # fmt: skip
+    return bad
+
+
 async def verify(companies: list[CompanyRow], openings: list[OpeningRow], share: float = 0.2,
-                 seed: int | None = None) -> list[dict]:  # fmt: skip
+                 seed: int | None = None, excluded: list[str] | None = None) -> list[dict]:  # fmt: skip
     """Re-open a random share of the emails and job links and check them against their pages. Also flags any
-    email without a source URL. Returns one dict per check."""
+    email without a source URL and any row whose source is an excluded site. Returns one dict per check."""
     rnd = random.Random(seed)  # noqa: S311 - picks pages to re-check, nothing secret
     with_email = [c for c in companies if "@" in c.contact_email]
     checks: list[dict] = [{"company": c.name, "kind": "email", "item": c.contact_email, "ok": False,
@@ -717,7 +804,8 @@ async def verify(companies: list[CompanyRow], openings: list[OpeningRow], share:
     for c in rnd.sample(with_email, max(1, round(len(with_email) * share))) if with_email else []:
         g = await _get(c.email_source_url) if c.email_source_url else None
         email = c.contact_email.lower()
-        ok = g is not None and email in contacts.emails_on_domain(g[1], email.split("@", 1)[1])
+        # read the page the same way research did ('info [at] acme.io' counts as published)
+        ok = g is not None and email in company_emails(g[1], {email.split("@", 1)[1]})
         checks.append({"company": c.name, "kind": "email", "item": c.contact_email, "ok": ok,
                        "why": "" if ok else "not found again on its source page"})  # fmt: skip
     for o in rnd.sample(openings, max(1, round(len(openings) * share))) if openings else []:
@@ -725,13 +813,16 @@ async def verify(companies: list[CompanyRow], openings: list[OpeningRow], share:
         ok = g is not None and not is_closed(g[1])
         checks.append({"company": o.company, "kind": "opening", "item": o.job_link, "ok": ok,
                        "why": "" if ok else "job page not reachable or closed"})  # fmt: skip
-    return checks
+    bad = source_checks(companies, openings, excluded or [])
+    checks.append({"company": "(all rows)", "kind": "source", "item": "no excluded marketplace / e-commerce source",
+                   "ok": not bad, "why": f"{len(bad)} row(s) cite an excluded site" if bad else ""})  # fmt: skip
+    return checks + bad
 
 
 # --- workbook ------------------------------------------------------------------------------------------
 
 
-def build_workbook(companies: list[CompanyRow], openings: list[OpeningRow], checks: list[dict],
+def build_workbook(companies: list[CompanyRow], openings: list[OpeningRow], checks: list[dict],  # noqa: PLR0915
                    path: Path) -> Path:  # fmt: skip
     """Companies, Openings and Summary sheets: bold frozen header, auto-filter, column widths, live links."""
     from openpyxl import Workbook  # noqa: PLC0415 - only this command needs it
@@ -778,7 +869,8 @@ def build_workbook(companies: list[CompanyRow], openings: list[OpeningRow], chec
             rows += [[o.company, o.job_title, o.location, o.remote, o.experience, o.job_link, o.source,
                       o.date_checked] for o in jobs]  # fmt: skip
         elif c.accessible:
-            rows.append([c.name, NO_OPENING, NO_OPENING, "", "", "", "", c.date_checked])
+            none = f"{NO_OPENING} (checked {c.date_checked})"
+            rows.append([c.name, none, none, "", "", "", "", c.date_checked])
     sheet(wb.create_sheet("Openings"), ["Company", "Job title", "Location", "Remote?", "Experience", "Job link",
                                         "Source", "Date checked"], rows, {5})  # fmt: skip
 
@@ -829,6 +921,11 @@ async def run(*, discover: bool = True, limit: int | None = None, fresh: bool = 
     if not cands:
         cands = await candidates(cfg, discover)
         _write_csv(cand_file, cands, Candidate)
+        out.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 - local folder, instant
+        with (out / "directory_pages.csv").open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["page", "readable", "candidates"])
+            w.writeheader()
+            w.writerows(directory_status)
         log.info("candidates saved", extra={"ctx": {"count": len(cands), "file": str(cand_file)}})
     progress = _read_csv(comp_file, CompanyRow)
     done = {norm_name(r.name) for r in progress}
@@ -851,11 +948,12 @@ async def run(*, discover: bool = True, limit: int | None = None, fresh: bool = 
         todo = todo[:limit]
     sem = asyncio.Semaphore(int(env("EMBEDDED_CONCURRENCY", "3") or 3))
     max_openings = int(cfg.get("max_openings_per_company", 10))
+    excluded = list(cfg.get("excluded_sites") or [])
 
     async def one(c: Candidate) -> None:
         async with sem:
             try:
-                row, jobs = await research(c, today, max_openings)
+                row, jobs = await research(c, today, max_openings, excluded)
             except Exception as exc:  # one broken site never stops the list
                 log.exception("research failed", extra={"ctx": {"company": c.name}})
                 row, jobs = CompanyRow(name=c.name, website=_url(c.website), date_checked=today,
@@ -877,6 +975,7 @@ async def finish(out: Path = OUT, seed: int | None = None) -> dict:
     rows = _read_csv(out / "companies_progress.csv", CompanyRow)
     cfg = load_config()
     skip = set(cfg.get("skip_domains") or [])
+    excluded = list(cfg.get("excluded_sites") or [])
     # Seeds always go in the sheet (unreachable or unconfirmed ones with a note): they were named on purpose.
     # A found site goes in only if it was opened, is not on the skip list and its own pages use target-domain
     # wording; otherwise it is left out and listed in the report.
@@ -884,14 +983,22 @@ async def finish(out: Path = OUT, seed: int | None = None) -> dict:
         r
         for r in rows
         if r.found_via.startswith("seed")
-        or (r.accessible and r.fits and web.registrable_domain(r.website) not in skip)
+        or (
+            r.accessible
+            and r.fits
+            and web.registrable_domain(r.website) not in skip
+            and not excluded_site(r.website, excluded)
+        )
     ]
     dropped = [r.name for r in rows if r not in companies]
+    for r in companies:  # rows saved before tidy_name existed
+        r.name = tidy_name(r.name)
     names = {c.name for c in companies}
-    openings = [
-        o for o in _read_csv(out / "openings_progress.csv", OpeningRow) if o.company in names
-    ]
-    checks = await verify(companies, openings, seed=seed)
+    openings = _read_csv(out / "openings_progress.csv", OpeningRow)
+    for o in openings:
+        o.company = tidy_name(o.company)
+    openings = [o for o in openings if o.company in names]
+    checks = await verify(companies, openings, seed=seed, excluded=excluded)
     out.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 - local folder, instant
     with (out / "verification.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["company", "kind", "item", "ok", "why"])
@@ -907,4 +1014,19 @@ async def finish(out: Path = OUT, seed: int | None = None) -> dict:
         "not_verified": sorted({ch["company"] for ch in checks if not ch["ok"]}),
         "fit_not_confirmed": [c.name for c in companies if c.accessible and not c.fits],
         "left_out_not_embedded": dropped,
+        "directories_not_accessible": _unreadable_directories(out, cfg),
     }
+
+
+def _unreadable_directories(out: Path, cfg: dict) -> list[str]:
+    """Directory pages that could not be read or gave no company links this run, plus those with no public page
+    (listed in the config). All to check by hand."""
+    path = out / "directory_pages.csv"
+    rows = list(csv.DictReader(path.open(encoding="utf-8"))) if path.exists() else []
+    unread = []
+    for r in rows:
+        if r["readable"] != "True":
+            unread.append(f"{r['page']} (could not be read)")
+        elif r["candidates"] == "0":
+            unread.append(f"{r['page']} (no company links: the list is built by JavaScript)")
+    return unread + list(cfg.get("directories_manual") or [])

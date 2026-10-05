@@ -83,12 +83,67 @@ discovery_queries:
   - Linux kernel device driver development company
   - firmware development services company
   - system on module BSP Yocto vendor
+  - Android HAL development services
+  - OTA update solutions embedded
 
-# Pages that list companies with links to their websites. Each link to another site is a candidate.
-# (Toradex, NXP, TI and Qualcomm partner directories refuse automated visitors or need JavaScript filters:
-# check those by hand.)
+# Pages that list companies with links to their websites. Each link to another site is a candidate. A page
+# that cannot be read (refuses automated visitors, or builds its list with JavaScript) is reported as
+# "check manually" and not worked around.
 directory_pages:
   - https://www.yoctoproject.org/ecosystem/participants/
+  - https://www.yoctoproject.org/community/members/
+  - https://www.automotivelinux.org/about/members/
+  - https://www.linuxfoundation.org/about/members
+  - https://www.toradex.com/partner-network
+  - https://www.nxp.com/design/design-center/partner-marketplace:PARTNER-MARKETPLACE
+  - https://www.renesas.com/en/partners
+  - https://www.st.com/content/st_com/en/partner/partner-program.html
+
+# Partner directories without a public page an automated visitor can read: listed in the report to check by hand.
+directories_manual:
+  - TI Design Network (ti.com) - check manually
+  - Qualcomm partner directory (qualcomm.com) - check manually
+  - MediaTek partner list (mediatek.com) - check manually
+  - Android / AOSP partner lists (android.com) - check manually
+
+# Never a source and never a target: marketplaces, e-commerce and B2B listing sites. Matched on any part of the
+# host name ("amazon" covers amazon.in and aws.amazon.com). A search result from one of them is ignored.
+excluded_sites:
+  - indiamart
+  - tradeindia
+  - alibaba
+  - aliexpress
+  - amazon
+  - ebay
+  - flipkart
+  - fiverr
+  - upwork
+  - justdial
+  - sulekha
+  - exportersindia
+  - made-in-china
+  - globalsources
+  - dhgate
+  - etsy
+  - walmart
+  - snapdeal
+  - meesho
+  - shopee
+  - lazada
+  - mercadolibre
+  - rakuten
+  - kompass
+  - thomasnet
+  - europages
+  - yellowpages
+  - clutch
+  - goodfirms
+  - designrush
+  - techbehemoths
+  - freelancer
+  - peopleperhour
+  - toptal
+  - guru
 
 # Large companies, foundations and sites that show up in searches and directories but are not what this list is
 # for. Seeds are never skipped.
@@ -141,6 +196,19 @@ skip_domains:
   - harman.com
   - epam.com
   - googleblog.com
+  - linuxcareers.com
+  - sergioprado.blog
+  # chip makers, conglomerates, car makers, training and tools: not the consultancies, OTA platforms, service
+  # firms and SoM vendors this list is for
+  - renesas.com
+  - mediatek.com
+  - sifive.com
+  - siemens.com
+  - hyundai.com
+  - doulos.com
+  - lfx.dev
+  - emqx.io
+  - qt.io
 
-max_discovered: 40       # at most this many found candidates per run (seeds are always researched)
+max_discovered: 90       # at most this many found candidates (directories first, then searches; seeds always)
 max_openings_per_company: 25   # a safety cap; job description files on a listing page are not downloaded

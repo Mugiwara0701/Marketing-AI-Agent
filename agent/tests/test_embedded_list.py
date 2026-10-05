@@ -318,3 +318,95 @@ def test_found_sites_need_to_be_opened_fit_and_not_skipped(monkeypatch, tmp_path
     report = asyncio.run(el.finish(tmp_path, seed=1))
     assert report["companies"] == 2
     assert report["left_out_not_embedded"] == ["Found Down", "Found Training"]
+
+
+EXCLUDED = ["indiamart", "alibaba", "amazon", "upwork", "justdial"]
+
+
+def test_marketplaces_are_excluded_sites():
+    for url in ("https://www.indiamart.com/acme", "dir.indiamart.com", "https://m.alibaba.com/x",
+                "https://www.amazon.in/dp/1", "https://aws.amazon.com", "https://www.upwork.com/jobs/1"):  # fmt: skip
+        assert el.excluded_site(url, EXCLUDED), url
+    assert not el.excluded_site("https://www.acme-embedded.com", EXCLUDED)
+    assert not el.excluded_site(
+        "https://www.amazonite-devices.com", EXCLUDED
+    )  # a word part, not a host part
+
+
+def test_marketplace_search_results_are_ignored(monkeypatch):
+    async def search(q, limit=8):
+        return [("https://www.indiamart.com/rfid-reader/", "RFID reader - IndiaMART"),
+                ("https://www.acme-bsp.com/services", "BSP services | Acme BSP")]  # fmt: skip
+
+    async def no_page(url):
+        return None
+
+    monkeypatch.setattr(el.sources, "web_search", search)
+    monkeypatch.setattr(el, "_get", no_page)
+    cfg = {"seeds": [], "discovery_queries": ["bsp"], "directory_pages": ["https://dir.example/list"],
+           "excluded_sites": EXCLUDED}  # fmt: skip
+    got = asyncio.run(el.candidates(cfg))
+    assert [c.website for c in got] == ["acme-bsp.com"]
+    assert el.directory_status == [
+        {"page": "https://dir.example/list", "readable": False, "candidates": 0}
+    ]
+
+
+def test_online_store_is_recognised():
+    assert el.looks_like_store("Add to cart. Free shipping on orders. Checkout securely. Wishlist")
+    assert not el.looks_like_store("We do Yocto BSP work. Contact us. Buy now our dev kit.")
+
+
+def test_source_check_flags_rows_citing_a_marketplace():
+    companies = [
+        el.CompanyRow(
+            name="Good", website="https://good.io", email_source_url="https://good.io/contact"
+        ),
+        el.CompanyRow(
+            name="Bad", website="https://good2.io", careers_page="https://www.upwork.com/x"
+        ),
+    ]
+    jobs = [
+        el.OpeningRow(
+            company="Good", job_title="BSP Engineer", job_link="https://www.indiamart.com/j"
+        )
+    ]
+    bad = el.source_checks(companies, jobs, EXCLUDED)
+    assert [(b["company"], b["item"]) for b in bad] == [
+        ("Bad", "https://www.upwork.com/x"),
+        ("Good", "https://www.indiamart.com/j"),
+    ]
+    checks = asyncio.run(el.verify([], [], seed=1, excluded=EXCLUDED))
+    assert (
+        checks[-1]["kind"] == "source" and checks[-1]["ok"]
+    )  # the summary check is always reported
+
+
+def test_contact_form_note_and_no_opening_text_follow_the_spec(fake_web, monkeypatch, tmp_path):
+    from openpyxl import load_workbook
+
+    monkeypatch.setitem(
+        PAGES,
+        "https://formco.example",
+        "<p>Yocto BSP services</p><form><textarea></textarea></form>",
+    )
+    row, _ = asyncio.run(el.research(el.Candidate("FormCo", "formco.example"), "2026-10-05"))
+    assert row.contact_email == f"Not listed {chr(0x2013)} contact form: https://formco.example"
+    assert "only a contact form, no email listed" in row.notes
+    el.build_workbook([row], [], [], tmp_path / "w.xlsx")
+    ws = load_workbook(tmp_path / "w.xlsx")["Openings"]
+    assert ws["B2"].value == "No relevant opening found (checked 2026-10-05)"
+
+
+def test_tidy_name_and_verification_reads_obfuscated_addresses(monkeypatch):
+    assert el.tidy_name("DH electronics: DH electronics") == "DH electronics"
+    assert el.tidy_name("Acme: Embedded Linux") == "Acme: Embedded Linux"
+
+    async def page(url):
+        return ("", "Impressum. E-Mail: info[at]dh-electronics.com")
+
+    monkeypatch.setattr(el, "_get", page)
+    row = el.CompanyRow(name="DH", website="https://dh-electronics.com", contact_email="info@dh-electronics.com",
+                        email_source_url="https://www.dh-electronics.com/impressum")  # fmt: skip
+    checks = asyncio.run(el.verify([row], [], seed=1))
+    assert [c["ok"] for c in checks if c["kind"] == "email"] == [True]
