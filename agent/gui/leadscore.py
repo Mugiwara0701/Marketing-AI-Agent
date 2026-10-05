@@ -193,7 +193,8 @@ def exclusion_reason(
     label = (host or "").lower().removeprefix("www.").split(".")[0]
     words = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower()).split()
     for c in (x.lower() for x in companies):
-        if label == c or (words and (words[0] == c or " ".join(words) == c)):
+        joined = " ".join(words)
+        if label in (c, c.replace(" ", "")) or joined == c or joined.startswith(c + " "):
             return f"excluded company '{c}'"
     return ""
 

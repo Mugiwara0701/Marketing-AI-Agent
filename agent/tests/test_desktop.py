@@ -542,3 +542,14 @@ def test_country_excluded_helper():
     assert (
         leadscore.country_excluded("acme.com", "", c, t) == ""
     )  # unknown location is not excluded
+
+
+def test_exclusion_matches_multi_word_company_names():
+    c = ["red hat", "wind river", "canonical"]
+    assert leadscore.exclusion_reason("", "", "Red Hat, Inc.", [], c)
+    assert leadscore.exclusion_reason("", "redhat.com", "", [], c)
+    assert leadscore.exclusion_reason("", "", "Wind River Systems", [], c)
+    assert leadscore.exclusion_reason("", "canonical.com", "Canonical Ltd", [], c)
+    assert (
+        leadscore.exclusion_reason("", "", "Red Hatter Devices", [], c) == ""
+    )  # a word, not a prefix of one

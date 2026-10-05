@@ -611,6 +611,17 @@ async def retry_missing_contacts(ctx: Ctx, limit: int = 3) -> None:
             log.info("Stored company dropped", extra={"ctx": {"company": co["name"], "why": why}})
             continue
         visited += 1
+        log.info(
+            "Contact retry",
+            extra={
+                "ctx": {
+                    "company": co["name"],
+                    "domain": co["domain"],
+                    "location": co["location"],
+                    "found_via": co["source_url"],
+                }
+            },
+        )
         try:
             found = await visible_contact(ctx, co["domain"])
             if not found:
