@@ -48,7 +48,7 @@ Environment="OLLAMA_KEEP_ALIVE=2m"
 sudo systemctl restart ollama
 ollama pull qwen3.5:9b            # text model (use qwen3:4b-instruct-2507-q4_K_M on a 6 GB GPU if slow)
 ollama cp qwen3.5:9b agent-dev    # routing alias "dev" -> agent-dev
-ollama pull qwen3-vl:8b           # vision model for the GUI agent
+ollama pull qwen3-vl:8b-instruct           # vision model for the GUI agent
 ollama list
 ```
 
@@ -82,7 +82,7 @@ Fill in by hand (secrets: never commit or paste). Key values:
 
 - `LLM_BASE_URL=http://127.0.0.1:11434`, `LLM_API_KEY=local`
 - `LLM_MAX_CONCURRENT=1`
-- `MODEL_GUI_STEP=qwen3-vl:8b`
+- `MODEL_GUI_STEP=qwen3-vl:8b-instruct`
 - `EXECUTOR_URL=http://127.0.0.1:8765`, `EXECUTOR_TOKEN=` from `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
 - `DATABASE_URL`, `SUPABASE_*`, `SLACK_*`, `RESEND_API_KEY`, `MAIL_FROM` from your accounts
 - `TEST_RECIPIENT` set while developing; `EMAIL_SENDING_ENABLED=false` until ready

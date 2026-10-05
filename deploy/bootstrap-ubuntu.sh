@@ -7,7 +7,7 @@
 set -euo pipefail
 
 TEXT_MODEL="${TEXT_MODEL:-qwen3.5:9b}"        # served to the agent under the alias agent-dev
-VISION_MODEL="${VISION_MODEL:-qwen3-vl:8b}"   # set MODEL_GUI_STEP to this name in .env
+VISION_MODEL="${VISION_MODEL:-qwen3-vl:8b-instruct}"   # the -instruct build: the default tag "thinks" and runs out of tokens
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 

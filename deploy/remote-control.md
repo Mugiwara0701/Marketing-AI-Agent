@@ -93,7 +93,7 @@ Use small models for testing. On the office machine:
 
 ```bash
 ollama pull qwen3:4b-instruct-2507-q4_K_M && ollama cp qwen3:4b-instruct-2507-q4_K_M agent-dev   # text
-ollama pull qwen3-vl:2b && ollama cp qwen3-vl:2b vlm                                              # vision
+ollama pull qwen3-vl:2b-instruct && ollama cp qwen3-vl:2b-instruct vlm                                             # vision
 ```
 
 Both models then run on the CPU. The agent detects a machine without an NVIDIA GPU and raises every model call's
