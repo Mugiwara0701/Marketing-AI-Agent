@@ -147,8 +147,10 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
-# Environments
+# Environments (never commit secrets; .env.example is the template)
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
@@ -233,3 +235,10 @@ out/
 # credential files: never commit; send with `bash deploy/remote.sh push-secrets`
 credentials.json
 credential.json
+*.pem
+*.key
+service-account*.json
+
+# lead pipeline: dry-run database, reports, outbox, screenshots (all under out/), browser profiles
+*.sqlite3
+.chrome-desktop-profile/

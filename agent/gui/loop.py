@@ -39,7 +39,7 @@ async def decide(goal: str, history: list[str], screenshot_b64: str) -> GuiStep:
     """Ask the vision model for the next action."""
     system_prompt = _SYSTEM.read_text(encoding="utf-8")  # noqa: ASYNC240 - tiny local file
     recent = "\n".join(history[-_HISTORY:]) or "(none yet)"
-    messages = [
+    messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         {
             "role": "user",

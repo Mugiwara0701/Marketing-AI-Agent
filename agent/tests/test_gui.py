@@ -4,11 +4,11 @@ import pytest
 
 from agent.gui import lead, loop
 from agent.gui.actions import GuiStep
-from agent.gui.executor_client import ExecutorError
+from agent.gui.executor_client import ExecutorClient, ExecutorError
 from agent.gui.policy import Policy
 
 
-class FakeExecutor:
+class FakeExecutor(ExecutorClient):  # only the methods the GUI agent calls are faked
     """Stands in for the sandbox: records actions, serves a clipboard and a fixed screenshot."""
 
     def __init__(self, urls=None, page_text="", shots=None):

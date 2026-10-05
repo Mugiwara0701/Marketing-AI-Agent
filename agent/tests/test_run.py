@@ -1,6 +1,7 @@
 import asyncio
 
-from agent import blog, followups, leads, mailer, notify, replies, run
+from agent import blog, followups, notify, replies, run
+from agent.leadgen import service
 
 
 def _fake_steps(monkeypatch, order):
@@ -19,9 +20,9 @@ def _fake_steps(monkeypatch, order):
     monkeypatch.setattr(run.db, "finish_run", none)
     monkeypatch.setattr(run.notify, "summary", none)
     monkeypatch.setattr(replies, "run", step("replies"))
-    monkeypatch.setattr(mailer, "send_approved", step("send"))
+    monkeypatch.setattr(service, "send", step("send"))
     monkeypatch.setattr(followups, "run", step("followups"))
-    monkeypatch.setattr(leads, "run", step("leads"))
+    monkeypatch.setattr(service, "run_leads", step("leads"))
     monkeypatch.setattr(blog, "run", step("blog"))
     monkeypatch.setattr(notify, "summary", none)
 

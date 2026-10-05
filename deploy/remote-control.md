@@ -39,7 +39,7 @@ on the office desktop (`DISPLAY=:0`), so the visible Chrome run works from here.
    ```bash
    bash deploy/remote.sh push-secrets
    ```
-   On the office machine make sure `LLM_BASE_URL=http://127.0.0.1:11434`, `LEADS_MODE=desktop` and `MODEL_GUI_STEP=qwen3-vl:8b`.
+   On the office machine make sure `LLM_BASE_URL=http://127.0.0.1:11434`, `BROWSER_BACKEND=desktop` and `MODEL_GUI_STEP=qwen3-vl:8b`.
 4. Check the setup:
    ```bash
    bash deploy/remote.sh agent migrate
@@ -56,7 +56,7 @@ on the office desktop (`DISPLAY=:0`), so the visible Chrome run works from here.
    ```
 3. Look at the result:
    ```bash
-   bash deploy/remote.sh agent leads-today       # stored leads
+   bash deploy/remote.sh agent leads review       # stored leads
    bash deploy/remote.sh agent review            # email drafts (nothing is sent)
    bash deploy/remote.sh shots                   # screenshots into out/remote/
    ```

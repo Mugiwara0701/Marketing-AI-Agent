@@ -5,14 +5,12 @@ continues with the others.
 """
 
 import hashlib
-import json
 import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html import unescape
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -21,7 +19,7 @@ import yaml
 from agentkit.config import env
 from agentkit.log import get_logger
 
-from . import chrome, settings, web
+from . import settings, web
 
 log = get_logger("agent.sources")
 
@@ -248,10 +246,6 @@ async def web_search(query: str, limit: int = 8) -> list[tuple[str, str]]:
     """(url, title) results. Prefers a self-hosted SearXNG (SEARXNG_URL, free, JSON enabled);
     falls back to DuckDuckGo's HTML page, which usually answers bots with a challenge page."""
     searx = env("SEARXNG_URL")
-    if chrome.enabled() and (
-        hits := await chrome.google(query, limit)
-    ):  # visible mode: Google in Chrome
-        return hits
     try:
         if searx:
             data = await _json(f"{searx.rstrip('/')}/search", q=query, format="json")
@@ -267,93 +261,6 @@ async def web_search(query: str, limit: int = 8) -> list[tuple[str, str]]:
     if not results:
         log.warning("web search returned nothing (set SEARXNG_URL for reliable free search)")
     return results[:limit]
-
-
-# Pages the search steps already opened, so a new run goes to new sites instead of the same ones again.
-# Pages that did not match are skipped for a long time; matches only briefly (they are deduplicated by the
-# database once processed, but a run cut short by the daily cap must be able to come back to them).
-_VISITED_FILE = ".agent-visited.json"
-_SKIP_DAYS = {"rejected": 14, "matched": 3}
-_NEW_PER_QUERY = 8  # new pages opened per search query
-_RESULTS_PER_QUERY = 20  # ask for more results so enough are new after skipping visited ones
-
-
-def _visited_path() -> Path:
-    return Path(env("VISITED_CACHE", _VISITED_FILE) or _VISITED_FILE)
-
-
-def _load_visited() -> dict[str, dict]:
-    try:
-        return json.loads(_visited_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_visited(visited: dict[str, dict]) -> None:
-    cutoff = time.time() - 30 * 86400
-    keep = {k: v for k, v in visited.items() if v.get("at", 0) > cutoff}
-    try:
-        _visited_path().write_text(json.dumps(keep), encoding="utf-8")
-    except OSError:
-        log.warning("could not save the visited-pages cache")
-
-
-def _recently_visited(visited: dict[str, dict], key: str) -> bool:
-    v = visited.get(key)
-    return bool(v) and time.time() - v["at"] < _SKIP_DAYS.get(v.get("status", ""), 14) * 86400
-
-
-async def _search_signals(queries: list[str], keywords: list[str]) -> list[Signal]:
-    out: dict[str, Signal] = {}
-    visited = _load_visited()
-    for q in queries:
-        opened = 0
-        for url, title in await web_search(q, limit=_RESULTS_PER_QUERY):
-            dom = web.registrable_domain(url)
-            if url in out or not dom or web.blocked(url) or _recently_visited(visited, url):
-                continue
-            if opened >= _NEW_PER_QUERY:
-                break
-            opened += 1
-            text = await web.fetch_page_text(url)
-            hit = bool(text) and matches(f"{title} {text}", keywords)
-            visited[url] = {"at": time.time(), "status": "matched" if hit else "rejected"}
-            if hit:
-                out[url] = Signal("web_page", "search", url, title, f"{title}. {text[:3000]}")
-    _save_visited(visited)
-    return list(out.values())
-
-
-async def _company_signals(queries: list[str], keywords: list[str]) -> list[Signal]:
-    """Companies that BUILD Android / RFID / embedded products (not hiring pages): their own site is the signal."""
-    out: dict[str, Signal] = {}
-    visited = _load_visited()
-    for q in queries:
-        opened = 0
-        for url, title in await web_search(q, limit=_RESULTS_PER_QUERY):
-            dom = web.registrable_domain(
-                url
-            )  # one visit per company, whichever page the search returned
-            if not web.is_company_site(dom) or web.blocked(url) or dom in out:
-                continue
-            if _recently_visited(visited, f"company:{dom}"):
-                continue
-            if opened >= _NEW_PER_QUERY:
-                break
-            opened += 1
-            text = await web.fetch_page_text(url)
-            hit = bool(text) and matches(f"{title} {text}", keywords)
-            visited[f"company:{dom}"] = {
-                "at": time.time(),
-                "status": "matched" if hit else "rejected",
-            }
-            if hit:
-                out[dom] = Signal(
-                    "company_page", "company_search", url, title, f"{title}. {text[:3000]}",
-                    domain_hint=dom,
-                )  # fmt: skip
-    _save_visited(visited)
-    return list(out.values())
 
 
 _MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec"
@@ -423,7 +330,8 @@ def balance(signals: list[Signal], max_items: int, per_company: int = 2) -> list
 
 
 async def collect_signals(max_items: int) -> list[Signal]:
-    """All candidate listings from the free sources, de-duplicated, keyword-filtered, capped."""
+    """Listings from the free job / project feeds (APIs and RSS), de-duplicated, keyword-filtered, capped.
+    Web search is not done here: the lead pipeline's research agent searches with its browser."""
     cfg = load_config()
     kws: list[str] = cfg.get("keywords", [])
     apis: dict = cfg.get("job_apis", {})
@@ -448,16 +356,11 @@ async def collect_signals(max_items: int) -> list[Signal]:
         found += await _feed_signals(url, "feed", kws)
     from . import portals  # noqa: PLC0415 - portals imports Signal from this module
 
-    boards = await portals.company_boards(cfg.get("company_boards") or {}, kws)
-    found += boards
+    found += await portals.company_boards(cfg.get("company_boards") or {}, kws)
     for fn, flag in ((portals.himalayas, "himalayas"), (portals.themuse, "themuse"),
                      (portals.adzuna, "adzuna"), (portals.jooble, "jooble")):  # fmt: skip
         if apis.get(flag, True):
             found += await fn(kws)
-    found += await _search_signals(cfg.get("search_queries", []), kws)
-    found += await _company_signals(
-        cfg.get("company_queries", []), cfg.get("company_keywords") or kws
-    )
     max_age = int(cfg.get("max_age_days", 45))
     fresh = [s for s in found if not is_stale(s, max_age)]
     log.info(
@@ -465,7 +368,7 @@ async def collect_signals(max_items: int) -> list[Signal]:
         extra={"ctx": {"old": len(found) - len(fresh), "max_age_days": max_age}},
     )
     found = fresh
-    if cfg.get("work_type", "projects") == "projects":
+    if cfg.get("work_type", "all") == "projects":
         pk = cfg.get("project_keywords") or []
         before = len(found)
         found = [s for s in found if is_project_work(s, pk)]
@@ -475,52 +378,7 @@ async def collect_signals(max_items: int) -> list[Signal]:
     return picked
 
 
-_NOISE = {
-    "the",
-    "inc",
-    "ltd",
-    "llc",
-    "gmbh",
-    "corp",
-    "pvt",
-    "technologies",
-    "systems",
-    "solutions",
-    "group",
-    "limited",
-}
-
-
-def _name_words(company: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z0-9]{3,}", company.lower()) if w not in _NOISE]
-
-
-async def resolve_website(company: str) -> str:
-    """The company's own domain. Web search if available, else guess-and-verify (the homepage
-    must mention the company name). Returns '' when nothing credible is found."""
-    for url, _title in await web_search(f'"{company}" official website', limit=6):
-        dom = web.registrable_domain(url)
-        if web.is_company_site(dom) and _name_in_domain(company, dom):
-            return dom
-    words = _name_words(company)
-    if not words:
-        return ""
-    slug = "".join(words)
-    for tld in ("com", "io", "ai", "co", "net", "de", "in", "org"):
-        dom = f"{slug}.{tld}"
-        text = await web.fetch_page_text(f"https://{dom}")
-        if text and all(w in text.lower() for w in words):
-            return dom
-    return ""
-
-
-def _name_in_domain(company: str, domain: str) -> bool:
-    """Cheap guard against picking an unrelated site: some word of the name appears in the domain."""
-    base = domain.split(".", maxsplit=1)[0]
-    return any(w in base or base in w for w in _name_words(company))
-
-
 # ----------------------------------------------------------------------------- blog research
 
 
-__all__ = ["Item", "Signal", "collect_signals", "resolve_website", "web_search"]
+__all__ = ["Item", "Signal", "collect_signals", "web_search"]

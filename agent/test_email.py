@@ -1,93 +1,65 @@
-"""Dev smoke test: the LLM drafts outreach emails exactly as in the daily run for made-up companies.
+"""Dev smoke test of the approval flow: the LLM drafts outreach emails for made-up companies exactly as in a real
+run, and each draft goes through the same states and the same approval gate (Slack, or `agent leads review`).
 
-Default: each draft is saved for a made-up contact and posted to Slack with Approve / Skip. After Approve
-it is sent by `python -m agent send --watch` to TEST_RECIPIENT, never to the made-up contact.
---direct: skip Slack and database, send straight to TEST_RECIPIENT / --to."""
+After Approve, `python -m agent send` sends it to TEST_RECIPIENT (never to the made-up contact); with --dry-run it
+goes to the outbox folder. There is no way to send without approval."""
 
 import re
 import time
-import uuid
-from types import SimpleNamespace
 
-from agentkit.config import env
+from agentkit.log import get_logger
 
-from . import mailer, notify, store
-from .tasks import proposal
+from . import mailer
+from .leadgen import config, service
+from .leadgen.models import Contact, Evidence, Lead
+from .leadgen.repository import open_repository
+
+log = get_logger("agent.test_email")
 
 SAMPLES = [
-    "Company: Northwind Automotive\nProject: In-vehicle infotainment platform on Android Automotive OS\n"
-    "Technologies: AOSP, Android Automotive, HAL, Kotlin\nLocation: Germany\nContact role: Head of Engineering\n",
-    "Company: Lumen Devices\nProject: Rugged handheld scanners running a custom Android build\n"
-    "Technologies: AOSP 13, Yocto, BSP, SELinux\nLocation: Netherlands\nContact role: CTO\n",
-    "Company: Pixelwave Labs\nProject: Android-based set-top box with OTA updates\n"
-    "Technologies: AOSP, Kernel, OTA, Widevine\nLocation: India\nContact role: Engineering Manager\n",
-]
+    ("Northwind Automotive", "Automotive", "In-vehicle infotainment platform on Android Automotive OS",
+     ["AOSP", "HAL"], "Head of Engineering"),
+    ("Lumen Devices", "Industrial handhelds", "Rugged handheld scanners running a custom Android build",
+     ["AOSP", "Yocto", "BSP"], "CTO"),
+    ("Pixelwave Labs", "Consumer devices", "Android-based set-top box with OTA updates",
+     ["AOSP", "OTA", "Linux kernel"], "Engineering Manager"),
+]  # fmt: skip
 
 
-async def _queue_for_slack(company: str, ctx: str, draft, problems: list[str]) -> bool:
-    slug = re.sub(r"[^a-z0-9]+", "-", company.lower()).strip("-")
-    domain = f"{slug}-{int(time.time())}.test.example"  # unique per run, never a real site
-    role = ctx.split("Contact role: ", 1)[1].strip()
-    q = SimpleNamespace(
-        confidence=0.9,
-        reason="test-email sample",
-        location=None,
-        technologies=["AOSP"],
-        project_summary=ctx.split("Project: ", 1)[1].split("\n", 1)[0],
-    )
-    company_id = await store.save_company(
-        name=company,
-        domain=domain,
-        status="contact_found",
-        q=q,
-        source="test-email",
-        source_url=f"https://{domain}",
-        review=False,
-    )
-    contact = SimpleNamespace(email=f"sales@{domain}", name="Test Contact", role=role)
-    contact_id = await store.save_contact(company_id, contact, f"https://{domain}")
-    email_id = await store.save_email_draft(
-        contact_id, draft.subject, draft.body, "; ".join(problems) or None
-    )
-    return bool(email_id) and await notify.post_email(email_id)
-
-
-async def run(count: int = 1, to: str | None = None, direct: bool = False) -> int:
-    recipients = (to or mailer.test_recipient() or "").strip()
-    recipients = ", ".join(a.strip() for a in recipients.split(",") if a.strip())
-    if direct and not recipients:
-        print("no recipients: set TEST_RECIPIENT in .env or pass --to a@x.io,b@y.io")  # noqa: T201
+async def run(count: int = 1, *, dry_run: bool = False) -> int:
+    if not dry_run and not mailer.test_recipient():
+        print("set TEST_RECIPIENT in .env first: approved test mail goes only there")  # noqa: T201
         return 2
-    if not direct and not (env("DATABASE_URL") and notify.enabled()):
-        print("Slack mode needs DATABASE_URL and SLACK_BOT_TOKEN; or use --direct")  # noqa: T201
-        return 2
+    rt = config.runtime(dry_run=dry_run)
+    repo = await open_repository(rt)
     failed = 0
-    for ctx in SAMPLES[: max(1, min(count, len(SAMPLES)))]:
-        company = ctx.split("\n", 1)[0].removeprefix("Company: ")
-        draft, problems = await proposal.draft_proposal(ctx)
-        print(f"\n--- {company}: {draft.subject}\n{draft.body}")  # noqa: T201
-        if problems:
-            print(f"[checks flagged: {'; '.join(problems)}]")  # noqa: T201
-        try:
-            if direct:
-                row = {
-                    "id": str(uuid.uuid4()),  # only feeds the unsubscribe token and idempotency key
-                    "subject": f"[TEST for {company}] {draft.subject}",
-                    "body": draft.body,
-                }
-                _, provider_id = await mailer.deliver(row, recipients)
-                print(f"sent to {recipients} (resend id {provider_id})")  # noqa: T201
-            elif await _queue_for_slack(company, ctx, draft, problems):
-                print("posted to Slack: approve it there")  # noqa: T201
-            else:
+    try:
+        for name, industry, product, tech, role in SAMPLES[: max(1, min(count, len(SAMPLES)))]:
+            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+            domain = f"{slug}-{int(time.time())}.test.example"  # never a real site
+            lead = Lead(
+                company_name=name, company_website=domain, industry=industry, product=product,
+                opportunity_description=product, technical_requirements=tech, project_signal="product_development",
+                evidence=[Evidence(url=f"https://{domain}", reason="test-email sample (made up)")],
+            )  # fmt: skip
+            contact = Contact(
+                name="Test Contact",
+                role=role,
+                email=f"sales@{domain}",
+                source=f"https://{domain}",
+                rank=0,
+            )
+            try:
+                email_id, report = await service.submit_lead(repo, lead, contact, source="test-email",
+                                                             dry_run=dry_run, out_dir=rt.out_dir)  # fmt: skip
+            except Exception as exc:
                 failed += 1
-                print("could not post to Slack (see the log above)")  # noqa: T201
-        except Exception as exc:
-            failed += 1
-            print(f"failed: {exc}")  # noqa: T201
-    if not direct:
-        print(  # noqa: T201
-            "\nNext: python -m agent send --watch   (needs EMAIL_SENDING_ENABLED=true; "
-            f"approved mail goes to: {mailer.test_recipient() or 'NOBODY - set TEST_RECIPIENT'})"
-        )
+                log.exception("test email failed")
+                print(f"{name}: failed ({type(exc).__name__})")  # noqa: T201
+                continue
+            print(f"{name}: {report} (email id {email_id})")  # noqa: T201
+    finally:
+        await repo.close()
+    nxt = "approve (Slack, or `python -m agent leads approve <id>`), then `python -m agent send`."
+    print(f"Next: {nxt}")  # noqa: T201
     return 1 if failed else 0

@@ -113,7 +113,7 @@ cat <<EOF
 
 Done. Remaining by hand:
   1. Log out and back in (docker group, Xorg session). Enable auto-login in Settings > Session and Startup / login screen.
-  2. Fill in .env (secrets: never commit). MODEL_GUI_STEP=$VISION_MODEL, LEADS_MODE=desktop, SEARXNG_URL=http://127.0.0.1:8888
+  2. Fill in .env (secrets: never commit). MODEL_GUI_STEP=$VISION_MODEL, BROWSER_BACKEND=desktop, SEARXNG_URL=http://127.0.0.1:8888
      Token for EXECUTOR_TOKEN:  python3 -c "import secrets; print(secrets.token_urlsafe(32))"
   3. .venv/bin/python -m agent migrate && .venv/bin/python -m agent check && .venv/bin/python -m agent desktop-check
   4. Try one run:  .venv/bin/python -m agent run --desktop --force

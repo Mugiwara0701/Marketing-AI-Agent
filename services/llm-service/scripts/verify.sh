@@ -32,7 +32,7 @@ fail=0
 run_eval() { # task set schema min
   "$PY" eval/runner/run_eval.py "$1" "eval/sets/$2.jsonl" agent/prompts "$3" --min "$4" || fail=1
 }
-run_eval lead.qualify lead_qualify agent.tasks.qualify:QualifyResult 0.85
+run_eval lead.assess lead_assess agent.tasks.assess:Assessment 0.8
 run_eval lead.extract_contact lead_extract_contact agent.tasks.contact:ContactResult 0.85
 
 echo "== drafts: schema, length, banned phrases"

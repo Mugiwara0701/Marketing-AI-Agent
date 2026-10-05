@@ -1,10 +1,12 @@
-"""CLI: python -m agent run | dryrun | browse | fill-form | send | review | approve | reject."""
+"""CLI. Lead pipeline: `python -m agent leads run|review|show|approve|reject|queries [--dry-run]`,
+`python -m agent send [--dry-run]`. Daily run: `python -m agent run`. See README."""
 
 import argparse
 import asyncio
 import json
 import os
 import sys
+import time
 
 from agentkit import db
 
@@ -24,29 +26,35 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         help="DELETE today's saved blog post (and its platform versions), then write a new one",
     )
     r.add_argument(
-        "--visible", action="store_true", help="do the web work in a visible Chrome window (Google)"
+        "--browser", choices=["http", "chrome", "desktop"], help="how lead research reaches the web"
     )
-    r.add_argument(
-        "--desktop",
-        action="store_true",
-        help="find leads by driving a visible Chrome on the Xubuntu desktop (mouse + keyboard); leads only, no email",
+    r.add_argument("--desktop", action="store_true", help="same as --browser desktop")
+    lp = sub.add_parser("leads", help="lead pipeline: discover, review, approve (see README)")
+    lsub = lp.add_subparsers(dest="leads_cmd", required=True)
+    lr = lsub.add_parser(
+        "run", help="one discovery run: search -> qualify -> contact -> draft -> approval"
     )
-    d = sub.add_parser(
-        "dryrun", help="live scraping + real LLM, no database, no email; writes out/*.md"
-    )
-    d.add_argument("--visible", action="store_true", help="use a visible Chrome window (Google)")
-    d.add_argument("--leads", type=int, default=3)
-    d.add_argument("--signals", type=int, default=40)
-    d.add_argument("--no-blog", action="store_true")
-    d.add_argument(
-        "--blog-only",
-        action="store_true",
-        help="skip lead search; research, write and adapt one post",
-    )
+    lr.add_argument("--max-leads", type=int, help="stop after this many new drafted leads")
+    lr.add_argument("--minutes", type=float, default=60, help="time budget")
+    lsub.add_parser("review", help="drafted emails waiting for a decision")
+    lsh = lsub.add_parser("show", help="one draft with its lead, evidence and approval")
+    lsh.add_argument("email_id")
+    for name in ("approve", "reject"):
+        lpd = lsub.add_parser(name, help=f"{name} drafted emails (records who decided)")
+        lpd.add_argument("ids", nargs="*")
+        lpd.add_argument("--all", action="store_true", help="every drafted email")
+    lq = lsub.add_parser("queries", help="print the next search queries the strategy would run")
+    lq.add_argument("--count", type=int, default=20)
+    for sp_ in lsub.choices.values():
+        sp_.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="local SQLite store, Slack written to files, no email can leave",
+        )
+        sp_.add_argument("--browser", choices=["http", "chrome", "desktop"])
     sub.add_parser(
         "desktop-check", help="check the desktop tools Chrome automation needs (xdotool, ...)"
     )
-    sub.add_parser("leads-today", help="print the leads the desktop search stored today")
     el = sub.add_parser(
         "embedded-list",
         help="research list: embedded companies, public emails and openings -> out/embedded_companies/*.xlsx",
@@ -89,10 +97,6 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         help="open a company's contact form in Chrome, pre-filled with a draft; you review and send",
     )
     ff.add_argument("company", help="domain or id of a company that has a contact form")
-    br = sub.add_parser(
-        "browse", help="watch a visible Chromium search for a company and read its contact details"
-    )
-    br.add_argument("company", help="company name or domain")
     gf = sub.add_parser(
         "gui-find",
         help="a vision model drives the sandbox Chrome to find a company's contact; the lead goes to Slack",
@@ -121,45 +125,46 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         help="keep running and send each email within seconds of its Slack approval",
     )
     sn.add_argument("--interval", type=float, default=5, help="seconds between checks (--watch)")
+    sn.add_argument(
+        "--dry-run", action="store_true", help="dry-run store; mail goes to the outbox folder"
+    )
     te = sub.add_parser(
         "test-email",
-        help="LLM writes sample outreach emails: posted to Slack for approval (or --direct send)",
-    )
-    te.add_argument(
-        "--direct", action="store_true", help="skip Slack/database, send now to TEST_RECIPIENT"
+        help="LLM drafts sample outreach emails for made-up companies; each goes through approval",
     )
     te.add_argument("--count", type=int, default=1, help="how many sample emails (1-3)")
-    te.add_argument("--to", help="comma separated override for TEST_RECIPIENT")
+    te.add_argument("--dry-run", action="store_true", help="dry-run store and simulated Slack")
     sub.add_parser("replies", help="classify new replies and queue approved answers now")
     sub.add_parser("followups", help="draft follow-ups for unopened, unanswered intros now")
-    sub.add_parser("review", help="list drafted emails awaiting approval")
-    s = sub.add_parser("show", help="show one draft in full")
-    s.add_argument("id")
+    sub.add_parser("review", help="same as `leads review`")
+    s = sub.add_parser("show", help="same as `leads show`")
+    s.add_argument("email_id")
     for name in ("approve", "reject"):
-        p = sub.add_parser(name)
+        p = sub.add_parser(name, help=f"same as `leads {name}`")
         p.add_argument("ids", nargs="*")
         p.add_argument("--all", action="store_true", help="every drafted email")
     a = ap.parse_args(argv)
-    if getattr(a, "visible", False):
-        os.environ["BROWSER_VISIBLE"] = "1"
     if getattr(a, "desktop", False):
-        os.environ["LEADS_MODE"] = "desktop"
+        a.browser = "desktop"
+    if getattr(a, "browser", None):
+        os.environ["BROWSER_BACKEND"] = a.browser
+    if a.cmd in ("review", "show", "approve", "reject"):  # old spellings of the `leads` subcommands
+        a.leads_cmd, a.cmd, a.dry_run = a.cmd, "leads", False
 
     try:
-        if a.cmd not in (
-            "dryrun",
-            "check",
-            "desktop-check",
-            "slack-setup",
-            "browse",
-            "test-email",
-            "embedded-list",
-        ) and not os.environ.get("DATABASE_URL"):
+        dry = bool(getattr(a, "dry_run", False))
+        if (
+            a.cmd not in ("check", "desktop-check", "slack-setup", "embedded-list")
+            and not dry
+            and not os.environ.get("DATABASE_URL")
+        ):
             print(  # noqa: T201
                 f"'{a.cmd}' needs a database: set DATABASE_URL in .env (see README), "
-                "or use `python -m agent dryrun`, which needs none."
+                "or add --dry-run to use a local SQLite store."
             )
             return 2
+        if a.cmd == "leads":
+            return await _leads(a, dry)
         if a.cmd == "run":
             from . import run  # noqa: PLC0415
 
@@ -181,21 +186,6 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
                 else embedded_list.run(discover=not a.no_discover, limit=a.limit, fresh=a.fresh)
             )
             print(json.dumps(summary, indent=2))  # noqa: T201
-        elif a.cmd == "leads-today":
-            from . import store  # noqa: PLC0415
-
-            rows = await store.todays_desktop_leads()
-            for r in rows:
-                score = int(float(r["fit_score"] or 0) * 100)
-                print(  # noqa: T201
-                    f"{r['name']}  https://{r['domain']}  score={score}  [{r['status']}]  contact={r['emails'] or '-'}  drafts={r['drafts']}"
-                )
-                print(f"    {r['project_summary'] or ''}\n    {r['source_url']}")  # noqa: T201
-            print(f"{len(rows)} lead(s) stored today")  # noqa: T201
-        elif a.cmd == "dryrun":
-            from . import dryrun  # noqa: PLC0415
-
-            print(f"report: {await dryrun.run(a.leads, a.signals, not a.no_blog, not a.blog_only)}")  # noqa: T201
         elif a.cmd == "migrate":
             from . import migrate  # noqa: PLC0415
 
@@ -238,10 +228,6 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
                 print(f"{r['name']}  https://{r['domain']}  [{how}]")  # noqa: T201
             if not rows:
                 print("nothing to contact by hand")  # noqa: T201
-        elif a.cmd == "browse":
-            from . import browse  # noqa: PLC0415
-
-            print(await browse.lookup(a.company))  # noqa: T201
         elif a.cmd == "fill-form":
             from . import formfill  # noqa: PLC0415
 
@@ -267,7 +253,7 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         elif a.cmd == "test-email":
             from . import test_email  # noqa: PLC0415
 
-            return await test_email.run(a.count, a.to, a.direct)
+            return await test_email.run(a.count, dry_run=dry)
         elif a.cmd == "replies":
             from . import replies  # noqa: PLC0415
 
@@ -277,39 +263,52 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
 
             print(json.dumps(await followups.run()))  # noqa: T201
         elif a.cmd == "send":
-            from . import mailer  # noqa: PLC0415
+            from .leadgen import service  # noqa: PLC0415
 
-            if a.watch:
-                print(f"watching for approved emails every {a.interval:g}s; Ctrl+C to stop")  # noqa: T201
-                while True:
-                    stats = await mailer.send_approved()
-                    if stats.get("disabled"):
-                        print("EMAIL_SENDING_ENABLED is not true; stopping")  # noqa: T201
-                        return 1
-                    if stats["sent"] or stats["failed"] or stats["skipped"]:
-                        print(json.dumps(stats))  # noqa: T201
-                    await asyncio.sleep(a.interval)
-            print(json.dumps(await mailer.send_approved()))  # noqa: T201
-        else:
-            from . import review  # noqa: PLC0415
-
-            if a.cmd == "review":
-                for d in await review.list_drafts():
-                    flag = f"  [CHECK: {d['review_note']}]" if d["review_note"] else ""
-                    print(f"{d['id']}  {d['company']} <{d['email']}>  {d['subject']}{flag}")  # noqa: T201
-            elif a.cmd == "show":
-                d = await review.show(a.id)
-                print(dict(d) if d else "not found")  # noqa: T201
-                if d:
-                    print(f"\n{d['subject']}\n\n{d['body']}")  # noqa: T201
-            else:
-                ids = [str(d["id"]) for d in await review.list_drafts()] if a.all else a.ids
-                print(f"{await review.decide(ids, a.cmd == 'approve')} {a.cmd}d")  # noqa: T201
+            while True:
+                stats = await service.send(dry_run=dry)
+                if stats.get("disabled"):
+                    print("EMAIL_SENDING_ENABLED is not true: nothing sent")  # noqa: T201
+                    return 1
+                if not a.watch:
+                    print(json.dumps(stats))  # noqa: T201
+                    break
+                if stats["sent"] or stats["failed"] or stats["skipped"] or stats["blocked"]:
+                    print(json.dumps(stats))  # noqa: T201
+                await asyncio.sleep(a.interval)
     finally:
-        from . import chrome  # noqa: PLC0415
-
-        await chrome.close()
         await db.close_pool()
+    return 0
+
+
+async def _leads(a: argparse.Namespace, dry: bool) -> int:
+    from .leadgen import config, service, strategy  # noqa: PLC0415
+    from .leadgen.repository import open_repository  # noqa: PLC0415
+
+    cmd = a.leads_cmd
+    if cmd == "run":
+        deadline = time.monotonic() + a.minutes * 60
+        result = await service.run_leads(dry_run=dry, deadline=deadline, max_leads=a.max_leads)
+        print(json.dumps(result, indent=2, default=str))  # noqa: T201
+    elif cmd == "review":
+        rows = await service.review(dry_run=dry)
+        for r in rows:
+            flag = f"  [CHECK: {r['flags']}]" if r["flags"] else ""
+            head = f"{r['email_id']}  {r['company']} (score {r['score']}, {r['lead_status']})"
+            print(f"{head} <{r['to']}>  {r['subject']}{flag}")  # noqa: T201
+        print(f"{len(rows)} draft(s) waiting for a decision")  # noqa: T201
+    elif cmd == "show":
+        print(await service.show(a.email_id, dry_run=dry))  # noqa: T201
+    elif cmd in ("approve", "reject"):
+        ids = [r["email_id"] for r in await service.review(dry_run=dry)] if a.all else a.ids
+        print(json.dumps(await service.decide(ids, cmd == "approve", dry_run=dry), indent=2))  # noqa: T201
+    elif cmd == "queries":
+        repo = await open_repository(config.runtime(dry_run=dry))
+        try:
+            for q in await strategy.next_queries(repo, config.load(), a.count):
+                print(f"[{q.family}] {q.text}")  # noqa: T201
+        finally:
+            await repo.close()
     return 0
 
 

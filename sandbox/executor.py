@@ -227,9 +227,13 @@ class Executor:
     def _point(self, body: dict[str, Any]) -> tuple[int, int]:
         """Validate screenshot-space coordinates and convert them to screen pixels."""
         x, y = body.get("x"), body.get("y")
-        for v in (x, y):
-            if not isinstance(v, (int, float)) or isinstance(v, bool):
-                raise ActionError("'x' and 'y' must be numbers")
+        if (
+            not isinstance(x, (int, float))
+            or not isinstance(y, (int, float))
+            or isinstance(x, bool)
+            or isinstance(y, bool)
+        ):
+            raise ActionError("'x' and 'y' must be numbers")
         if not (0 <= x < self.cfg.shot_w and 0 <= y < self.cfg.shot_h):
             raise ActionError(f"point outside the {self.cfg.shot_w}x{self.cfg.shot_h} screenshot")
         return round(x * self.cfg.scale), round(y * self.cfg.scale)

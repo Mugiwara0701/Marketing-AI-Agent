@@ -76,7 +76,7 @@ def test_failed_checks_are_noted_for_the_reviewer(monkeypatch):
 
 
 def test_one_failure_does_not_stop_the_rest(monkeypatch):
-    saved, posted = _patch(monkeypatch, [_row("e1"), _row("e2")])
+    _saved, posted = _patch(monkeypatch, [_row("e1"), _row("e2")])
     calls = {"n": 0}
 
     async def flaky(_ctx):
@@ -91,7 +91,7 @@ def test_one_failure_does_not_stop_the_rest(monkeypatch):
 
 
 def test_followup_card_is_labelled_and_uses_the_email_buttons():
-    row = {"company": "Acme", "domain": "acme.io", "project_summary": "p", "technologies": [],
+    row: dict = {"company": "Acme", "domain": "acme.io", "project_summary": "p", "technologies": [],
            "email": "hi@acme.io", "name": "", "role": "", "source_url": "", "review_note": None,
            "subject": "Re: Hello", "body": "Hi", "step": 2}  # fmt: skip
     text, blocks = notify.email_blocks(row, "email:ID-2")

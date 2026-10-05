@@ -1,5 +1,7 @@
 // Slack interactivity endpoint (Request URL). Verifies Slack's signature, checks who clicked, records the
-// decision exactly once by updating the email / blog post row (no Slack data is stored). Must answer Slack within 3 seconds.
+// decision exactly once. Emails go through the SQL function decide_email() (migration 0007): it moves the email,
+// records who approved or rejected it in `approvals`, and moves an intro's lead to APPROVED / REJECTED. The mailer
+// only ever sends emails with such a recorded approval. Must answer Slack within 3 seconds.
 import { db } from "../_shared/db.ts";
 
 const enc = new TextEncoder();
@@ -90,11 +92,22 @@ Deno.serve(async (req) => {
   const [kind, refId] = String(act.value ?? "").split(":");
   if (kind !== spec.kind || !/^[0-9a-f-]{36}$/.test(refId ?? "")) return new Response("bad value", { status: 400 });
 
-  // Exactly once: the update only matches while the row is still undecided.
-  const { data: changed, error } = await db.from(spec.table).update({ status: spec.to })
-    .eq("id", refId).in("status", spec.from).select("id");
-  if (error) return new Response("error", { status: 500 });
-  if (!changed?.length) return ephemeral("Already decided.");
+  if (spec.kind === "email") {
+    const { data: result, error } = await db.rpc("decide_email", {
+      p_email: refId,
+      p_approve: spec.status === "approved",
+      p_by: `slack:${payload.user?.id ?? "unknown"} (${who})`,
+    });
+    if (error) return new Response("error", { status: 500 });
+    if (result === "already_decided") return ephemeral("Already decided.");
+    if (result === "unknown") return ephemeral("This draft no longer exists.");
+  } else {
+    // Exactly once: the update only matches while the row is still undecided.
+    const { data: changed, error } = await db.from(spec.table).update({ status: spec.to })
+      .eq("id", refId).in("status", spec.from).select("id");
+    if (error) return new Response("error", { status: 500 });
+    if (!changed?.length) return ephemeral("Already decided.");
+  }
 
   const verb = spec.status === "approved" ? "Approved" : "Rejected";
   if (payload.response_url) {

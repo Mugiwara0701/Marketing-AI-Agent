@@ -2,9 +2,8 @@ import time
 
 import jwt
 import pytest
-from fastapi.testclient import TestClient
-
 from app.main import app
+from fastapi.testclient import TestClient
 
 SECRET = "test-secret-that-is-long-enough-for-hs256"  # noqa: S105
 client = TestClient(app)
