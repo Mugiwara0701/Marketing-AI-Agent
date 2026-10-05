@@ -229,3 +229,24 @@ def test_evaluate_stores_a_real_project_and_dedups_the_second_time(monkeypatch):
         == "duplicate"
     )
     assert ctx.stats["stored"] == 1 and ctx.stats["duplicates"] == 1
+
+
+def test_popup_hints_and_buttons():
+    from agent.gui.desktop import _POPUP_BUTTONS, _POPUP_HINTS
+
+    assert _POPUP_HINTS.search("Cookies and Data Processing We and our 12 partners")
+    assert _POPUP_HINTS.search("Set your country and language")
+    assert not _POPUP_HINTS.search("Senior Android engineer, AOSP bring-up, apply now")
+    tsv = "level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext\n" + "".join(
+        f"5\t1\t1\t1\t{ln}\t{i}\t{x}\t400\t60\t20\t90\t{t}\n"
+        for ln, (x, words) in enumerate([(730, "Decline All"), (880, "Accept All")], start=1)
+        for i, t in enumerate(words.split())
+    )
+    words = parse_tsv(tsv)
+    spot = next(p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110)))
+    assert spot[0] < 800  # refuses before accepting
+
+
+def test_not_found_page_detected():
+    assert discover._NOT_FOUND.search("404 - Page not found - Murena")
+    assert not discover._NOT_FOUND.search("Contact Philips Support")

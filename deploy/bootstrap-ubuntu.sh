@@ -18,7 +18,8 @@ sudo -v
 echo "==> 1/8 base packages"
 sudo apt-get update
 sudo apt-get full-upgrade -y
-sudo apt-get install -y git curl ca-certificates build-essential ufw pciutils
+sudo apt-get install -y git curl ca-certificates build-essential ufw pciutils openssh-server rsync
+sudo systemctl enable --now ssh   # lets the laptop run commands here: deploy/remote.sh
 # Desktop automation: xdotool (mouse + keyboard), xclip (clipboard), imagemagick (screenshots), tesseract (OCR)
 sudo apt-get install -y xdotool xclip imagemagick tesseract-ocr libnotify-bin
 if [ "$(uname -m)" = x86_64 ] && ! command -v google-chrome >/dev/null && ! command -v google-chrome-stable >/dev/null; then
