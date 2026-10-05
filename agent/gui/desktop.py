@@ -334,7 +334,9 @@ class Desktop:
         w, h = self._shot_size()
         await self.glide(w // 2, h // 2)
         for _ in range(times):
-            await self.act(action="scroll", direction="down", amount=amount, x=w // 2, y=h // 2)
+            # no x/y: the pointer is already there (glide), and the executor's `mousemove --sync` hangs on this
+            # xdotool when the pointer is already on the spot
+            await self.act(action="scroll", direction="down", amount=amount)
             await asyncio.sleep(1.2)
 
     def _shot_size(self) -> tuple[int, int]:
@@ -372,9 +374,6 @@ class Desktop:
         shot_w, _ = self._shot_size()
         scale = max(self.screen[0], 1) / shot_w
         tx, ty = int(x * scale), int(y * scale)
-        # Stop one pixel short: the click/scroll that follows moves there with `xdotool mousemove --sync`, which
-        # waits for a movement and hangs when the pointer is already exactly on the spot.
-        ty = ty - 1 if ty > 0 else 1
         cx, cy = tx, ty
         with contextlib.suppress(DesktopError, AttributeError):
             where = (await self._run(["xdotool", "getmouselocation"])).decode()
@@ -397,9 +396,10 @@ class Desktop:
         await asyncio.sleep(0.15)
 
     async def click_at(self, x: int, y: int) -> None:
-        """Glide to (x, y) and click there."""
+        """Glide to (x, y) and click there. The pointer is already on the spot, so this clicks in place: the
+        executor's click would `xdotool mousemove --sync` to where the pointer already is, which hangs."""
         await self.glide(x, y)
-        await self.act(action="click", x=x, y=y)
+        await self._run(["xdotool", "click", "--delay", "80", "1"])
 
     async def _vision_call(self, make):
         """Run one vision-model request with a time limit. A timeout, or two other failures in a row, switch vision off

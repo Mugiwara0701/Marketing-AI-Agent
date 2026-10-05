@@ -290,8 +290,7 @@ def test_popup_closed_by_vision_click(monkeypatch):
     assert clicks == [(896, 376)]
 
 
-def test_glide_stops_one_pixel_short_of_the_target(monkeypatch):
-    """`xdotool mousemove --sync` hangs when the pointer is already on the spot, so glide must not land on it."""
+def test_glide_ends_on_the_target_and_is_a_real_glide(monkeypatch):
     from agent.gui import desktop
 
     moves = []
@@ -312,8 +311,38 @@ def test_glide_stops_one_pixel_short_of_the_target(monkeypatch):
     d.screen = (1440, 900)
     asyncio.run(d.glide(640, 400))  # screen target (720, 450)
     assert len(moves) > 5  # a glide, not a jump
-    assert moves[-1] != (720, 450)
-    assert abs(moves[-1][1] - 450) <= 1
+    assert moves[-1] == (720, 450)
+
+
+def test_click_and_scroll_never_use_mousemove_sync(monkeypatch):
+    """`xdotool mousemove --sync` to the spot the pointer is already on hangs 10 s: it killed every search."""
+    from agent.gui import desktop
+
+    cmds, bodies = [], []
+
+    async def fake_run(self, cmd, timeout=10):
+        cmds.append(cmd)
+        return b"x:1 y:1"
+
+    async def fake_act(self, **body):
+        bodies.append(body)
+        return {}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(desktop.Desktop, "_run", fake_run)
+    monkeypatch.setattr(desktop.Desktop, "act", fake_act)
+    monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
+    monkeypatch.setattr(desktop.asyncio, "sleep", no_sleep)
+    d = desktop.Desktop("t")
+    d.screen = (1440, 900)
+    asyncio.run(d.click_at(640, 400))
+    asyncio.run(d.scroll(2))
+    assert not any("--sync" in c for c in cmds)
+    assert any(c[:2] == ["xdotool", "click"] for c in cmds)
+    scrolls = [b for b in bodies if b.get("action") == "scroll"]
+    assert len(scrolls) == 2 and all("x" not in b and "y" not in b for b in scrolls)
 
 
 def test_one_vision_timeout_switches_it_off_for_the_run(monkeypatch):
