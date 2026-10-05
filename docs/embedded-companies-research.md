@@ -116,23 +116,29 @@ All files go in `out/embedded_companies/` (inside `out/`, which is git-ignored).
      checked.
    - **Summary:** total companies, companies with openings, total openings, counts by country and by focus area.
    - Format: bold frozen header row, auto-filter on, sensible column widths, clickable hyperlinks.
-   - Needs `openpyxl`, which is not installed in `.venv` yet: add it to `requirements-dev.txt`.
+   - Needs `openpyxl` (in `requirements.txt`; install with `uv pip install -r requirements.txt`).
 4. Verification pass at the end:
    - Re-open a random 20% of emails and job links and check them against their source pages.
    - Confirm no row has an email without a source URL.
    - List every company whose data could not be verified.
 
-## Decisions to confirm before running
+## How to run it
 
-1. **Countries.** The original task says global. Our pitching rule never targets Canada, the UK or Germany, and
-   several of the example companies are based there (Pengutronix, Linutronix, DENX, emteria and others). Since
-   this is a research list, not a pitch list, the default here is global. Say so if those three countries should
-   be dropped here too.
-2. **What the list is for.** Partners and subcontractors, competitors to watch, or hiring. It changes which
-   email to prefer (careers/HR, or business/sales) and whether openings matter at all.
-3. **How to run it.** A new command, e.g. `python -m agent embedded-list`, in a new module `agent/embedded_list.py`
-   (the name `agent/research.py` is taken), run on the laptop over plain HTTP. Or as a one-off task for Claude to
-   run with its own web tools, following this document.
+```bash
+python -m agent embedded-list                 # candidates -> research -> verification -> workbook (resumes)
+python -m agent embedded-list --no-discover   # only the seeds in config/embedded_companies.yaml
+python -m agent embedded-list --limit 10      # at most 10 more companies in this run
+python -m agent embedded-list --report-only   # verify again and rebuild the workbook from the progress files
+python -m agent embedded-list --fresh         # start over
+```
+
+- Code: `agent/embedded_list.py`. Seeds, discovery searches, directory pages, skipped domains: `config/embedded_companies.yaml`.
+- It needs no database, no Slack and no model: it runs on the laptop. `SEARXNG_URL` makes discovery searches reliable.
+- It is resumable: every company is appended to `companies_progress.csv` as soon as it is done; a new run skips those.
+- Countries: global, as the task says. Headquarters is a best guess from the contact / about / imprint pages (an
+  address counts more than a mention) and the site ending; check it for companies with offices in many countries.
+- Some sites refuse automated visitors (HTTP 403, e.g. Toradex, Variscite): they are listed as
+  `Could not access - check manually`.
 
 ## Final report
 

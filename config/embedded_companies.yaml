@@ -1,0 +1,146 @@
+# Research list of embedded engineering companies: `python -m agent embedded-list`
+# (docs/embedded-companies-research.md). Kept apart from the lead search: nothing here is pitched or stored in the
+# database, and config/sources.yaml `exclude_*` lists do not apply.
+#
+# seeds: starting points only. Every one is opened and checked; a site that cannot be reached is reported as
+# "Could not access – check manually". website may be left empty: it is then found by a web search for the name.
+# aliases: other domains of the same company (acquired brands, product sites), so they are not listed twice and
+# their published addresses count as the company's own.
+
+seeds:
+  # Specialist embedded consultancies
+  - {name: Bootlin, website: bootlin.com, category: consultancy}
+  - {name: BayLibre, website: baylibre.com, category: consultancy}
+  - {name: Collabora, website: collabora.com, category: consultancy}
+  - {name: Pengutronix, website: pengutronix.de, category: consultancy}
+  - {name: Linutronix, website: linutronix.de, category: consultancy}
+  - {name: Konsulko Group, website: konsulko.com, category: consultancy}
+  - {name: Amarula Solutions, website: amarulasolutions.com, category: consultancy}
+  - {name: DENX Software Engineering, website: denx.de, category: consultancy}
+  - {name: Kynetics, website: kynetics.com, category: consultancy}
+  - {name: O.S. Systems, website: ossystems.com.br, category: consultancy}
+  - {name: Witekio, website: witekio.com, category: consultancy}
+  - {name: Timesys, website: timesys.com, category: consultancy}
+  - {name: Savoir-faire Linux, website: savoirfairelinux.com, category: consultancy}
+  - {name: Mind (Essensium), website: mind.be, category: consultancy}
+  - {name: Igalia, website: igalia.com, category: consultancy}
+  - {name: 3mdeb, website: 3mdeb.com, category: consultancy}
+  - {name: Linaro, website: linaro.org, category: consultancy}
+  - {name: embedded brains, website: embedded-brains.de, category: consultancy}
+  # OTA / device-platform companies
+  - {name: Northern.tech (Mender), website: northern.tech, category: ota, aliases: [mender.io]}
+  - {name: Foundries.io, website: foundries.io, category: ota}
+  - {name: Toradex, website: toradex.com, category: ota}
+  - {name: Esper, website: esper.io, category: ota}
+  - {name: emteria, website: emteria.com, category: ota}
+  - {name: Sibros, website: sibros.tech, category: ota}
+  - {name: Excelfore, website: excelfore.com, category: ota}
+  - {name: Airbiquity, website: airbiquity.com, category: ota}
+  - {name: Pantacor, website: pantacor.com, category: ota}
+  - {name: Memfault, website: memfault.com, category: ota}
+  - {name: Golioth, website: golioth.io, category: ota}
+  # Engineering service firms
+  - {name: VVDN Technologies, website: vvdntech.com, category: services}
+  - {name: Sibrain, website: "", category: services}
+  - {name: Silicon Signals, website: siliconsignals.io, category: services}
+  - {name: KritiKal Solutions, website: "", category: services}
+  - {name: eInfochips, website: einfochips.com, category: services}
+  - {name: Mistral Solutions, website: mistralsolutions.com, category: services}
+  - {name: Ignitarium, website: ignitarium.com, category: services}
+  - {name: Tata Elxsi, website: tataelxsi.com, category: services}
+  - {name: KPIT Technologies, website: kpit.com, category: services}
+  - {name: Sasken Technologies, website: sasken.com, category: services}
+  - {name: L&T Technology Services, website: ltts.com, category: services}
+  - {name: Thundersoft, website: thundersoft.com, category: services}
+  - {name: Intellias, website: intellias.com, category: services}
+  - {name: Elektrobit, website: elektrobit.com, category: services}
+  - {name: iWave Systems, website: iwavesystems.com, category: services}
+  # SoM / hardware vendors with strong BSP teams
+  - {name: Variscite, website: variscite.com, category: som}
+  - {name: CompuLab, website: compulab.com, category: som}
+  - {name: PHYTEC, website: phytec.com, category: som}
+  - {name: e-con Systems, website: e-consystems.com, category: som}
+  - {name: Digi International, website: digi.com, category: som}
+  - {name: SECO, website: seco.com, category: som}
+  - {name: Kontron, website: kontron.com, category: som}
+  - {name: Boundary Devices, website: boundarydevices.com, category: som}
+  - {name: Emcraft Systems, website: emcraft.com, category: som}
+  # Embedded OS / RTOS vendors
+  - {name: Wind River, website: windriver.com, category: os-vendor}
+  - {name: Lynx Software Technologies, website: lynx.com, category: os-vendor}
+  - {name: SYSGO, website: sysgo.com, category: os-vendor}
+
+# Searches that find more candidates (SearXNG if SEARXNG_URL is set, else DuckDuckGo). A found site joins the list
+# only if its own pages use target-domain wording (Yocto, BSP, AOSP, OTA...).
+discovery_queries:
+  - AOSP BSP services company
+  - Yocto consulting company
+  - embedded Linux consultancy
+  - board bring-up BSP development services
+  - Android Automotive AAOS engineering services
+  - OTA software update platform embedded devices
+  - embedded device security secure boot consulting
+  - Linux kernel device driver development company
+  - firmware development services company
+  - system on module BSP Yocto vendor
+
+# Pages that list companies with links to their websites. Each link to another site is a candidate.
+# (Toradex, NXP, TI and Qualcomm partner directories refuse automated visitors or need JavaScript filters:
+# check those by hand.)
+directory_pages:
+  - https://www.yoctoproject.org/ecosystem/participants/
+
+# Large companies, foundations and sites that show up in searches and directories but are not what this list is
+# for. Seeds are never skipped.
+skip_domains:
+  - amd.com
+  - arm.com
+  - aws.amazon.com
+  - amazon.com
+  - intel.com
+  - dell.com
+  - ericsson.com
+  - bmwgroup.com
+  - bmw.com
+  - comcast.com
+  - cablelabs.com
+  - microsoft.com
+  - google.com
+  - android.com
+  - qualcomm.com
+  - nxp.com
+  - ti.com
+  - st.com
+  - linuxfoundation.org
+  - yoctoproject.org
+  - openembedded.org
+  - kernel.org
+  - github.com
+  - gitlab.com
+  - wikipedia.org
+  - medium.com
+  - reddit.com
+  - stackoverflow.com
+  - youtube.com
+  - linkedin.com
+  - clutch.co
+  - goodfirms.co
+  - designrush.com
+  - techbehemoths.com
+  - automotivelinux.org
+  - elinux.org
+  - lwn.net
+  # job sites, training providers and course sites: they list or teach, they do not engineer
+  - ambitionbox.com
+  - devopsschool.com
+  - techveda.live
+  - nobleprog.in
+  - nobleprog.com
+  - ecejournals.in
+  - analog.com
+  - harman.com
+  - epam.com
+  - googleblog.com
+
+max_discovered: 40       # at most this many found candidates per run (seeds are always researched)
+max_openings_per_company: 25   # a safety cap; job description files on a listing page are not downloaded

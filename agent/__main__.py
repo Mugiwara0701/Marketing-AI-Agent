@@ -47,6 +47,24 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         "desktop-check", help="check the desktop tools Chrome automation needs (xdotool, ...)"
     )
     sub.add_parser("leads-today", help="print the leads the desktop search stored today")
+    el = sub.add_parser(
+        "embedded-list",
+        help="research list: embedded companies, public emails and openings -> out/embedded_companies/*.xlsx",
+    )
+    el.add_argument(
+        "--no-discover",
+        action="store_true",
+        help="only the seeds in config/embedded_companies.yaml",
+    )
+    el.add_argument("--limit", type=int, help="research at most this many companies in this run")
+    el.add_argument(
+        "--fresh", action="store_true", help="start over: delete the progress files first"
+    )
+    el.add_argument(
+        "--report-only",
+        action="store_true",
+        help="verify and rebuild the workbook from progress files",
+    )
     sub.add_parser("migrate", help="apply supabase/migrations/*.sql to DATABASE_URL (idempotent)")
     sub.add_parser(
         "notify", help="post unreviewed drafts to Slack (done automatically after each run)"
@@ -135,6 +153,7 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
             "slack-setup",
             "browse",
             "test-email",
+            "embedded-list",
         ) and not os.environ.get("DATABASE_URL"):
             print(  # noqa: T201
                 f"'{a.cmd}' needs a database: set DATABASE_URL in .env (see README), "
@@ -153,6 +172,15 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
             for ok, name, detail, required in checks:
                 print(f"{'ok  ' if ok else 'FAIL' if required else 'warn'}  {name}: {detail}")  # noqa: T201
             return 0 if all(ok for ok, _, _, required in checks if required) else 1
+        elif a.cmd == "embedded-list":
+            from . import embedded_list  # noqa: PLC0415
+
+            summary = await (
+                embedded_list.finish()
+                if a.report_only
+                else embedded_list.run(discover=not a.no_discover, limit=a.limit, fresh=a.fresh)
+            )
+            print(json.dumps(summary, indent=2))  # noqa: T201
         elif a.cmd == "leads-today":
             from . import store  # noqa: PLC0415
 
