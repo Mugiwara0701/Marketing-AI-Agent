@@ -98,7 +98,7 @@ ollama pull qwen3-vl:2b-instruct && ollama cp qwen3-vl:2b-instruct vlm          
 
 Both models then run on the CPU. The agent detects a machine without an NVIDIA GPU and raises every model call's
 time limit to 300 s (`LLM_MIN_TIMEOUT`). Screenshots are shrunk before the vision model sees them, and a vision call
-over `DESKTOP_VISION_TIMEOUT` (120 s) twice in a row turns vision off for the run so OCR takes over
+over `DESKTOP_VISION_TIMEOUT` (400 s) twice in a row turns vision off for the run so OCR takes over
 (`DESKTOP_VISION=0` turns it off from the start). Small models are weaker: expect fewer and noisier leads.
 
 ## G. Troubleshooting

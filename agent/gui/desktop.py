@@ -156,7 +156,7 @@ class Desktop:
         # DESKTOP_VISION=0 turns the vision model off. It also works on a CPU (use a small model, e.g. qwen3-vl:2b);
         # a call over the time limit twice in a row turns it off for the run and OCR takes over.
         self.use_vision = (env("DESKTOP_VISION", "1") or "1") != "0"
-        self.vision_timeout = float(env("DESKTOP_VISION_TIMEOUT", "120") or 120)
+        self.vision_timeout = float(env("DESKTOP_VISION_TIMEOUT", "400") or 400)
         self._vision_fails = 0
 
     # --- start-up and recovery ------------------------------------------------------------------

@@ -11,6 +11,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agentkit import llm
+from agentkit.config import env
 from agentkit.log import get_logger
 
 log = get_logger("agent.gui.vision")
@@ -72,8 +73,12 @@ async def _ask(system: Path, text: str, shot_b64: str, schema, max_tokens: int):
             ],
         },
     ]
+    # A "thinking" model (the plain qwen3-vl tags) reasons before it answers and needs a large budget; an instruct
+    # build only needs a few dozen tokens. VISION_MAX_TOKENS overrides the budget for both calls.
+    budget = int(env("VISION_MAX_TOKENS", "") or max_tokens)
+    wait = float(env("DESKTOP_VISION_TIMEOUT", "400") or 400) + 30
     done = await llm.complete(
-        TASK, messages, schema, temperature=0.0, max_tokens=max_tokens, timeout=120
+        TASK, messages, schema, temperature=0.0, max_tokens=budget, timeout=wait
     )
     if not isinstance(done.parsed, schema):
         raise TypeError("no structured reply")
@@ -82,14 +87,14 @@ async def _ask(system: Path, text: str, shot_b64: str, schema, max_tokens: int):
 
 async def look(shot_b64: str) -> Look:
     """What is on screen: popup to close, 404 / blocked page, one-line summary."""
-    out = await _ask(_LOOK, "Describe this screen.", shot_b64, Look, 200)
+    out = await _ask(_LOOK, "Describe this screen.", shot_b64, Look, 2000)
     out.summary = out.summary[:300]
     return out
 
 
 async def locate(shot_b64: str, what: str) -> Target:
     """Where `what` (a link, menu item or result title) is on this screen, or found=False."""
-    return await _ask(_LOCATE, f"Find and locate: {what[:200]}", shot_b64, Target, 120)
+    return await _ask(_LOCATE, f"Find and locate: {what[:200]}", shot_b64, Target, 1200)
 
 
 def png_b64(path: str) -> str:
