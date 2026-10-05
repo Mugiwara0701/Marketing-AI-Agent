@@ -216,6 +216,13 @@ async def companies_to_contact_manually() -> list:
     )
 
 
+async def reject_company(company_id: UUID) -> None:
+    """Out of the contact-retry queue for good (an excluded company, or one that no longer fits)."""
+    await db.execute(
+        "update companies set status='rejected', updated_at=now() where id=$1", company_id
+    )
+
+
 async def touch_company(company_id: UUID) -> None:
     await db.execute("update companies set updated_at=now() where id=$1", company_id)
 

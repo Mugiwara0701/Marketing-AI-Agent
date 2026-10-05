@@ -442,3 +442,32 @@ def test_followup_queries_must_stay_on_topic():
         "android app development company", service, project, exclude
     )  # no project need word
     assert ok("anything", [], [], [])  # nothing configured: nothing filtered
+
+
+def test_retry_drops_stored_excluded_companies_without_opening_them(monkeypatch):
+    rows = [
+        {"id": "1", "name": "Zoox, Inc.", "domain": "zoox.com", "project_summary": "robotaxi", "location": None, "technologies": None, "source": "desktop", "source_url": ""},
+        {"id": "2", "name": "Acme Devices", "domain": "acme-devices.com", "project_summary": "rugged Android handhelds", "location": None, "technologies": None, "source": "desktop", "source_url": ""},
+    ]  # fmt: skip
+    rejected, visited = [], []
+
+    async def fetch():
+        return rows
+
+    async def reject(cid):
+        rejected.append(cid)
+
+    async def no_contact(ctx, domain):
+        visited.append(domain)
+
+    async def touch(cid):
+        return None
+
+    monkeypatch.setattr(discover.store, "companies_without_contact", fetch)
+    monkeypatch.setattr(discover.store, "reject_company", reject)
+    monkeypatch.setattr(discover.store, "touch_company", touch)
+    monkeypatch.setattr(discover, "visible_contact", no_contact)
+    ctx = _ctx()
+    ctx.cfg = {"exclude_terms": ["robotaxi"], "exclude_companies": ["zoox"]}
+    asyncio.run(discover.retry_missing_contacts(ctx))
+    assert rejected == ["1"] and visited == ["acme-devices.com"]

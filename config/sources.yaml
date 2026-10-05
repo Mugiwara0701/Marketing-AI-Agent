@@ -207,4 +207,4 @@ desktop:
   # exclude_terms are matched as whole words in the result and the first part of the page; exclude_companies
   # against the site name (nuro.ai -> nuro) and the company name.
   exclude_terms: [robotaxi, "autonomous vehicle", "autonomous vehicles", "autonomous driving", self-driving, "self driving", driverless, lidar]
-  exclude_companies: [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber, lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo]
+  exclude_companies: [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber, lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo, fairphone]

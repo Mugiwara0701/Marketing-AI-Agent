@@ -581,10 +581,20 @@ def _killed() -> bool:
 
 
 async def retry_missing_contacts(ctx: Ctx, limit: int = 3) -> None:
-    """Companies saved earlier without a contact get another visible look at their own site."""
-    for co in (await store.companies_without_contact())[:limit]:
-        if time.monotonic() > ctx.deadline or _killed():
+    """Companies saved earlier without a contact get another visible look at their own site. A company that the
+    exclusion lists rule out (saved before they existed) is rejected without opening its site."""
+    visited = 0
+    for co in await store.companies_without_contact():
+        if visited >= limit or time.monotonic() > ctx.deadline or _killed():
             return
+        if why := leadscore.exclusion_reason(
+            co["project_summary"] or "", co["domain"] or "", co["name"] or "",
+            ctx.cfg.get("exclude_terms") or [], ctx.cfg.get("exclude_companies") or [],
+        ):  # fmt: skip
+            await store.reject_company(co["id"])
+            log.info("Stored company dropped", extra={"ctx": {"company": co["name"], "why": why}})
+            continue
+        visited += 1
         try:
             found = await visible_contact(ctx, co["domain"])
             if not found:
