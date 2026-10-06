@@ -2,7 +2,7 @@
 #   ROUTING_CONFIG=config/routing.dev-only.yaml
 default: dev
 tasks:
-  lead.qualify: dev
+  lead.assess: dev
   lead.extract_contact: dev
   lead.search: dev
   outreach.draft: dev

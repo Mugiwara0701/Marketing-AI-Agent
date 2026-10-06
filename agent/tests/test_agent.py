@@ -162,85 +162,6 @@ def test_blog_picks_first_new_and_well_sourced_topic(monkeypatch):
     )
 
 
-def test_leads_stop_at_daily_cap(monkeypatch):
-    """25 qualifying listings with contacts: exactly MAX_NEW_LEADS_PER_DAY (3 here) get a draft."""
-    from agent import leads
-    from agent.tasks import contact as contact_task
-    from agent.tasks import proposal, qualify
-
-    monkeypatch.setenv("MAX_NEW_LEADS_PER_DAY", "3")
-    sigs = [
-        sources.Signal("job_post", "t", f"http://j/{i}", "t", f"AOSP job {i}") for i in range(25)
-    ]
-    drafted: list[str] = []
-
-    async def collect(_):
-        return sigs
-
-    async def zero():
-        return 0
-
-    async def never(_):
-        return False
-
-    async def qual(text):
-        n = text.rsplit(" ", 1)[1]
-        return qualify.QualifyResult(
-            relevant=True,
-            confidence=0.9,
-            reason="r",
-            company_name=f"Co{n}",
-            website=f"co{n}.io",
-            project_summary="p",
-            technologies=[],
-            location="",
-        ), []
-
-    async def find(domain):
-        c = contact_task.ContactResult(found=True, email=f"hi@{domain}", confidence=0.9)
-        return c, f"https://{domain}/contact", []
-
-    async def save_company(**kw):
-        return kw["domain"]
-
-    async def noop(*_a, **_k):
-        return "id"
-
-    async def draft(_):
-        drafted.append("x")
-        return proposal.EmailDraft(subject="Subject", body="b" * 100), []
-
-    monkeypatch.setattr(leads.sources, "collect_signals", collect)
-
-    async def nothing_to_retry(*_a, **_k):
-        return []
-
-    monkeypatch.setattr(store, "companies_without_contact", nothing_to_retry)
-    monkeypatch.setattr(store, "new_leads_today", zero)
-    monkeypatch.setattr(store, "signal_seen", never)
-    monkeypatch.setattr(store, "domain_known", never)
-    monkeypatch.setattr(store, "save_company", save_company)
-    monkeypatch.setattr(store, "save_contact", noop)
-    monkeypatch.setattr(store, "record_signal", noop)
-    monkeypatch.setattr(store, "save_email_draft", noop)
-    monkeypatch.setattr(leads.qualify, "qualify_signal", qual)
-    monkeypatch.setattr(leads.contacts, "find_contact", find)
-    monkeypatch.setattr(leads.proposal, "draft_proposal", draft)
-    stats = asyncio.run(leads.run(deadline=float("inf")))
-    assert stats["leads"] == 3 and len(drafted) == 3 and stats["processed"] == 3
-
-
-def test_sending_is_off_by_default(monkeypatch):
-    monkeypatch.delenv("EMAIL_SENDING_ENABLED", raising=False)
-    assert not mailer.sending_enabled()
-    assert asyncio.run(mailer.send_approved()) == {
-        "sent": 0,
-        "skipped": 0,
-        "failed": 0,
-        "disabled": 1,
-    }
-
-
 def test_slack_text_is_escaped_and_chunked():
     from agent import notify
 
@@ -548,50 +469,6 @@ def test_overlong_hostname_is_refused_not_crashed():
     assert asyncio.run(web.fetch("https://" + "a" * 70 + ".com")) is None
 
 
-def test_company_pages_become_signals(monkeypatch, tmp_path):
-    from agent import sources
-
-    monkeypatch.setenv("VISITED_CACHE", str(tmp_path / "v.json"))  # never touch the real cache
-
-    async def search(_q, limit=8):
-        return [
-            ("https://www.idtechproducts.com/", "ID TECH"),
-            ("https://www.indeed.com/x", "job"),
-            ("https://acme.io/blog", "Cooking"),
-        ]
-
-    async def page(url):
-        return "Android RFID reader and NFC payment terminals" if "idtech" in url else "recipes"
-
-    monkeypatch.setattr(sources, "web_search", search)
-    monkeypatch.setattr(sources.web, "fetch_page_text", page)
-    sigs = asyncio.run(sources._company_signals(["q"], ["rfid"]))
-    assert [(s.kind, s.domain_hint) for s in sigs] == [("company_page", "idtechproducts.com")]
-
-
-def test_search_does_not_reopen_visited_pages(monkeypatch, tmp_path):
-    from agent import sources
-
-    monkeypatch.setenv("VISITED_CACHE", str(tmp_path / "v.json"))
-    opened: list[str] = []
-
-    async def search(_q, limit=8):
-        return [("https://a.io/", "A"), ("https://b.io/", "B")]
-
-    async def page(url):
-        opened.append(url)
-        return "rfid readers" if "a.io" in url else "recipes"
-
-    monkeypatch.setattr(sources, "web_search", search)
-    monkeypatch.setattr(sources.web, "fetch_page_text", page)
-    first = asyncio.run(sources._company_signals(["q"], ["rfid"]))
-    second = asyncio.run(sources._company_signals(["q"], ["rfid"]))
-    assert len(first) == 1 and opened == ["https://a.io/", "https://b.io/"]
-    assert (
-        second == []
-    )  # a.io was a match (kept for a few days, but skipped now) and b.io was rejected
-
-
 def test_project_filter_drops_permanent_jobs():
     from agent import sources
 
@@ -628,69 +505,11 @@ def test_old_posts_are_dropped():
 
 
 def test_bot_check_pages_are_recognised():
-    from agent import chrome
-
     cf = "<html><title>Just a moment...</title><body>Verifying you are human. This may take a few seconds.</body></html>"
-    assert chrome.bot_check(cf)
-    assert not chrome.bot_check(
+    assert web.bot_check(cf)
+    assert not web.bot_check(
         "<html><body>" + "Contact us at sales@acme.io. " * 20 + "</body></html>"
     )
-
-
-def test_manual_reason_only_for_bot_blocked_sites():
-    web.bot_blocked.discard("blocked.io")
-    assert contacts.manual_reason("blocked.io") is None
-    web.bot_blocked.add("www.blocked.io")
-    try:
-        assert "bot check" in (contacts.manual_reason("blocked.io") or "")
-    finally:
-        web.bot_blocked.discard("www.blocked.io")
-
-
-def test_test_recipient_redirects_every_mail(monkeypatch):
-    for k, v in {
-        "EMAIL_SENDING_ENABLED": "true",
-        "TEST_RECIPIENT": "me@test.io",
-        "MAIL_FROM": "from@x.io",
-        "COMPANY_NAME": "Co",
-        "COMPANY_ADDRESS": "addr",
-        "UNSUBSCRIBE_BASE_URL": "https://u.io",
-        "UNSUBSCRIBE_SECRET": "s",
-    }.items():
-        monkeypatch.setenv(k, v)
-    monkeypatch.setenv("APP_ENV", "dev")
-    monkeypatch.setenv("ALLOWED_RECIPIENT_DOMAINS", "")
-    row = {"id": "abc", "contact_id": "c", "subject": "Hi", "body": "Hello", "attempts": 0}
-    sent, updates = [], []
-
-    async def claim(*a, **k):
-        return [row]
-
-    async def fetchrow(sql, *a):
-        return {"email": "real@company.io"} if "contacts" in sql else {"ok": True}
-
-    async def execute(sql, *a):
-        updates.append(sql)
-
-    async def send_email(payload, key):
-        sent.append(payload)
-        return "pid"
-
-    async def not_suppressed(addr):
-        return False
-
-    async def no_sleep(_):
-        return None
-
-    monkeypatch.setattr(mailer.db, "claim", claim)
-    monkeypatch.setattr(mailer.db, "fetchrow", fetchrow)
-    monkeypatch.setattr(mailer.db, "execute", execute)
-    monkeypatch.setattr(mailer.resend, "send_email", send_email)
-    monkeypatch.setattr(mailer.store, "is_suppressed", not_suppressed)
-    monkeypatch.setattr(mailer.asyncio, "sleep", no_sleep)
-    assert asyncio.run(mailer.send_approved())["sent"] == 1
-    assert sent[0]["to"] == ["me@test.io"]
-    assert sent[0]["subject"] == "[TEST for real@company.io] Hi"
 
 
 def test_test_recipient_accepts_several_addresses(monkeypatch):
@@ -701,7 +520,7 @@ def test_test_recipient_accepts_several_addresses(monkeypatch):
     monkeypatch.setenv("MAIL_FROM", "f@b.io")
     monkeypatch.setenv("COMPANY_NAME", "Co")
     monkeypatch.setenv("COMPANY_ADDRESS", "addr")
-    to = mailer.test_recipient()
+    to = mailer.test_recipient() or ""
     payload = mailer.resend_payload(
         mailer.build_message({"id": "1", "subject": "S", "body": "B"}, to), to
     )

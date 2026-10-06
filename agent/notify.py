@@ -100,7 +100,9 @@ def reply_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
     if row["status"] == "classified":  # still undecided: offer buttons
         if row["draft_response"]:
             draft = f"*Draft answer:*\n{esc(clip(row['draft_response'], 1800))}"
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": clip(draft, _SECTION_MAX)}})
+            blocks.append(
+                {"type": "section", "text": {"type": "mrkdwn", "text": clip(draft, _SECTION_MAX)}}
+            )
             buttons = [("Approve", "approve_reply"), ("Skip", "skip_reply")]
         else:
             buttons = [("Dismiss", "skip_reply")]
@@ -187,7 +189,9 @@ async def sweep() -> dict:
         return stats
     for r in await db.fetch(_EMAIL_Q + " order by e.created_at limit 20"):
         stats["emails" if await _safe_send("email", r) else "failed"] += 1
-    for r in await db.fetch(_REPLY_Q + " and r.status='classified' order by r.received_at limit 20"):
+    for r in await db.fetch(
+        _REPLY_Q + " and r.status='classified' order by r.received_at limit 20"
+    ):
         stats["replies" if await _safe_send("reply", r) else "failed"] += 1
     for r in await db.fetch(_POST_Q + " order by created_at limit 5"):
         stats["posts" if await _safe_send("post", r) else "failed"] += 1

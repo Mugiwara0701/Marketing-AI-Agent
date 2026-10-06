@@ -8,7 +8,7 @@ Type=oneshot
 WorkingDirectory=%h/Marketing-AI-Agent
 # The desktop run needs the logged-in Xubuntu (Xorg) session: auto-login must be on, screen lock and blanking off.
 Environment=DISPLAY=:0
-Environment=LEADS_MODE=desktop
+Environment=BROWSER_BACKEND=desktop
 ExecStart=%h/Marketing-AI-Agent/deploy/run-daily.sh
 # Hard stop slightly above AGENT_MAX_MINUTES (default 120) so a hung run cannot go on.
 TimeoutStartSec=135min

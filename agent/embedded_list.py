@@ -25,7 +25,7 @@ from agentkit.config import env
 from agentkit.log import get_logger
 
 from . import contacts, sources, web
-from .gui import leadscore
+from .leadgen import intent
 
 log = get_logger("agent.embedded_list")
 CONFIG = Path("config/embedded_companies.yaml")
@@ -517,7 +517,7 @@ async def _get(url: str) -> tuple[str, str] | None:
     if not html:
         return None
     text = web.html_to_text(html)
-    if leadscore.block_reason(text):
+    if intent.block_reason(text):
         web.bot_blocked.add(urlparse(url).hostname or "")
         return None
     return html, text

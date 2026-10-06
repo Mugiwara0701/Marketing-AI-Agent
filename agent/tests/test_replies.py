@@ -22,7 +22,7 @@ def test_strip_quoted_keeps_only_new_text():
 
 def test_reply_validation():
     def check(**kw):
-        return reply._validate(SimpleNamespace(parsed=reply.ReplyResult(**kw)))
+        return reply._validate(SimpleNamespace(parsed=reply.ReplyResult(**kw)))  # type: ignore[arg-type]
 
     assert check(label="interested", confidence=0.9, reply_body=GOOD_BODY) == []
     assert check(label="unsubscribe", confidence=0.95) == []

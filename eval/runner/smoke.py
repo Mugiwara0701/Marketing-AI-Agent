@@ -41,12 +41,12 @@ async def main() -> int:
         return "reachable"
 
     async def plain():
-        r = await llm.complete("lead.qualify", [{"role": "user", "content": "Say hello."}])
+        r = await llm.complete("lead.assess", [{"role": "user", "content": "Say hello."}])
         return f"model={r.model} tokens={r.tokens_in}/{r.tokens_out}"
 
     async def structured():
         msgs = [{"role": "user", "content": 'Reply with JSON {"ok": true, "word": "ping"}.'}]
-        r = await llm.complete("lead.qualify", msgs, Ping)
+        r = await llm.complete("lead.assess", msgs, Ping)
         return r.parsed
 
     async def embedding():
