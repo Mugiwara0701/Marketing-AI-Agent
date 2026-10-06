@@ -124,10 +124,12 @@ class Pipeline:
         groups = (
             ([LeadStatus.DISCOVERED], 50),
             ([LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED], 50),
-            ([LeadStatus.QUALIFIED], retry_contacts),
         )
-        for statuses, limit in groups:
-            for lead in await self.repo.leads_with_status(statuses, limit):
+        max_attempts = int(self.cfg.contacts.get("max_attempts", 3))
+        batches = [await self.repo.leads_with_status(statuses, limit) for statuses, limit in groups]
+        batches.append(await self.repo.leads_needing_contact(max_attempts, retry_contacts))
+        for batch in batches:
+            for lead in batch:
                 if self.stop_reason():
                     return
                 self.stats.add("resumed")
@@ -408,6 +410,8 @@ class Pipeline:
         if not found.best:
             reason = found.blocked or "no public business contact on the company's site"
             await self.repo.set_manual(lead.lead_id, found.form_url, found.blocked)
+            attempts = await self.repo.record_contact_attempt(lead.lead_id)
+            max_attempts = int(self.cfg.contacts.get("max_attempts", 3))
             lead.score = (
                 scoring.with_contact(lead.score, None, form_only=bool(found.form_url))
                 if lead.score
@@ -416,8 +420,14 @@ class Pipeline:
             lead.lead_score = lead.score.total if lead.score else lead.lead_score
             await self.repo.save_lead(lead)
             self.stats.add("contact_not_found")
-            log.info("Contact not found", extra={"ctx": {"lead_id": lead.lead_id, "why": reason,
+            log.info("Contact not found", extra={"ctx": {"lead_id": lead.lead_id, "why": reason, "attempt": attempts,
                                                          "form": bool(found.form_url)}})  # fmt: skip
+            if attempts >= max_attempts and not found.form_url:
+                note = f"no contact after {attempts} attempts: {reason}"
+                await self.repo.set_status(lead.lead_id, LeadStatus.REJECTED, note=note)
+                lead.status = LeadStatus.REJECTED
+                self.stats.add("rejected_no_contact")
+                log.info("Lead rejected", extra={"ctx": {"lead_id": lead.lead_id, "why": note}})
             return False
         for c in found.contacts[:3]:
             c.id = await self.repo.save_contact(lead.lead_id, c)

@@ -43,6 +43,13 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         lpd = lsub.add_parser(name, help=f"{name} drafted emails (records who decided)")
         lpd.add_argument("ids", nargs="*")
         lpd.add_argument("--all", action="store_true", help="every drafted email")
+    lc = lsub.add_parser(
+        "check-domains",
+        help="find stored leads whose website is dead or not the company's (report only)",
+    )
+    lc.add_argument(
+        "--apply", action="store_true", help="reject leads whose stored website does not answer"
+    )
     lq = lsub.add_parser("queries", help="print the next search queries the strategy would run")
     lq.add_argument("--count", type=int, default=20)
     for sp_ in lsub.choices.values():
@@ -302,6 +309,20 @@ async def _leads(a: argparse.Namespace, dry: bool) -> int:
     elif cmd in ("approve", "reject"):
         ids = [r["email_id"] for r in await service.review(dry_run=dry)] if a.all else a.ids
         print(json.dumps(await service.decide(ids, cmd == "approve", dry_run=dry), indent=2))  # noqa: T201
+    elif cmd == "check-domains":
+        from .leadgen import domain_check  # noqa: PLC0415
+
+        repo = await open_repository(config.runtime(dry_run=dry))
+        try:
+            found = await domain_check.run(repo, apply=a.apply)
+        finally:
+            await repo.close()
+        for f in found:
+            if f.status != "ok":
+                print(f"{f.status.upper():8} {f.company} ({f.domain}): {f.detail}  {f.action}")  # noqa: T201
+        bad = sum(f.status != "ok" for f in found)
+        hint = "" if a.apply or not bad else "  (report only: add --apply to reject the dead ones)"
+        print(f"{len(found)} lead(s) checked, {bad} with a problem{hint}")  # noqa: T201
     elif cmd == "queries":
         repo = await open_repository(config.runtime(dry_run=dry))
         try:

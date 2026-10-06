@@ -123,6 +123,9 @@ exclude_tlds: [".ca", ".uk", ".co.uk", ".de"]
 # ------------------------------------------------------------------------------------------------- contacts
 contacts:
   max_pages: 4 # pages read on a company's own site (home + links a person would click)
+  # A lead whose site gives no contact is tried again on later runs, at most this many times in all. Then it is
+  # REJECTED (or, if the site has a contact form, left for `python -m agent manual` and not retried).
+  max_attempts: 3
   link_labels:
     - [Contact us, Contact, Get in touch, Reach us]
     - [Team, Our team, Leadership, Management, About us, About, Company, Imprint, Impressum]

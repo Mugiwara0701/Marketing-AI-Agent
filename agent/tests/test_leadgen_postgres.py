@@ -180,3 +180,17 @@ def test_rejection_in_postgres(pg):
         )
 
     _run(go())
+
+
+def test_contact_attempts_in_postgres(pg):
+    async def go():
+        lid = await pg.insert_lead(
+            Lead(company_name="Retry Co", company_website="retryco.io"), source="t"
+        )
+        await pg.set_status(lid, LeadStatus.QUALIFIED)
+        assert lid in [x.lead_id for x in await pg.leads_needing_contact(2, 50)]
+        assert await pg.record_contact_attempt(lid) == 1
+        assert await pg.record_contact_attempt(lid) == 2
+        assert lid not in [x.lead_id for x in await pg.leads_needing_contact(2, 50)]
+
+    _run(go())

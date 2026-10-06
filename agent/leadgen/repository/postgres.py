@@ -187,6 +187,22 @@ class PostgresRepository:
             lead_id, form_url, reason,
         )  # fmt: skip
 
+    async def record_contact_attempt(self, lead_id: str) -> int:
+        row = await db.fetchrow(
+            """update companies set contact_attempts=contact_attempts+1, updated_at=now()
+                where id=$1::uuid returning contact_attempts""",
+            lead_id,
+        )
+        return int(row["contact_attempts"]) if row else 0
+
+    async def leads_needing_contact(self, max_attempts: int, limit: int) -> list[Lead]:
+        rows = await db.fetch(
+            f"""{self._LEAD_Q} where co.lead_status='QUALIFIED' and co.contact_attempts < $1
+                 order by co.updated_at limit $2""",
+            max_attempts, limit,
+        )  # fmt: skip
+        return [await self._lead(r) for r in rows]
+
     # --- contacts and emails ---------------------------------------------------------------------------------
 
     async def save_contact(self, lead_id: str, contact: Contact) -> str:

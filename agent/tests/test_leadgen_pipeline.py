@@ -214,3 +214,52 @@ def test_strategy_mixes_families_and_vocabularies():
     assert len({t for t in tech for q in qs if t in q.text}) >= 8  # spread over the vocabulary
     no_hiring = {q.family for q in list(strategy.generate(cfg(), hiring=False))[:20]}
     assert "hiring" not in no_hiring
+
+
+def _stored_qualified(repo, domain="deadsite.com"):
+    return asyncio.run(_insert_qualified(repo, domain))
+
+
+async def _insert_qualified(repo, domain):
+    from agent.leadgen.models import Lead
+
+    lid = await repo.insert_lead(
+        Lead(company_name="Dead Co", company_website=domain, lead_score=70), source="t"
+    )
+    await repo.set_status(lid, LeadStatus.QUALIFIED)
+    return lid
+
+
+def _no_contact_pipeline(repo, tmp_path, form_url=None):
+    async def nothing(browser, domain, cfg):
+        return contacts.Discovery(blocked="home page not reachable", form_url=form_url)
+
+    svc_browser = FakeBrowser({}, [])
+    p = _pipeline(repo, svc_browser, ScriptedModel({}), approval.SimulatedApprover(tmp_path))
+    p.svc.find_contacts = nothing
+    p.cfg.search["queries_per_run"] = 0  # resume only
+    return p
+
+
+def test_dead_site_is_retried_a_few_times_then_rejected(tmp_path):
+    repo = SqliteRepository(":memory:")
+    lid = _stored_qualified(repo)
+    for run in range(1, 4):
+        _run(_no_contact_pipeline(repo, tmp_path))
+        lead = asyncio.run(repo.get_lead(lid))
+        assert lead and lead.status == (LeadStatus.REJECTED if run == 3 else LeadStatus.QUALIFIED)
+    assert (
+        "no contact after 3 attempts"
+        in repo.db.execute("select status_note from companies").fetchone()[0]
+    )
+    out = _run(_no_contact_pipeline(repo, tmp_path))  # a fourth run does not open it again
+    assert out.get("resumed", 0) == 0
+
+
+def test_form_only_lead_stops_being_retried_but_stays_for_manual_contact(tmp_path):
+    repo = SqliteRepository(":memory:")
+    lid = _stored_qualified(repo, "formonly.com")
+    for _ in range(3):
+        _run(_no_contact_pipeline(repo, tmp_path, form_url="https://formonly.com/contact"))
+    assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.QUALIFIED  # type: ignore[union-attr]
+    assert asyncio.run(repo.leads_needing_contact(3, 10)) == []

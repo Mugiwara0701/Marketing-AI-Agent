@@ -23,7 +23,7 @@ create table if not exists companies (
   lead_status text not null default 'DISCOVERED', industry text, product text, project_summary text,
   opportunity text, technologies text, project_signal text, page_type text, location text,
   lead_score integer default 0, score text, evidence text, source_urls text, notes text,
-  source text, contact_form_url text, manual_reason text, status_note text,
+  source text, contact_form_url text, manual_reason text, status_note text, contact_attempts integer default 0,
   created_at text not null, updated_at text not null
 );
 create index if not exists companies_name_key on companies (name_key);
@@ -79,6 +79,9 @@ class SqliteRepository:
         self.db.row_factory = sqlite3.Row
         self.db.execute("pragma foreign_keys = on")
         self.db.executescript(_SCHEMA)
+        cols = {r["name"] for r in self.db.execute("pragma table_info(companies)")}
+        if "contact_attempts" not in cols:  # a dry-run database made before this column existed
+            self.db.execute("alter table companies add column contact_attempts integer default 0")
 
     async def close(self) -> None:
         self.db.close()
@@ -220,6 +223,22 @@ class SqliteRepository:
             "manual_reason=coalesce(?, manual_reason), updated_at=? where id=?",
             (form_url, reason, _now(), lead_id),
         )
+
+    async def record_contact_attempt(self, lead_id: str) -> int:
+        row = self._one(
+            "update companies set contact_attempts=coalesce(contact_attempts, 0)+1, updated_at=? where id=? "
+            "returning contact_attempts",
+            _now(), lead_id,
+        )  # fmt: skip
+        return int(row["contact_attempts"]) if row else 0
+
+    async def leads_needing_contact(self, max_attempts: int, limit: int) -> list[Lead]:
+        rows = self.db.execute(
+            "select * from companies where lead_status='QUALIFIED' and coalesce(contact_attempts, 0) < ? "
+            "order by updated_at limit ?",
+            (max_attempts, limit),
+        ).fetchall()
+        return [self._lead(r) for r in rows]
 
     # --- contacts and emails ---------------------------------------------------------------------------------
 
