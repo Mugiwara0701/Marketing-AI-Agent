@@ -156,14 +156,20 @@ def test_scoring_penalties_and_contact():
     assert merged and merged.total >= cto.total
 
 
-def test_model_reading_a_competitor_is_rejected():
+def test_engineering_service_companies_are_partner_leads_or_competitors_by_config():
     text = ("Acme Embedded builds Android and embedded Linux solutions for EV chargers and kiosks, on i.MX8 and "
-            "Rockchip. Our services: BSP bring-up and drivers.")  # fmt: skip
+            "Rockchip. Our services: BSP bring-up and drivers. Our clients include automotive OEMs. Case studies.")  # fmt: skip
     page = Page("https://acme-embedded.example/", "Acme Embedded", text)
-    model = ScriptedModel({page.url: assessment(page_type="engineering_services_provider", company_name="Acme Embedded",
-                                                 builds_own_product=False, project_signal="none")})  # fmt: skip
-    v = _run(page, model)
-    assert not v.accepted and "competitor" in v.reason
+    reading = assessment(page_type="engineering_services_provider", company_name="Acme Embedded",
+                         builds_own_product=False, project_signal="none",
+                         evidence=[{"quote": "Our services: BSP bring-up and drivers", "reason": "embedded firm"}])  # fmt: skip
+    v = _run(page, ScriptedModel({page.url: reading}), accept_service_companies=True)
+    assert v.accepted, v.reason
+    assert v.lead and v.lead.project_signal == "partner_capacity"
+    assert not any("competitor" in k or "services" in k for k in v.lead.score.penalties)
+    off = _run(page, ScriptedModel({page.url: reading.model_copy(update={"project_signal": "none"})}),
+               accept_service_companies=False)  # fmt: skip
+    assert not off.accepted and "competitor" in off.reason
 
 
 def test_foundations_and_universities_are_not_buyers():
@@ -173,3 +179,78 @@ def test_foundations_and_universities_are_not_buyers():
     assert "not a company" in _run(page, model).reason
     assert qualify.requirements(["AOSP", "embedded Linux"], ["aosp", "embedded_linux", "ota"]) == [
         "AOSP", "embedded Linux", "OTA updates"]  # fmt: skip
+
+
+KIOSK_HOME = (
+    "Ankh Innovations designs and manufactures self-service kiosks and POS terminals for retail and restaurants. "
+    "Our kiosks have 21-inch touchscreens, card readers, thermal printers and 4G connectivity. We build every "
+    "device in-house, from the hardware to the ordering software. Contact our sales team."
+)
+
+
+def test_a_device_maker_that_never_names_our_stack_still_reaches_the_model_and_qualifies():
+    page = Page("https://ankhinnovations.com/", "Ankh Innovations - Kiosks & POS", KIOSK_HOME)
+    pi = analyze(page.url, page.title, page.text)
+    assert (
+        not pi.tech and pi.domains and pi.hardware >= 3
+    )  # no AOSP / Yocto words, clearly a device maker
+    model = ScriptedModel({page.url: assessment(
+        company_name="Ankh Innovations", industry="retail kiosks", product="self-service kiosks and POS terminals",
+        evidence=[{"quote": "We build every device in-house, from the hardware to the ordering software",
+                   "reason": "builds its own devices"}],
+    )})  # fmt: skip
+    v = _run(page, model)
+    assert model.calls == [page.url]
+    assert v.accepted, v.reason
+    assert v.lead and v.lead.score and v.lead.score.parts["technical_relevance"] >= 9
+
+
+def test_pages_with_no_request_no_stack_and_no_device_maker_are_still_dropped():
+    for url, text in [
+        ("https://www.transportation.gov/rural/ev", "Partnership opportunities for EV charging in rural communities: "
+         "funding programs, grants and planning toolkits for local governments."),
+        ("https://news.example/ev", "EV sales grew 30% this quarter, analysts said on Monday."),
+    ]:  # fmt: skip
+        model = ScriptedModel({})
+        v = _run(Page(url, "", text), model)
+        assert not v.accepted and "not relevant" in v.reason and model.calls == []
+
+
+IDTECH_HOME = (
+    "Leading Manufacturer of RFID Readers & Tags | ID Tech Home Products Plastic Cards Smart Cards Card Printers "
+    "Smart Card Readers RFID Readers Handheld Readers Biometric Devices Attendance and Access Control Devices "
+    "Solutions RFID Parking Automation RFID Toll Automation. ID Tech designs and manufactures RFID readers, "
+    "handheld terminals and biometric devices. Our clients include airports and hospitals."
+)
+FOOGLE_HOME = (
+    "Embedded Systems & IoT Development Company | FoogleTech Software. Embedded & IoT Software Services: from "
+    "bare-metal firmware and RTOS to embedded Linux, BSP and Yocto, we engineer complete embedded products for our "
+    "clients. Hire Embedded Engineers. Outsource Embedded Dev. 150+ products shipped, 40+ global clients. "
+    "Get a free consultation. Our services include Linux / BSP, PCB design and hardware."
+)
+
+
+def test_product_maker_is_not_penalised_for_client_wording_and_a_services_firm_is_rejected():
+    idtech = Page(
+        "https://idsolutionsindia.com/",
+        "Leading Manufacturer of RFID Readers & Tags | ID Tech",
+        IDTECH_HOME,
+    )
+    model = ScriptedModel({idtech.url: assessment(
+        company_name="ID Tech", industry="RFID and identification", product="RFID readers, handheld terminals",
+        evidence=[{"quote": "ID Tech designs and manufactures RFID readers", "reason": "makes its own devices"}],
+    )})  # fmt: skip
+    v = _run(idtech, model)
+    assert v.accepted, v.reason
+    assert (
+        v.lead and v.lead.score and not v.lead.score.penalties
+    )  # "our clients" does not count against a maker
+
+    foogle = Page(
+        "https://foogletech.com/", "Embedded Systems & IoT Development Company", FOOGLE_HOME
+    )
+    model = ScriptedModel({})
+    v = _run(foogle, model)
+    assert (
+        not v.accepted and "competitor" in v.reason and model.calls == []
+    )  # dropped without a model call

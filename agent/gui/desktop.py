@@ -28,6 +28,8 @@ from .policy import Policy
 log = get_logger("agent.desktop")
 
 _MIN_PAGE_TEXT = 80  # less copied text than this: the page is canvas/image based, read it with OCR
+# What Ctrl+C gives when the address bar, not the page, has the keyboard focus.
+_ONLY_A_URL = re.compile(r"(https?://|www\.)\S+|[\w.-]+\.[a-z]{2,}(/\S*)?", re.I)
 _CHROME_BINARIES = ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser")
 
 
@@ -351,16 +353,33 @@ class Desktop:
                 ["xclip", "-selection", "clipboard", "-i", "/dev/null"], 5
             )  # empty first
         text = await self.clipboard_after("ctrl+a", "ctrl+c")
+        if _ONLY_A_URL.fullmatch(text.strip()):
+            # The keyboard focus was in the address bar, so Ctrl+A copied the address, not the page.
+            log.info(
+                "copied the address bar instead of the page; focusing the page and copying again"
+            )
+            await self.focus_page()
+            text = await self.clipboard_after("ctrl+a", "ctrl+c")
         if len(text.strip()) < _MIN_PAGE_TEXT and shutil.which("tesseract"):
             text = await self.ocr_text() or text
         return text.strip()
 
     async def current_url(self) -> str:
+        """The address in Chrome's address bar. Leaves the keyboard focus back on the page, so that a following
+        Ctrl+A / Home / End acts on the page and not on the address bar."""
         with contextlib.suppress(DesktopError):
             await self._run(["xclip", "-selection", "clipboard", "-i", "/dev/null"], 5)
         url = await self.clipboard_after("ctrl+l", "ctrl+c")
         await self.act(action="key", key="Escape")
+        await self.focus_page()
         return url.strip()
+
+    async def focus_page(self) -> None:
+        """Give the keyboard focus to the page: a click on the right edge of the window, on the scrollbar (at most it
+        scrolls the page), away from links, menus and chat widgets."""
+        w, h = self._shot_size()
+        with contextlib.suppress(DesktopError):
+            await self.click_at(w - 3, h // 2)
 
     async def dismiss_consent(self) -> bool:
         """A cookie banner or consent page: click the accept button if OCR can see one."""

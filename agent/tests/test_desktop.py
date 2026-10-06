@@ -227,3 +227,59 @@ def test_popup_closed_by_ocr_without_calling_the_vision_model(monkeypatch):
     assert (
         clicks and clicks[0][0] > 700 and not looks
     )  # clicked "Decline All"; the model was never asked
+
+
+def test_reading_a_page_never_returns_just_the_address_bar(monkeypatch):
+    """Ctrl+A with the focus in the address bar copies the URL, not the page: the page then looked empty."""
+    from agent.gui import desktop
+
+    copies = iter(
+        ["https://www.statiq.in", "Building the largest network of EV chargers in India " * 5]
+    )
+    clicks = []
+
+    async def fake_clip(self, *keys):
+        return next(copies)
+
+    async def fake_click(self, x, y):
+        clicks.append((x, y))
+
+    async def nothing(self, cmd, timeout=10):
+        return b""
+
+    monkeypatch.setattr(desktop.Desktop, "clipboard_after", fake_clip)
+    monkeypatch.setattr(desktop.Desktop, "click_at", fake_click)
+    monkeypatch.setattr(desktop.Desktop, "_run", nothing)
+    monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
+    text = asyncio.run(desktop.Desktop("t").read_page())
+    assert text.startswith("Building the largest network")
+    assert clicks == [(1277, 400)]  # focus given back to the page, on the scrollbar edge
+
+
+def test_asking_for_the_address_gives_focus_back_to_the_page(monkeypatch):
+    from agent.gui import desktop
+
+    keys: list = []
+    clicks: list = []
+
+    async def fake_clip(self, *k):
+        keys.extend(k)
+        return "https://acme.io/contact"
+
+    async def fake_act(self, **body):
+        keys.append(body.get("key"))
+        return {}
+
+    async def fake_click(self, x, y):
+        clicks.append((x, y))
+
+    async def nothing(self, cmd, timeout=10):
+        return b""
+
+    monkeypatch.setattr(desktop.Desktop, "clipboard_after", fake_clip)
+    monkeypatch.setattr(desktop.Desktop, "act", fake_act)
+    monkeypatch.setattr(desktop.Desktop, "click_at", fake_click)
+    monkeypatch.setattr(desktop.Desktop, "_run", nothing)
+    monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
+    assert asyncio.run(desktop.Desktop("t").current_url()) == "https://acme.io/contact"
+    assert keys == ["ctrl+l", "ctrl+c", "Escape"] and clicks == [(1277, 400)]

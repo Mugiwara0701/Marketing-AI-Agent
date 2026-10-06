@@ -21,6 +21,7 @@ _SIGNAL_POINTS = {
     "outsourcing_request": 22,
     "hiring": 14,
     "product_development": 8,
+    "partner_capacity": 11,
     "none": 0,
 }
 _PAGE_PENALTY = {
@@ -48,6 +49,9 @@ class ScoreInput:
     contact: Contact | None = None
     form_only: bool = False
     accept_hiring: bool = True
+    accept_services: bool = False
+    result_type: str = "POTENTIAL_CUSTOMER"
+    tier: str = "potential"
 
 
 def _project(s: ScoreInput) -> tuple[int, str | None]:
@@ -79,8 +83,12 @@ def contact_points(c: Contact | None, form_only: bool = False) -> int:
 def score(s: ScoreInput) -> ScoreCard:
     a, i = s.assessment, s.intent
     notes: list[str] = []
-    company = (12 if a.builds_own_product else 0) + min(len(i.domains) + bool(a.industry), 2) * 4
-    technical = min(len(i.tech), 4) * 4 + (4 if a.engineering_needs else 0)
+    partner = s.accept_services and a.project_signal == "partner_capacity"
+    company = (12 if a.builds_own_product or partner else 0) + min(
+        len(i.domains) + bool(a.industry), 2
+    ) * 4
+    # Our stack named on the page, or (for a device maker that does not name it) the hardware it builds.
+    technical = min(len(i.tech), 4) * 4 + (4 if a.engineering_needs else 0) + min(i.hardware, 3) * 3
     project, note = _project(s)
     if note:
         notes.append(note)
@@ -107,7 +115,10 @@ def score(s: ScoreInput) -> ScoreCard:
         "marketplace",
         "news_article",
     )
-    if (p := _PAGE_PENALTY.get(a.page_type)) and not second_hand_request:
+    penalty = _PAGE_PENALTY.get(a.page_type)
+    if a.page_type == "engineering_services_provider" and s.accept_services:
+        penalty = None  # a partner lead, not a competitor
+    if (p := penalty) and not second_hand_request:
         penalties[f"page type: {a.page_type}"] = p
     if i.selling >= 4 and not asks:
         penalties["sells products (cart, prices)"] = 40
@@ -115,8 +126,11 @@ def score(s: ScoreInput) -> ScoreCard:
         penalties["some shop features"] = 15
     if i.distributor >= 2 and not asks:
         penalties["distributor / reseller wording"] = 30
-    if i.provider >= 2 and not i.asks:
+    makes_things = i.product_dev or i.hardware >= 3
+    if i.provider >= 2 and not i.asks and not s.accept_services and not makes_things:
         penalties["services-company wording (possible competitor)"] = 20
+    if s.result_type == "HARDWARE_MANUFACTURER":
+        penalties["hardware maker, no evidence yet of embedded software work"] = 15
     if a.sells_hardware_only:
         penalties["only sells hardware"] = 30
     if not s.verified_quotes:

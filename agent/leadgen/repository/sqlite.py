@@ -24,6 +24,7 @@ create table if not exists companies (
   opportunity text, technologies text, project_signal text, page_type text, location text,
   lead_score integer default 0, score text, evidence text, source_urls text, notes text,
   source text, contact_form_url text, manual_reason text, status_note text, contact_attempts integer default 0,
+  result_type text, customer_tier text,
   created_at text not null, updated_at text not null
 );
 create index if not exists companies_name_key on companies (name_key);
@@ -80,8 +81,13 @@ class SqliteRepository:
         self.db.execute("pragma foreign_keys = on")
         self.db.executescript(_SCHEMA)
         cols = {r["name"] for r in self.db.execute("pragma table_info(companies)")}
-        if "contact_attempts" not in cols:  # a dry-run database made before this column existed
-            self.db.execute("alter table companies add column contact_attempts integer default 0")
+        for col, kind in (
+            ("contact_attempts", "integer default 0"),
+            ("result_type", "text"),
+            ("customer_tier", "text"),
+        ):
+            if col not in cols:  # a dry-run database made before this column existed
+                self.db.execute(f"alter table companies add column {col} {kind}")
 
     async def close(self) -> None:
         self.db.close()
@@ -121,6 +127,7 @@ class SqliteRepository:
             technical_requirements=json.loads(r["technologies"] or "[]"),
             project_signal=r["project_signal"] or "none", page_type=r["page_type"] or "other",
             location=r["location"] or "", lead_score=r["lead_score"] or 0,
+            result_type=r["result_type"] or "UNKNOWN", customer_tier=r["customer_tier"] or "none",
             score=ScoreCard(**json.loads(r["score"])) if r["score"] else None,
             evidence=[Evidence(**e) for e in json.loads(r["evidence"] or "[]")],
             source_urls=json.loads(r["source_urls"] or "[]"),
@@ -164,6 +171,7 @@ class SqliteRepository:
             lead.opportunity_description, _j(lead.technical_requirements), lead.project_signal, lead.page_type,
             lead.location, lead.lead_score, lead.score.model_dump_json() if lead.score else None,
             _j([e.model_dump() for e in lead.evidence]), _j(lead.source_urls), _j(lead.qualification_notes),
+            lead.result_type, lead.customer_tier,
         )  # fmt: skip
 
     async def insert_lead(self, lead: Lead, *, source: str) -> str:
@@ -172,7 +180,8 @@ class SqliteRepository:
         self.db.execute(
             "insert into companies (id, domain, source, lead_status, created_at, updated_at, name, name_key, industry,"
             " product, project_summary, opportunity, technologies, project_signal, page_type, location, lead_score,"
-            " score, evidence, source_urls, notes) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " score, evidence, source_urls, notes, result_type, customer_tier)"
+            " values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 lead_id,
                 lead.company_website,
@@ -190,7 +199,7 @@ class SqliteRepository:
         self.db.execute(
             "update companies set name=?, name_key=?, industry=?, product=?, project_summary=?, opportunity=?,"
             " technologies=?, project_signal=?, page_type=?, location=?, lead_score=?, score=?, evidence=?,"
-            " source_urls=?, notes=?, updated_at=? where id=?",
+            " source_urls=?, notes=?, result_type=?, customer_tier=?, updated_at=? where id=?",
             (*self._lead_values(lead), _now(), lead.lead_id),
         )
 

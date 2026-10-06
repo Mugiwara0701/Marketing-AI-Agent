@@ -36,10 +36,19 @@ class Assessment(BaseModel):
     company_website: Annotated[str, _clip(120)]
     industry: Annotated[str, _clip(80)]
     product: Annotated[str, _clip(200)]
+    company_role: Literal[
+        "builds_end_products", "sells_components_or_modules", "sells_engineering_services",
+        "resells_or_distributes", "unknown",
+    ] = "unknown"  # fmt: skip
     builds_own_product: bool
     sells_hardware_only: bool
     project_signal: Literal[
-        "none", "product_development", "hiring", "outsourcing_request", "rfp_or_tender"
+        "none",
+        "product_development",
+        "partner_capacity",
+        "hiring",
+        "outsourcing_request",
+        "rfp_or_tender",
     ]
     engineering_needs: Annotated[
         list[str], BeforeValidator(lambda v: v[:10] if isinstance(v, list) else v)

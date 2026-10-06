@@ -42,6 +42,7 @@ def message_text(lead: Lead, contact: Contact, email: EmailDraft) -> str:
         f"*Company:* {esc(lead.company_name)}  ({esc(lead.company_website)})",
         f"*Industry:* {esc(lead.industry or '-')}    *Product:* {esc(clip(lead.product or '-', 150))}",
         f"*Opportunity:* {esc(clip(lead.opportunity_description or lead.project_description or '-', 500))}",
+        f"*Type:* {esc(lead.result_type)} (tier: {esc(lead.customer_tier)})    "
         f"*Signal:* {esc(lead.project_signal.replace('_', ' '))}    *Score:* {lead.lead_score}/100{esc(penalties)}",
         f"*Technical signals:*\n{esc(signals)}",
         f"*Contact:* {esc(who)}",

@@ -27,7 +27,7 @@ Commands:
   init user@host     one-time setup (SSH key, remote folder)
   sync               copy this repo to the office machine (no .env, .venv, Chrome profile, output)
   deps               sync, then install/update Python dependencies there
-  run <args>         sync, then run: python -m agent run <args>   (e.g. run --desktop --force)
+  run <args>         stop any running agent, sync, then run: python -m agent run <args>   (e.g. run --desktop --force)
   agent <args>       python -m agent <args>, no sync           (e.g. agent leads review)
   test               sync, then run the tests there
   exec <cmd...>      run any shell command in the remote repo
@@ -65,6 +65,20 @@ do_sync() {
     ./ "$REMOTE:$REMOTE_DIR/"
 }
 
+# A run that is already going keeps the code it started with (a sync does not change it) and would share the Chrome
+# window with the new run. Stop it first: the scheduled service, then any manual run.
+stop_running_agents() {
+  need_remote
+  # shellcheck disable=SC2016  # expanded on the office machine, on purpose
+  rssh 'systemctl --user stop aosp-agent.service 2>/dev/null || true
+        if pgrep -f "^\.venv/bin/python -m agent run" >/dev/null; then
+          echo "stopping a running agent: $(pgrep -af "^\.venv/bin/python -m agent run" | cut -c1-120)"
+          pkill -f "^\.venv/bin/python -m agent run"
+          for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "^\.venv/bin/python -m agent run" >/dev/null || break; sleep 1; done
+          pkill -9 -f "^\.venv/bin/python -m agent run" || true
+        fi'
+}
+
 cmd="${1:-help}"
 [ $# -eq 0 ] || shift
 
@@ -86,6 +100,7 @@ case "$cmd" in
     remote_run uv pip install --python .venv/bin/python -r requirements-dev.txt
     ;;
   run)
+    stop_running_agents
     do_sync
     remote_run .venv/bin/python -m agent run "$@"
     ;;

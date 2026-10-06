@@ -209,6 +209,7 @@ class FakeDesk:
 
 
 def test_desktop_adapter_rests_a_blocked_engine_and_reads_results_with_the_model(monkeypatch):
+    monkeypatch.delenv("SEARXNG_URL", raising=False)  # the path without SearXNG
     from agent.tasks import search as serp
 
     captcha = (
@@ -267,3 +268,100 @@ def test_email_writer_flags_generic_drafts(monkeypatch):
 def test_search_result_dataclass_defaults():
     r = SearchResult("t")
     assert r.url == "" and r.snippet == ""
+
+
+def test_a_results_page_the_model_cannot_read_skips_the_query(monkeypatch):
+    monkeypatch.delenv("SEARXNG_URL", raising=False)  # the path without SearXNG
+    from agent.tasks import search as serp
+    from agentkit.llm import LLMError
+
+    async def slow(text, query):
+        raise LLMError("llm too slow")
+
+    monkeypatch.setattr(serp, "read_results", slow)
+    b = DesktopBrowser(Guard(), ["default"], 30, desk=FakeDesk({}))  # type: ignore[arg-type]
+    with pytest.raises(SearchBlockedError, match="could not read the results page"):
+        asyncio.run(b.search("ev charger aosp", 5))
+
+
+def test_no_query_suffix_is_typed_by_default():
+    from agent.leadgen import config
+
+    assert not config.load().search.get("query_suffix")
+
+
+def test_slow_model_is_not_asked_again_and_cpu_limits_are_raised(monkeypatch):
+    from agent.leadgen import service
+    from agentkit import llm
+
+    calls = []
+
+    class C:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            calls.append(1)
+            raise httpx.ReadTimeout("slow")
+
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(httpx, "AsyncClient", C)
+    with pytest.raises(llm.LLMError, match="too slow"):
+        asyncio.run(llm._post({}, 5))
+    assert calls == [1]  # not re-queued behind itself
+    monkeypatch.delenv("LLM_MIN_TIMEOUT", raising=False)
+    monkeypatch.setattr(service.shutil, "which", lambda name: None)
+    service.cpu_model_time_limits()
+    import os
+
+    assert os.environ["LLM_MIN_TIMEOUT"] == "420"
+
+
+class _Lookup:
+    name = "lookup"
+
+    def __init__(self):
+        self.guard = Guard()
+
+    async def search(self, query, limit):
+        return [
+            SearchResult(
+                "Acme EV chargers",
+                "https://acme-ev.com/",
+                "Linux chargers",
+                "searxng:bing",
+                "acme-ev.com",
+            )
+        ]
+
+
+def test_desktop_with_searxng_needs_no_model_and_opens_by_address(monkeypatch):
+    from agent.tasks import search as serp
+
+    async def must_not_run(text, query):
+        raise AssertionError("the model must not read results when SearXNG gives the links")
+
+    monkeypatch.setattr(serp, "read_results", must_not_run)
+    monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:8888")
+    desk = FakeDesk({})
+    b = DesktopBrowser(Guard(), ["default"], 30, desk=desk, lookup=_Lookup())  # type: ignore[arg-type]
+    (r,) = asyncio.run(b.search("kiosk company building Yocto", 5))
+    assert desk.typed == [
+        "http://127.0.0.1:8888/search?q=kiosk+company+building+Yocto"
+    ]  # shown in the window
+    page = asyncio.run(b.open(r))
+    assert page and page.url == "https://acme-ev.com/" and desk.typed[-1] == "https://acme-ev.com/"
+
+
+def test_desktop_never_takes_a_search_page_for_a_result(monkeypatch):
+    monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:8888")
+    stale = "https://duckduckgo.com/?q=smart+card+reader+manufacturer+-internship"
+    b = DesktopBrowser(Guard(), ["default"], 30, desk=FakeDesk({}), lookup=_Lookup())  # type: ignore[arg-type]
+    assert asyncio.run(b.open_url(stale)) is None
+    assert asyncio.run(b.open_url("http://127.0.0.1:8888/search?q=x")) is None

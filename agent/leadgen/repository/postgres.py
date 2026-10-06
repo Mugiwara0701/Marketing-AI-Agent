@@ -85,6 +85,7 @@ class PostgresRepository:
             project_description=r["project_summary"] or "", opportunity_description=r["opportunity"] or "",
             technical_requirements=list(r["technologies"] or []), project_signal=r["project_signal"] or "none",
             page_type=r["page_type"] or "other", location=r["location"] or "", lead_score=r["lead_score"] or 0,
+            result_type=r["result_type"] or "UNKNOWN", customer_tier=r["customer_tier"] or "none",
             score=ScoreCard.model_validate(_json(r["score"])) if r["score"] else None,
             evidence=[Evidence(**e) for e in _json(r["evidence"])],
             source_urls=list(r["source_urls"] or []) or ([r["source_url"]] if r["source_url"] else []),
@@ -129,19 +130,22 @@ class PostgresRepository:
             lead.score.model_dump_json() if lead.score else None,
             db.dumps([e.model_dump() for e in lead.evidence]), lead.source_urls, db.dumps(lead.qualification_notes),
             lead.lead_score / 100, (lead.opportunity_description or lead.project_description)[:400] or None,
+            lead.result_type, lead.customer_tier,
         )  # fmt: skip
 
     _SET = """name=$1, name_key=$2, industry=$3, product=$4, project_summary=$5, opportunity=$6, technologies=$7,
         project_signal=$8, page_type=$9, location=$10, lead_score=$11, score=$12::jsonb, evidence=$13::jsonb,
-        source_urls=$14, qualification_notes=$15::jsonb, fit_score=$16, fit_reason=$17"""
+        source_urls=$14, qualification_notes=$15::jsonb, fit_score=$16, fit_reason=$17, result_type=$18,
+        customer_tier=$19"""
 
     async def insert_lead(self, lead: Lead, *, source: str) -> str:
         row = await db.fetchrow(
             """insert into companies (name, name_key, industry, product, project_summary, opportunity, technologies,
                    project_signal, page_type, location, lead_score, score, evidence, source_urls,
-                   qualification_notes, fit_score, fit_reason, domain, website, source, source_url, status, lead_status)
+                   qualification_notes, fit_score, fit_reason, result_type, customer_tier, domain, website, source,
+                   source_url, status, lead_status)
                values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14,$15::jsonb,$16,$17,
-                       $18,$19,$20,$21,'candidate','DISCOVERED')
+                       $18,$19,$20,$21,$22,$23,'candidate','DISCOVERED')
                returning id""",
             *self._values(lead), lead.company_website, f"https://{lead.company_website}", source,
             lead.source_urls[0] if lead.source_urls else None,
@@ -152,7 +156,7 @@ class PostgresRepository:
 
     async def save_lead(self, lead: Lead) -> None:
         await db.execute(
-            f"update companies set {self._SET}, updated_at=now() where id=$18::uuid",
+            f"update companies set {self._SET}, updated_at=now() where id=$20::uuid",
             *self._values(lead), lead.lead_id,
         )  # fmt: skip
 

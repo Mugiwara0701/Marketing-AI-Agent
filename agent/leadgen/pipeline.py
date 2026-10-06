@@ -42,9 +42,7 @@ class Services:
     approver: approval.Approver | None
     assess: Assessor = assess_page
     draft: Callable[[Lead, Contact], Awaitable] = outreach.draft
-    find_contacts: Callable[[Browser, str, LeadgenConfig], Awaitable[contacts.Discovery]] = (
-        contacts.discover
-    )
+    find_contacts: Callable[..., Awaitable[contacts.Discovery]] = contacts.discover
 
 
 @dataclass
@@ -143,7 +141,7 @@ class Pipeline:
 
     # --- discovery -----------------------------------------------------------------------------------------
 
-    def skip_result(self, r: SearchResult) -> str | None:
+    def skip_result(self, r: SearchResult) -> str | None:  # noqa: PLR0911 - one reason per rule
         """Cheap pre-filter on the result list (no page opened): kinds of site that are never leads."""
         if web.blocked(r.url or r.domain):
             return "portal whose terms forbid scraping (never opened)"
@@ -153,8 +151,19 @@ class Pipeline:
             return f"{pi.host_kind} site"
         if pi.host_kind == "docs" and not asks:
             return "documentation / code / Q&A site"
+        if pi.host_kind == "freelance" and not asks:
+            return "freelancer profile or listing, not a company's project"
+        if intent.SELF_PROMO.search(f"{r.title} {r.snippet}") and not asks:
+            return "a developer or agency advertising itself, not a company with a project"
         if pi.selling >= 2 and not asks:
             return "result looks like a product listing"
+        services = bool(self.cfg.q("accept_service_companies", True))
+        if not services and intent.SERVICES_TITLE.search(r.title) and not asks:
+            return "an engineering-services company (a competitor), not a buyer"
+        if intent.LIST_PAGE.search(r.title) and not asks:
+            return "a list or directory of companies, not a company"
+        if r.snippet and pi.relevance_terms == 0 and pi.hardware == 0 and not asks:
+            return "title and snippet mention none of our technology or markets"
         host = intent.registrable_domain(r.url or r.domain)
         if why := intent.country_excluded(host, "", [], self.cfg.exclude_tlds):
             return why
@@ -170,19 +179,37 @@ class Pipeline:
             )
         except SearchBlockedError as exc:
             self.stats.add("searches_blocked")
+            if "results page" in str(exc):
+                self.llm_failures += 1  # the model host is struggling: stop after a few in a row
             log.warning(
                 "Search blocked; query kept for a later run",
                 extra={"ctx": {"query": q.text, "why": str(exc)}},
             )
             return
+        except BudgetExhaustedError:
+            raise
+        except Exception:
+            self.stats.add("errors")
+            log.exception(
+                "Search failed; query kept for a later run", extra={"ctx": {"query": q.text}}
+            )
+            return
+        self.llm_failures = 0
         self.stats.add("searches")
+        it = q.intent
+        log.info(
+            "Search intent",
+            extra={"ctx": {"target": it.target if it else "potential_customer", "family": q.family,
+                           "product": it.product if it else "", "technology": it.technology if it else "",
+                           "capability": it.capability if it else ""}},
+        )  # fmt: skip
         log.info(
             "Search executed",
             extra={"ctx": {"query": q.text, "family": q.family, "results": len(results)}},
         )
         opened = 0
         per_query = int(self.cfg.search.get("pages_per_query", 4))
-        for r in results:
+        for r in rank(results):
             if opened >= per_query or self.stop_reason():
                 break
             if why := self.skip_result(r):
@@ -330,7 +357,14 @@ class Pipeline:
         existing.lead_score = existing.score.total if existing.score else existing.lead_score
         if not existing.product and new.product:
             existing.product = new.product
-        rank = ["none", "product_development", "hiring", "outsourcing_request", "rfp_or_tender"]
+        rank = [
+            "none",
+            "product_development",
+            "partner_capacity",
+            "hiring",
+            "outsourcing_request",
+            "rfp_or_tender",
+        ]
         if rank.index(new.project_signal) > rank.index(existing.project_signal):
             existing.project_signal = new.project_signal
             existing.opportunity_description = (
@@ -406,7 +440,16 @@ class Pipeline:
 
     async def contact(self, lead: Lead) -> bool:
         assert lead.lead_id  # noqa: S101
-        found = await self.svc.find_contacts(self.svc.browser, lead.company_website, self.cfg)
+        found = await self.svc.find_contacts(
+            self.svc.browser, lead.company_website, self.cfg, company=lead.company_name
+        )
+        if found.competitor:
+            note = f"competitor, not a buyer: {found.competitor}"
+            await self.repo.set_status(lead.lead_id, LeadStatus.REJECTED, note=note)
+            lead.status = LeadStatus.REJECTED
+            self.stats.add("rejected_competitor")
+            log.info("Lead rejected", extra={"ctx": {"lead_id": lead.lead_id, "why": note}})
+            return False
         if not found.best:
             reason = found.blocked or "no public business contact on the company's site"
             await self.repo.set_manual(lead.lead_id, found.form_url, found.blocked)
@@ -477,6 +520,17 @@ class Pipeline:
         await self.repo.set_status(lead.lead_id, LeadStatus.EMAIL_DRAFTED)
         lead.status = LeadStatus.EMAIL_DRAFTED
         return True
+
+
+def rank(results: list[SearchResult]) -> list[SearchResult]:
+    """Most promising first: an explicit request, then the most of our technology / markets in title and snippet.
+    The page budget per query is then spent on the best results, not on whatever the engine listed first."""
+
+    def key(r: SearchResult) -> tuple[int, int]:
+        pi = intent.analyze(r.url or f"https://{r.domain}", r.title, r.snippet)
+        return (pi.asks, pi.relevance_terms)
+
+    return sorted(results, key=key, reverse=True)  # stable: the engine's order breaks ties
 
 
 def _contact_evidence(c: Contact) -> list[Evidence]:

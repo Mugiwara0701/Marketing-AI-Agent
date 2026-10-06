@@ -16,7 +16,7 @@ from agentkit.log import get_logger
 
 from .. import contacts as rules
 from ..tasks import contact as contact_task
-from . import identity
+from . import identity, intent
 from .browser import Browser
 from .config import LeadgenConfig
 from .models import Contact, Page
@@ -69,6 +69,9 @@ class Discovery:
     pages: list[str] = field(default_factory=list)
     form_url: str | None = None
     blocked: str | None = None
+    competitor: str | None = (
+        None  # the home page shows an engineering-services firm: not a lead (why)
+    )
 
     @property
     def best(self) -> Contact | None:
@@ -79,10 +82,34 @@ def _literal(value: str, text: str) -> bool:
     return bool(value) and re.sub(r"\s+", " ", value.lower()) in re.sub(r"\s+", " ", text.lower())
 
 
+FREE_MAIL = frozenset({
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.in", "yahoo.co.in", "outlook.com", "hotmail.com", "live.com",
+    "msn.com", "rediffmail.com", "icloud.com", "me.com", "aol.com", "protonmail.com", "proton.me", "zohomail.com",
+    "zohomail.in", "gmx.com", "mail.com", "yandex.com", "qq.com", "163.com", "126.com",
+})  # fmt: skip
+_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+
+def company_free_mail(text: str, company: str) -> list[str]:
+    """A Gmail / Yahoo / Outlook... address the company publishes as its own mailbox ("foogletech@gmail.com" for
+    FoogleTech): on the company's own site AND named after the company. A person's free-mail address is not taken."""
+    key = identity.name_key(company)
+    if len(key) < 4:
+        return []
+    out = set()
+    for addr in (m.lower().rstrip(".") for m in _EMAIL.findall(text)):
+        local, _, host = addr.partition("@")
+        local = re.sub(r"[^a-z0-9]", "", local)
+        if host in FREE_MAIL and len(local) >= 4 and (key in local or local in key):
+            out.add(addr)
+    return sorted(out)
+
+
 def candidates_from(
-    page: Page, domain: str, people: contact_task.ContactResult | None
+    page: Page, domain: str, people: contact_task.ContactResult | None, company: str = ""
 ) -> list[Contact]:
-    """Code guards on top of the model: literal on the page, on the company's domain, an allowed role."""
+    """Code guards on top of the model: literal on the page, on the company's domain (or the company's own free-mail
+    mailbox), an allowed role."""
     text = f"{page.text} " + " ".join(
         link.url[7:] for link in page.links if link.url.startswith("mailto:")
     )
@@ -116,6 +143,10 @@ def candidates_from(
                     role="business contact", email=addr, source=page.url, confidence=0.6, rank=rank
                 )
             )
+    for addr in company_free_mail(text, company):
+        if not any(c.email == addr for c in out):
+            out.append(Contact(role="business contact (free-mail address on the company site)", email=addr,
+                               source=page.url, confidence=0.5, rank=12))  # fmt: skip
     return out
 
 
@@ -139,11 +170,23 @@ async def _people(page: Page, extract: Extractor) -> contact_task.ContactResult 
         return None
 
 
+def competitor(home: Page, cfg: LeadgenConfig) -> str | None:
+    """Why the company is a competitor, judged on its home page: an engineering-services firm that asks for nothing.
+    None when service companies are accepted as partner leads, or the home page is not one."""
+    if cfg.q("accept_service_companies", False):
+        return None
+    hi = intent.analyze(home.url, home.title, home.text)
+    if (hi.provider >= 3 or intent.SERVICES_TITLE.search(home.title)) and not hi.asks:
+        return f"home page shows an engineering-services company ({home.title[:80]})"
+    return None
+
+
 async def discover(
     browser: Browser,
     domain: str,
     cfg: LeadgenConfig,
     extract: Extractor = contact_task.extract_contacts,
+    company: str = "",
 ) -> Discovery:
     found = Discovery()
     if not identity.is_company_site(domain):
@@ -155,6 +198,10 @@ async def discover(
         log.info(
             "Contact discovery stopped", extra={"ctx": {"domain": domain, "why": found.blocked}}
         )
+        return found
+    if why := competitor(home, cfg):
+        found.competitor = why
+        log.info("Competitor found on the home page", extra={"ctx": {"domain": domain, "why": why}})
         return found
     pages = [home]
     max_pages = int(cfg.contacts.get("max_pages", 4))
@@ -172,9 +219,11 @@ async def discover(
     found.pages = [p.url for p in pages]
     cands: list[Contact] = []
     for page in pages:
-        if page.has_contact_form and not found.form_url:
+        if (
+            page.has_contact_form or intent.looks_like_contact_form(page.text)
+        ) and not found.form_url:
             found.form_url = page.url
-        cands += candidates_from(page, domain, await _people(page, extract))
+        cands += candidates_from(page, domain, await _people(page, extract), company)
     best: dict[str, Contact] = {}
     for c in cands:
         if c.email not in best or (c.rank, -c.confidence) < (

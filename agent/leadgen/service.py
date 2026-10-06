@@ -1,7 +1,11 @@
 """Entry points used by the CLI and the daily run: wire config, repository, browser, approver and transport."""
 
+import os
+import shutil
 import time
 from pathlib import Path
+
+import yaml
 
 from agentkit.config import env
 from agentkit.log import get_logger
@@ -15,17 +19,58 @@ from .repository import Repository, open_repository
 log = get_logger("agent.leadgen")
 
 
+def cpu_model_time_limits() -> None:
+    """No NVIDIA GPU: the models run on the CPU and one call can take minutes. Raise every call's time limit
+    (LLM_MIN_TIMEOUT, unless already set) so slow answers are waited for instead of failing."""
+    if not shutil.which("nvidia-smi"):
+        os.environ.setdefault("LLM_MIN_TIMEOUT", "420")
+        log.info(
+            "No NVIDIA GPU: model time limits raised",
+            extra={"ctx": {"seconds": env("LLM_MIN_TIMEOUT")}},
+        )
+
+
 def _kill_file() -> Path:
     return Path(env("GUI_KILL_FILE", "/tmp/gui-agent.stop") or "/tmp/gui-agent.stop")  # noqa: S108
 
 
+def load_project(path: str | None) -> dict:
+    """A project file only fills project_context (products, technologies, industries, engineering_requirements):
+    context for queries. It cannot change the target, the rules or the thresholds."""
+    if not path:
+        return {}
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    data: dict = raw.get("project_context", raw) or {}
+    allowed = {
+        "name",
+        "industries",
+        "products",
+        "technologies",
+        "hardware",
+        "engineering_requirements",
+    }
+    unknown = set(data) - allowed
+    if unknown:
+        raise ValueError(
+            f"project file {path}: unknown keys {sorted(unknown)} (allowed: {sorted(allowed)})"
+        )
+    return data
+
+
 async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, deadline: float | None = None,
-                    max_leads: int | None = None) -> dict:  # fmt: skip
+                    max_leads: int | None = None, project: str | None = None
+) -> dict:  # fmt: skip
     """One discovery run. Never sends email. In a dry-run: own SQLite file, Slack written to files."""
     rt = config.runtime(dry_run=dry_run, browser=browser)
     cfg = config.load()
+    cpu_model_time_limits()
     if max_leads is not None:
         cfg.limits["max_new_leads_per_run"] = max_leads
+    if project:
+        cfg.raw["project_context"] = load_project(project)
+        log.info(
+            "Project context loaded", extra={"ctx": {"file": project, **cfg.raw["project_context"]}}
+        )
     repo = await open_repository(rt)
     try:
         svc = Services(repo=repo, browser=make_browser(rt.browser, cfg),

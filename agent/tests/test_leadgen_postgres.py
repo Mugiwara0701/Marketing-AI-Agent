@@ -194,3 +194,18 @@ def test_contact_attempts_in_postgres(pg):
         assert lid not in [x.lead_id for x in await pg.leads_needing_contact(2, 50)]
 
     _run(go())
+
+
+def test_result_type_and_tier_are_stored_in_postgres(pg):
+    async def go():
+        lead = Lead(company_name="Tier Co", company_website="tierco.io", result_type="POTENTIAL_CUSTOMER",
+                    customer_tier="high")  # fmt: skip
+        lid = await pg.insert_lead(lead, source="t")
+        got = await pg.get_lead(lid)
+        assert got and (got.result_type, got.customer_tier) == ("POTENTIAL_CUSTOMER", "high")
+        got.customer_tier = "potential"
+        await pg.save_lead(got)
+        again = await pg.get_lead(lid)
+        assert again and again.customer_tier == "potential"
+
+    _run(go())

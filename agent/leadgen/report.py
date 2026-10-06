@@ -23,7 +23,7 @@ def lead_section(lead: Lead, email_subject: str = "", email_body: str = "") -> s
         f"### {lead.company_name} ({lead.company_website}) - {lead.status}\n\n"
         f"- score: **{lead.lead_score}** ({parts}; penalties: {pen})\n"
         f"- industry: {lead.industry or '-'}; product: {lead.product or '-'}\n"
-        f"- signal: {lead.project_signal}; page type: {lead.page_type}\n"
+        f"- type: {lead.result_type} (tier {lead.customer_tier}); signal: {lead.project_signal}; page: {lead.page_type}\n"
         f"- opportunity: {lead.opportunity_description or '-'}\n"
         f"- technical: {', '.join(lead.technical_requirements) or '-'}\n"
         f"- contact: {contact}\n"

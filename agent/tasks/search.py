@@ -31,8 +31,8 @@ async def read_results(page_text: str, query: str) -> SearchRead:
         schema=SearchRead,
         prompt_dir=PROMPT_DIR,
         use_examples=False,
-        max_tokens=1000,
-        timeout=120,
+        max_tokens=800,
+        timeout=180,
         reasoning_effort="none",
     )
     parsed = completion.parsed

@@ -13,84 +13,88 @@ search:
   use_job_feeds: false # also read the job / project feed APIs of config/sources.yaml (hiring signals)
   feed_items: 40
   pages_per_query: 4 # results opened per query (after the cheap pre-filter)
-  # Added to every query typed into an engine, so job boards and shops stay out of the results.
-  query_suffix: "-site:indiamart.com -site:amazon.com -site:alibaba.com -site:aliexpress.com"
+  # Optional text added to every query. Empty: marketplaces, shops and job boards are dropped from the result list
+  # by the pre-filter instead, so the visible Chrome searches read like a person's.
+  query_suffix: ""
 
-  # The strategy combines these lists. Families and their share of the queries are in strategy.py:
-  #   need      "<need phrase> <tech> <domain>"            (explicit project / outsourcing requests)
-  #   rfp       "<rfp word> <tech> <domain>"               (tenders, RFQs)
-  #   builder   "<domain> company <builder phrase> <tech>"  (product companies building on our stack)
-  #   hiring    "<domain> company hiring <tech> engineer"  (a named company short of embedded capacity)
-  tech:
-    - AOSP
+  # The TARGET is fixed in code (agent/leadgen/strategy.py): organisations that could BUY our engineering. These lists
+  # are the vocabulary queries are built from. Products are things a customer BUILDS (complete products / systems),
+  # never components; technologies only describe a product. Project-specific context goes in project_context below
+  # (or a file passed with --project), never here.
+
+  # What we sell: our engineering capabilities.
+  capabilities:
+    - AOSP customization
     - Android BSP
-    - embedded Android
-    - custom Android
-    - Android HAL
     - Linux BSP
     - embedded Linux
     - Yocto
-    - Linux kernel driver
-    - device driver
+    - Linux kernel drivers
+    - Android HAL
+    - embedded firmware
     - board bring-up
     - U-Boot bootloader
     - device tree
-    - embedded firmware
-    - i.MX8
-    - Rockchip
-    - Qualcomm Snapdragon
-    - MediaTek
-    - NXP
-    - TI Sitara
-    - STM32
-    - ARM64
+    - OTA updates
+    - embedded Android app
+    - peripheral integration
+  # Who might need it: products and systems companies build (related ones spread apart).
+  products:
+    - EV charging station
+    - self-service kiosk
+    - industrial access control system
+    - fleet telematics device
+    - Android payment terminal
+    - medical monitoring device
+    - in-vehicle infotainment system
+    - industrial HMI terminal
+    - smart home hub
+    - warehouse robot
+    - digital signage system
+    - smart parking system
+    - industrial IoT gateway
+    - AI security camera system
+    - rugged Android handheld
+    - vending machine
+    - smart display
+    - agricultural drone
+    - point of sale system
+    - smart energy meter
+    - interactive classroom display
+    - vehicle gateway
+  industries: [automotive, industrial automation, healthcare, retail, logistics, energy, smart building, security]
+  # Generic platforms used as product modifiers alongside project technologies.
+  platforms: [Android, embedded Linux, ""]
+  # Customer signals, written the way the CUSTOMER writes ("developer" alone brings developers advertising
+  # themselves; "manufacturer" / "supplier" bring sellers: both are refused in code).
+  builder_phrases:
+    - company developing
+    - startup building
+    - company launches new
+    - product company building
   need_phrases:
-    - looking for embedded developer
-    - looking for engineering partner
-    - need developer for
+    - looking for development partner for
+    - seeking vendor for
     - outsourcing
-    - development partner
-    - contract developer
-    - freelance project
-    - subcontractor
-    - implementation partner
-    - custom development
+    - needs engineering partner for
+    - looking for engineering company for
+    - subcontracting
+    - looking for outside team for
+    - wants to outsource
   rfp_words:
     - RFP
     - RFQ
     - tender
     - request for proposal
-  builder_phrases:
-    - developing
-    - building
-    - our product runs
-    - we design
-    - startup building
-  domains:
-    - EV charging station
-    - EV charger
-    - charging dock
-    - self-service kiosk
-    - digital signage
-    - industrial automation
-    - robotics
-    - medical device
-    - automotive infotainment
-    - smart display
-    - POS terminal
-    - payment terminal
-    - smart home
-    - IoT device
-    - edge computing gateway
-    - industrial gateway
-    - telematics
-    - fleet tracking
-    - access control
-    - vending machine
-    - connected device
-    - rugged handheld
-    - RFID reader
 
+# Optional context of the CURRENT project. Only shapes queries; the target stays "potential customers". Example:
+#   project_context:
+#     name: access-control terminal project
+#     products: [access control system, visitor management kiosk]
+#     technologies: [RFID, NFC]
+#     engineering_requirements: [Android BSP, Android HAL, embedded Android app]
+# A whole file with the same keys can be given with: python -m agent leads run --project projects/x.yaml
+project_context: {}
 # --------------------------------------------------------------------------------------------- qualification
 qualification:
   # 0-100 score (scoring.py). Below min_qualify the company is REJECTED; below min_draft no email is drafted.
@@ -99,8 +103,13 @@ qualification:
   min_confidence: 0.5 # the model's own confidence in its reading of the page
   # A named company hiring an embedded/AOSP engineer has the work and lacks capacity: a real (weaker) signal.
   accept_hiring_signals: true
+  # Engineering / development-services companies (embedded or IoT development firms, design houses, outsourcing firms)
+  # sell the same work we do: competitors, rejected. true = keep them as subcontracting-partner leads instead.
+  accept_service_companies: false
   max_age_days: 120 # pages with only older dates are skipped
-  # Pages without at least this many technical OR product-domain terms are not sent to the model at all.
+  # A page goes to the model when it asks for outside work, names at least this many of our technology areas, or shows
+  # a company building devices (a target market plus "we design / our product / hardware" wording). Home pages of
+  # product companies rarely name AOSP or Yocto, so technology alone is not required.
   min_relevance_terms: 2
 
 # Never leads. Autonomous-driving firms and big brands build their platform in-house; embedded-software vendors are

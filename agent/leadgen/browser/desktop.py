@@ -1,24 +1,33 @@
 """Desktop backend: the visible Chrome on the Xubuntu desktop, used only through mouse, keyboard, clipboard and
 screen (agent.gui.desktop.Desktop). It cannot see the DOM, so:
 
-    search results  the results page text is read by the LLM (task lead.search) into titles/domains/snippets
-    opening         a result is clicked by its title (OCR, vision model as fallback)
-    links           a link is clicked by its visible text; pages carry no link list
+    search results  with SEARXNG_URL (normal case): the result links come from SearXNG (instant, no model call) and
+                    the SearXNG results page is shown in Chrome so a person can watch. Without SearXNG: the query is
+                    typed into an engine and the text model reads the results page (slow on a CPU)
+    opening         a result is opened by typing its address into Chrome's address bar (Ctrl+L), never by hunting
+                    for its title on screen or with the find bar
+    links           Contact / Team / About links on a company site are clicked with the mouse by their visible text
 
 A CAPTCHA or bot check is never worked around: the engine rests, the site is skipped.
 """
 
 from urllib.parse import quote_plus, urlparse
 
+from agentkit.config import env
+from agentkit.llm import LLMError
 from agentkit.log import get_logger
 
 from ...gui.desktop import Desktop, DesktopError
 from ...tasks import search as serp
 from .. import intent
 from ..models import Page, SearchResult
-from . import Guard, SearchBlockedError
+from . import Browser, Guard, SearchBlockedError
 
 log = get_logger("agent.leadgen.browser.desktop")
+
+# A result that turns out to be a search engine's own page is never a company's page.
+SEARCH_ENGINES = frozenset({"google.com", "bing.com", "duckduckgo.com", "yahoo.com", "yandex.com", "ecosia.org",
+                            "startpage.com", "brave.com", "baidu.com"})  # fmt: skip
 
 
 def engine_target(engine: str, query: str) -> str:
@@ -30,9 +39,17 @@ class DesktopBrowser:
     name = "desktop"
 
     def __init__(
-        self, guard: Guard, engines: list[str], rest_minutes: float, desk: Desktop | None = None
-    ) -> None:
+        self, guard: Guard, engines: list[str], rest_minutes: float, desk: Desktop | None = None,
+        lookup: Browser | None = None,
+    ) -> None:  # fmt: skip
         self.guard = guard
+        self.searx = (env("SEARXNG_URL") or "").rstrip("/")
+        if lookup is None and self.searx:
+            from .http import HttpBrowser  # noqa: PLC0415
+
+            lookup = HttpBrowser(guard)
+        self.lookup = lookup  # where result links come from (SearXNG); None = read the engine page with the model
+        self.show_search = (env("DESKTOP_SHOW_SEARCH", "1") or "1") != "0"
         self.engines = engines or ["default"]
         self.rest_minutes = rest_minutes
         self.desk = desk or Desktop(run_id="leadgen")
@@ -52,13 +69,30 @@ class DesktopBrowser:
             text = await desk.read_page()
         await desk.shot(label)
         title = await desk.title()
-        page = Page(url=await desk.current_url(), title=title, text=text)
+        page = Page(
+            url=await desk.current_url(), title=title, text=text
+        )  # read the page first, address second
         page.blocked = intent.block_reason(text, title)
         if not page.blocked and desk.last_look and desk.last_look.blocked:
             page.blocked = "the vision model sees a CAPTCHA, login wall or access-denied page"
         return page
 
     async def search(self, query: str, limit: int) -> list[SearchResult]:
+        if self.lookup is not None:
+            results = await self.lookup.search(
+                query, limit
+            )  # SearchBlockedError goes to the pipeline
+            if (
+                self.show_search and self.searx
+            ):  # let a person watch: the same search, in the visible window
+                try:
+                    await self.desk.navigate(f"{self.searx}/search?q={quote_plus(query)}")
+                except DesktopError:
+                    await self.desk.recover()
+            return results
+        return await self._search_engine_page(query, limit)
+
+    async def _search_engine_page(self, query: str, limit: int) -> list[SearchResult]:
         for _ in range(len(self.engines)):
             engine = self.engines[self._n % len(self.engines)]
             self._n += 1
@@ -74,9 +108,12 @@ class DesktopBrowser:
                 self.guard.rest_engine(engine, self.rest_minutes, page.blocked)
                 continue
             self.results_url = page.url
-            read = await serp.read_results(
-                page.text[:9000], query
-            )  # the LLM reads the results page text
+            try:  # the text model reads the results page (the desktop cannot see links)
+                read = await serp.read_results(page.text[:6000], query)
+            except (LLMError, TypeError, ValueError) as exc:
+                raise SearchBlockedError(
+                    f"could not read the results page: {type(exc).__name__}"
+                ) from exc
             return [
                 SearchResult(h.title, "", h.snippet, engine, intent.registrable_domain(h.domain))
                 for h in read.hits
@@ -88,6 +125,8 @@ class DesktopBrowser:
             await self.desk.navigate(self.results_url)
 
     async def open(self, result: SearchResult) -> Page | None:
+        if result.url:  # the address is known: type it, like a person pasting a link
+            return await self.open_url(result.url)
         if result.domain and (why := self.guard.refuse(result.domain)):
             log.info("Result skipped", extra={"ctx": {"title": result.title[:80], "why": why}})
             return None
@@ -102,11 +141,27 @@ class DesktopBrowser:
         return await self._opened(url, f"page {result.title}")
 
     async def _opened(self, url: str, label: str) -> Page | None:
+        dom = intent.registrable_domain(url)
+        searx_host = urlparse(self.searx).hostname if self.searx else None
+        if dom in SEARCH_ENGINES or (searx_host and urlparse(url).hostname == searx_host):
+            log.info(
+                "Not a result page (the window is on a search page)",
+                extra={"ctx": {"url": url[:120]}},
+            )
+            return None
         if why := self.guard.refuse(url):
             log.info("Page skipped", extra={"ctx": {"url": url, "why": why}})
             return None
         self.guard.opened(url)
         page = await self._read(label)
+        if (
+            intent.registrable_domain(page.url) in SEARCH_ENGINES
+        ):  # the window was not on the page we meant
+            log.info(
+                "Not a result page (the window is on a search page)",
+                extra={"ctx": {"url": page.url[:120]}},
+            )
+            return None
         if page.blocked:
             self.guard.block(url, page.blocked)
         return page
@@ -120,7 +175,9 @@ class DesktopBrowser:
         except DesktopError:
             await self.desk.recover()
             return None
-        return await self._opened(await self.desk.current_url() or url, f"open {url}")
+        return await self._opened(
+            url, f"open {url}"
+        )  # the page is read first; its final address after
 
     async def follow(self, labels: list[str]) -> Page | None:
         before = await self.desk.current_url()

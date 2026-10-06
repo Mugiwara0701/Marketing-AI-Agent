@@ -11,6 +11,7 @@ from agentkit.log import get_logger
 
 from ..tasks.assess import Assessment, assess_page
 from . import identity, intent, scoring
+from .classify import Classification, ResultType, classify
 from .config import LeadgenConfig
 from .models import Evidence, Lead, Page
 
@@ -18,8 +19,6 @@ log = get_logger("agent.leadgen.qualify")
 
 Assessor = Callable[[str, str, str], Awaitable[Assessment]]
 
-_SELLER_PAGES = {"ecommerce_listing", "marketplace", "distributor_or_reseller"}
-_NO_LEAD_PAGES = {"documentation_or_tutorial", "directory"}
 _PROVIDER_PAGES = {"engineering_services_provider"}
 _MAX_MODEL_TEXT = 7000
 
@@ -31,6 +30,7 @@ class Verdict:
     intent: intent.PageIntent
     assessment: Assessment | None = None
     lead: Lead | None = None
+    classification: Classification | None = None
     used_model: bool = False
     notes: list[str] = field(default_factory=list)
 
@@ -43,6 +43,9 @@ class Verdict:
         }
         if self.assessment:
             out["assessment"] = self.assessment.model_dump()
+        if self.classification:
+            out["result_type"] = self.classification.type.value
+            out["customer_tier"] = self.classification.tier
         if self.lead and self.lead.score:
             out["score"] = self.lead.score.model_dump()
         return out
@@ -126,12 +129,39 @@ def website_for(a: Assessment, page: Page) -> str:
 # --- the step ------------------------------------------------------------------------------------------------
 
 
-async def qualify_page(  # noqa: PLR0911, PLR0912, PLR0915 - one rule per branch, each with its own reason
+def company_problem(
+    a: Assessment, page: Page, host: str, cfg: LeadgenConfig, kind: Classification
+) -> str | None:
+    """Why the organisation the model named cannot be a lead, or None: not a company, not really on the page, the
+    platform itself, an excluded company, or no signal at all."""
+    name = a.company_name.strip()
+    if intent.NOT_A_COMPANY.search(name):
+        return f"'{name}' is not a company that buys engineering (foundation, university, association...)"
+    if not name or not identity.name_on_page(name, f"{page.title} {page.text}"):
+        return "no identifiable company on the page"
+    key = identity.name_key(name)
+    if (
+        key
+        and key == identity.name_key(host.split(".", maxsplit=1)[0])
+        and not identity.is_company_site(host)
+    ):
+        return f"'{name}' is the platform itself, not a company with a need"
+    if a.project_signal == "hiring" and not cfg.q("accept_hiring_signals", True):
+        return "hiring post (hiring signals are switched off)"
+    if a.project_signal == "none" and kind.proceed and kind.type != ResultType.POTENTIAL_CUSTOMER:
+        return f"{kind.type} without any project, hiring or product-development signal"
+    return intent.exclusion_reason("", "", name, [], cfg.exclude_companies) or None
+
+
+async def qualify_page(  # noqa: PLR0911 - one rule per branch, each with its own reason
     page: Page, cfg: LeadgenConfig, assess: Assessor = assess_page
 ) -> Verdict:
     pi = intent.analyze(page.url, page.title, page.text)
     host = intent.registrable_domain(page.url)
-    if why := intent.prefilter(pi, min_relevance=int(cfg.q("min_relevance_terms", 2))):
+    services = bool(cfg.q("accept_service_companies", True))
+    if why := intent.prefilter(
+        pi, min_relevance=int(cfg.q("min_relevance_terms", 2)), accept_services=services
+    ):
         return Verdict(False, why, pi)
     if why := intent.exclusion_reason(
         f"{page.title} {page.text[:4000]}", host, "", cfg.exclude_terms, cfg.exclude_companies
@@ -144,40 +174,24 @@ async def qualify_page(  # noqa: PLR0911, PLR0912, PLR0915 - one rule per branch
     a = await assess(page.url, page.title, page.text[:_MAX_MODEL_TEXT])
     v = Verdict(False, "", pi, a, used_model=True)
     name = a.company_name.strip()
-    asks = a.project_signal in ("rfp_or_tender", "outsourcing_request")
     accept_hiring = bool(cfg.q("accept_hiring_signals", True))
-    if a.page_type in _SELLER_PAGES and not asks:
-        v.reason = f"seller, not a buyer ({a.page_type})"
-        return v
-    if a.sells_hardware_only and not asks:
-        v.reason = "only sells hardware; no sign it develops anything"
-        return v
-    if (a.page_type in _PROVIDER_PAGES or pi.provider >= 3) and not (asks and pi.asks):
-        v.reason = "engineering services provider: a competitor, not a buyer"
-        return v
-    if a.page_type in _NO_LEAD_PAGES:
-        v.reason = f"no lead on a {a.page_type} page"
-        return v
-    if intent.NOT_A_COMPANY.search(name):
-        v.reason = f"'{name}' is not a company that buys engineering (foundation, university, association...)"
-        return v
-    if not name or not identity.name_on_page(name, f"{page.title} {page.text}"):
-        v.reason = "no identifiable company on the page"
+    kind = classify(a, pi, accept_services=services)
+    v.classification = kind
+    # An informational page (news, directory...) never creates a lead, but about a company we already have it is one
+    # more source of evidence: it is read on and handed over with accepted = False.
+    evidence_only = kind.type == ResultType.INFORMATIONAL
+    if not kind.proceed and not evidence_only:
+        v.reason = f"{kind.type}: {kind.why}"
         return v
     if (
-        identity.name_key(name)
-        and identity.name_key(name) == identity.name_key(host.split(".")[0])
-        and (not identity.is_company_site(host))
+        services
+        and a.project_signal in ("none", "product_development")
+        and (a.page_type in _PROVIDER_PAGES or pi.provider >= 3)
     ):
-        v.reason = f"'{name}' is the platform itself, not a company with a need"
-        return v
-    if a.project_signal == "hiring" and not accept_hiring:
-        v.reason = "hiring post (hiring signals are switched off)"
-        return v
-    if a.project_signal == "none" and not a.builds_own_product:
-        v.reason = "no project, hiring or product-development signal"
-        return v
-    if why := intent.exclusion_reason("", "", name, [], cfg.exclude_companies):
+        a.project_signal = (
+            "partner_capacity"  # configured partner lead: a possible subcontracting partner
+        )
+    if why := company_problem(a, page, host, cfg, kind):
         v.reason = why
         return v
     website = website_for(a, page)
@@ -204,6 +218,8 @@ async def qualify_page(  # noqa: PLR0911, PLR0912, PLR0915 - one rule per branch
         opportunity_description=a.opportunity,
         project_signal=a.project_signal,
         page_type=a.page_type,
+        result_type=kind.type.value,
+        customer_tier=kind.tier,
         location=a.location,
         source_urls=[page.url],
         qualification_notes=v.notes,
@@ -213,10 +229,14 @@ async def qualify_page(  # noqa: PLR0911, PLR0912, PLR0915 - one rule per branch
         scoring.ScoreInput(
             assessment=a, intent=pi, verified_quotes=len(verified),
             name_on_page=True, website_known=bool(website), accept_hiring=accept_hiring,
+            accept_services=services, result_type=kind.type, tier=kind.tier,
         )
     )  # fmt: skip
     lead.score, lead.lead_score = card, card.total
     v.lead = lead
+    if evidence_only:
+        v.reason = f"{kind.type}: {kind.why} (kept only as evidence for a company already known)"
+        return v
     min_conf = float(cfg.q("min_confidence", 0.5))
     min_score = int(cfg.q("min_qualify", 50))
     if a.confidence < min_conf:

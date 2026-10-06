@@ -99,12 +99,63 @@ _PROVIDER = [re.compile(p, re.I) for p in (
     r"staff augmentation", r"\bour clients\b", r"case stud(y|ies)", r"(get|request) a (free )?quote",
     r"talk to (our )?(experts?|engineers)", r"\byears of experience in\b", r"trusted (technology |engineering )?partner",
     r"(embedded|android|aosp|bsp|firmware|linux) (development|engineering) services",
+    r"\bhire me\b", r"\bmy (services|portfolio|skills|experience)\b",
+    r"\bi am an? (experienced |senior |certified |freelance )*(\w+ )?(developer|engineer|consultant|freelancer)\b",
 )]  # fmt: skip
+# A result title that sells development work ("Kiosk Software Development - SoftTeco"): a competitor. Job titles
+# ("Embedded Software Development Engineer") are not caught.
+SERVICES_TITLE = re.compile(
+    r"\bdevelopment (company|companies|services|agency|partner)\b|"
+    r"\b(software|app|application|firmware|embedded|iot|kiosk|automotive|product|solutions?)( (\w+|&)){0,2} "
+    r"development\b(?! (engineer|kit|board|lead|manager))|"
+    r"\bengineering services\b|\bsoftware house\b|\boutsourcing (company|partner)\b",
+    re.I,
+)
+_FORM_FIELDS = re.compile(
+    r"\b(full name|your name|first name|last name|(work |business |your )?e-?mail( address)?|phone( number)?|"
+    r"company( name)?|subject|your message|message|tell us about|describe your project)\b\s*\*?",
+    re.I,
+)
+_FORM_BUTTON = re.compile(
+    r"\b(send message|send inquiry|send enquiry|submit|send|get in touch|request a call)\b", re.I
+)
+
+
+def looks_like_contact_form(text: str) -> bool:
+    """A contact form, read from the page's visible text (the desktop browser has no HTML): several field labels and a
+    send / submit button."""
+    labels = {m.group(1).lower().split()[-1] for m in _FORM_FIELDS.finditer(text or "")}
+    return len(labels) >= 3 and bool(_FORM_BUTTON.search(text or ""))
+
+
+# A title of a list or directory of companies ("Top 66 EV charging startups"): it names many companies, it is none.
+LIST_PAGE = re.compile(
+    r"\b(top|best) \d+\b|\b\d+ (best|top|leading|biggest|largest)\b|"
+    r"\b(top|best|leading|biggest|largest) (\w+ ){0,4}(companies|startups|manufacturers|vendors|providers|firms|"
+    r"suppliers|apps|tools|brands|devices|products|models)\b|\blist of\b|\bdirectory\b|\bbusiness listings?\b|"
+    r"\breviewed\b|\b(reviews?|comparison) (\d{4}|of)\b",
+    re.I,
+)
+# A title or snippet of someone advertising themselves: a freelancer, a profile, a "hire developers" agency page.
+SELF_PROMO = re.compile(
+    r"\b(hire|top|best) (\d+ )?(freelance |remote |dedicated )?(\w+ ){0,2}(developers|engineers|programmers|experts)\b|"
+    r"\bfreelance (\w+ ){0,2}(developer|engineer|consultant)s?\b|\b(developer|engineer)s? for hire\b|"
+    r"\b(my|view my|download my) (profile|portfolio|resume|cv)\b|\bcurriculum vitae\b",
+    re.I,
+)
 _PRODUCT_DEV = [re.compile(p, re.I) for p in (
     r"\bwe (design|develop|build|engineer|manufacture)\b", r"designed (and|&) (manufactured|built|developed)",
     r"\bour (product|device|platform|charger|kiosk|robot|controller|gateway|display|hardware|terminal)s?\b",
     r"\bin[- ]house\b", r"\br&d\b|research (and|&) development", r"\bprototype", r"next[- ]generation",
     r"\blaunch(ed|ing)?\b", r"our (engineering|hardware|firmware|software) team", r"\bproprietary\b",
+)]  # fmt: skip
+# Words of a company that makes physical devices, whatever its market. Its home page rarely names AOSP or Yocto, but
+# a device with a screen, a board and software is exactly where our work goes.
+_HARDWARE = [re.compile(p, re.I) for p in (
+    r"\bdevices?\b", r"\bhardware\b", r"\bembedded\b", r"\b(control|main|carrier|custom) ?boards?\b|\bpcb\b",
+    r"\bcontrollers?\b", r"\btouch ?screens?\b|\bdisplays?\b|\bhmi\b", r"\bsensors?\b", r"\bterminals?\b",
+    r"\bandroid\b", r"\blinux\b", r"\bconnectivity\b|\b(4g|5g|lte|wi-?fi|bluetooth|ble)\b",
+    r"\b(oem|odm)\b|\bmanufactur(e|er|ing)\b|\bour factory\b",
 )]  # fmt: skip
 _EMPLOYMENT = (
     "full-time", "full time", "part-time", "apply now", "apply for this job", "years of experience",
@@ -238,6 +289,9 @@ class PageIntent:
         0  # asks, plus partner/outsourcing words when the page is not a services company
     )
     product_dev: int = 0
+    hardware: int = (
+        0  # device-maker words (device, hardware, controller, touchscreen, Android, Linux...)
+    )
     employment: int = 0
     docs: int = 0
     forum: bool = False
@@ -265,7 +319,7 @@ class PageIntent:
             "tech": self.tech_terms, "domains": sorted(self.domains), "ecommerce": self.ecommerce,
             "prices": self.prices, "distributor": self.distributor, "asks": self.asks, "provider": self.provider,
             "project_request": self.project_request,
-            "product_dev": self.product_dev, "employment": self.employment, "docs": self.docs,
+            "product_dev": self.product_dev, "hardware": self.hardware, "employment": self.employment, "docs": self.docs,
             "forum": self.forum, "news": self.news, "host_kind": self.host_kind,
         }  # fmt: skip
 
@@ -293,6 +347,7 @@ def analyze(url: str, title: str, text: str) -> PageIntent:
         distributor=_count(_DISTRIBUTOR, body),
         project_request=asks + partner,
         product_dev=_count(_PRODUCT_DEV, body),
+        hardware=_count(_HARDWARE, body),
         employment=employment_hits(body),
         docs=_count(_DOCS, body),
         forum=bool(_FORUM.search(body[:4000])) and len(_FORUM.findall(body)) >= 3,
@@ -302,15 +357,35 @@ def analyze(url: str, title: str, text: str) -> PageIntent:
     )
 
 
-def prefilter(intent: PageIntent, *, min_relevance: int = 2) -> str | None:  # noqa: PLR0911
+def relevant(i: PageIntent, min_tech: int = 2, *, services: bool = False) -> bool:
+    """Worth a model call: someone asks for outside work, or the page shows our technology, or it shows a company
+    that builds devices (in one of our markets, or plainly a device maker). Most product companies never name AOSP or
+    Yocto on their home page, so the technology is not required."""
+    return bool(
+        i.asks
+        or len(i.tech) >= min_tech
+        or (i.tech and i.domains)
+        or (i.domains and (i.product_dev or i.hardware >= 2))
+        or (i.product_dev and i.hardware >= 3)
+        # an engineering-services company: one sign that it works in our area is enough
+        or (services and i.provider >= 2 and bool(i.tech or i.domains or i.hardware >= 2))
+    )
+
+
+def prefilter(  # noqa: PLR0911 - one reason per rule
+    intent: PageIntent, *, min_relevance: int = 2, accept_services: bool = False
+) -> str | None:
     """Reject reason for a page that is plainly not a lead, without asking the model. None = let the model judge.
 
     Order matters: a project request (an RFQ, "looking for a developer") is never thrown away for living on a
     marketplace or a forum; that judgement is left to the model and the score."""
     asks = intent.project_request >= 2
-    if intent.relevance_terms < min_relevance:
-        return f"not relevant: {intent.relevance_terms} technical/product-domain term(s), need {min_relevance}"
-    if intent.provider >= 3 and intent.asks == 0:
+    if not relevant(intent, min_relevance, services=accept_services):
+        return (
+            "not relevant: no request, too little of our technology "
+            f"({len(intent.tech)} term(s), need {min_relevance}) and no sign of a company building devices"
+        )
+    if not accept_services and intent.provider >= 3 and intent.asks == 0:
         return f"engineering services provider: a competitor, not a buyer ({intent.provider} service phrases)"
     if intent.host_kind == "marketplace" and not asks:
         return "marketplace product listing"

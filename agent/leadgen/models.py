@@ -70,7 +70,12 @@ PageType = Literal[
     "other",
 ]
 ProjectSignal = Literal[
-    "none", "product_development", "hiring", "outsourcing_request", "rfp_or_tender"
+    "none",
+    "product_development",
+    "partner_capacity",
+    "hiring",
+    "outsourcing_request",
+    "rfp_or_tender",
 ]
 
 
@@ -114,6 +119,8 @@ class Lead(BaseModel):
     opportunity_description: str = ""
     project_signal: ProjectSignal = "none"
     page_type: PageType = "other"
+    result_type: str = "UNKNOWN"  # classify.ResultType: what kind of organisation this is
+    customer_tier: str = "none"  # high (customer + engineering need) | potential | investigate
     location: str = ""
     lead_score: int = 0
     score: ScoreCard | None = None

@@ -36,6 +36,10 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     )
     lr.add_argument("--max-leads", type=int, help="stop after this many new drafted leads")
     lr.add_argument("--minutes", type=float, default=60, help="time budget")
+    lr.add_argument(
+        "--project",
+        help="YAML with project_context (products, technologies...): context only, not the target",
+    )
     lsub.add_parser("review", help="drafted emails waiting for a decision")
     lsh = lsub.add_parser("show", help="one draft with its lead, evidence and approval")
     lsh.add_argument("email_id")
@@ -52,6 +56,7 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     )
     lq = lsub.add_parser("queries", help="print the next search queries the strategy would run")
     lq.add_argument("--count", type=int, default=20)
+    lq.add_argument("--project", help="YAML with project_context, to preview its queries")
     for sp_ in lsub.choices.values():
         sp_.add_argument(
             "--dry-run",
@@ -288,14 +293,16 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     return 0
 
 
-async def _leads(a: argparse.Namespace, dry: bool) -> int:
+async def _leads(a: argparse.Namespace, dry: bool) -> int:  # noqa: PLR0912 - one branch per subcommand
     from .leadgen import config, service, strategy  # noqa: PLC0415
     from .leadgen.repository import open_repository  # noqa: PLC0415
 
     cmd = a.leads_cmd
     if cmd == "run":
         deadline = time.monotonic() + a.minutes * 60
-        result = await service.run_leads(dry_run=dry, deadline=deadline, max_leads=a.max_leads)
+        result = await service.run_leads(
+            dry_run=dry, deadline=deadline, max_leads=a.max_leads, project=a.project
+        )
         print(json.dumps(result, indent=2, default=str))  # noqa: T201
     elif cmd == "review":
         rows = await service.review(dry_run=dry)
@@ -326,7 +333,10 @@ async def _leads(a: argparse.Namespace, dry: bool) -> int:
     elif cmd == "queries":
         repo = await open_repository(config.runtime(dry_run=dry))
         try:
-            for q in await strategy.next_queries(repo, config.load(), a.count):
+            cfg = config.load()
+            if a.project:
+                cfg.raw["project_context"] = service.load_project(a.project)
+            for q in await strategy.next_queries(repo, cfg, a.count):
                 print(f"[{q.family}] {q.text}")  # noqa: T201
         finally:
             await repo.close()

@@ -166,3 +166,65 @@ def test_engineering_services_companies_are_competitors_not_buyers():
 def test_a_services_company_asking_for_a_subcontractor_is_still_a_lead():
     pi = intent.analyze("https://designhouse.example/rfq", "", SUBCONTRACT_REQUEST)
     assert pi.asks >= 2 and intent.prefilter(pi) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Freelance AOSP Developer | Android BSP expert available for remote work",
+        "Hire Dedicated Embedded Linux Developers in 48 hours",
+        "Top 10 Yocto developers for hire",
+        "Ravi - Senior Android Engineer. View my portfolio and resume",
+    ],
+)
+def test_people_and_agencies_advertising_themselves_are_spotted(text):
+    assert intent.SELF_PROMO.search(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Kioskly company profile: we build self-service kiosks on RK3568",
+        "Our product portfolio: DC fast chargers running embedded Linux",
+        "VoltGrid is hiring an Embedded Linux Engineer for its charger platform",
+        "RFQ: AOSP customization for our custom ARM board",
+    ],
+)
+def test_companies_and_their_requests_are_not_mistaken_for_self_promotion(text):
+    assert not intent.SELF_PROMO.search(text)
+
+
+@pytest.mark.parametrize(
+    ("title", "is_list"),
+    [
+        ("Top 66 Electric Vehicle Charging startups", True),
+        ("Best EV Station App Development Companies (2026)", True),
+        ("10 best kiosk manufacturers in India", True),
+        ("EV Business Listings", True),
+        ("Best Handheld Terminal Android Devices Reviewed for 2025 - Eff", True),
+        ("Leading Manufacturer of RFID Readers & Tags | ID Tech", False),
+        ("UHF RFID Reader Manufacturer in India | Identium", False),
+        ("VoltGrid Energy - DC fast chargers for fleets", False),
+        ("RFQ: AOSP customization for our custom board", False),
+        ("Kioskly is hiring an Embedded Linux Engineer", False),
+    ],
+)
+def test_list_pages(title, is_list):
+    assert bool(intent.LIST_PAGE.search(title)) is is_list
+
+
+@pytest.mark.parametrize(
+    ("title", "is_services"),
+    [
+        ("Automotive App Development Company - Junkies Coder", True),
+        ("EV Charging Solutions Development - Promwad", True),
+        ("Kiosk Software Development - SoftTeco", True),
+        ("Automotive Software and Electronics Development - Promwad", True),
+        ("Embedded Software Development Engineer - VoltGrid careers", False),
+        ("Linux Tablet & Panel PC Solutions | Industrial & Medical OEM", False),
+        ("Custom POS, Kiosk & Retail Hardware | Ankh Innovations", False),
+        ("i.MX8 development board", False),
+    ],
+)
+def test_services_titles(title, is_services):
+    assert bool(intent.SERVICES_TITLE.search(title)) is is_services

@@ -16,6 +16,7 @@ _SIGNAL_TEXT = {
     "outsourcing_request": "They are asking for an outside developer / team / partner for this work.",
     "hiring": "They are hiring an engineer for this kind of work (shows the work exists; we offer to deliver it as a project, not to fill the role).",
     "product_development": "They build a product on this kind of platform. They have NOT asked for anything: make the offer conditional.",
+    "partner_capacity": "They are an engineering / services company working in this area. Offer to be their subcontracting or overflow partner (white-label delivery of defined pieces such as BSP bring-up, HAL or driver work, Yocto images, OTA). Do NOT offer to replace them or compete for their customers.",
     "none": "No explicit request: make the offer conditional.",
 }
 

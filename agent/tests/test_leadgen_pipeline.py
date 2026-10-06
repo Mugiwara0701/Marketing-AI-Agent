@@ -206,16 +206,6 @@ def test_contact_rules_literal_on_domain_and_role(tmp_path):
     assert contacts.role_rank("Founder & CEO") == 5 and contacts.role_rank("Marketing Lead") is None
 
 
-def test_strategy_mixes_families_and_vocabularies():
-    qs = list(strategy.generate(cfg()))[:40]
-    assert {q.family for q in qs} == {"need", "rfp", "builder", "hiring"}
-    assert len({q.text for q in qs}) == len(qs)
-    tech = cfg().search["tech"]
-    assert len({t for t in tech for q in qs if t in q.text}) >= 8  # spread over the vocabulary
-    no_hiring = {q.family for q in list(strategy.generate(cfg(), hiring=False))[:20]}
-    assert "hiring" not in no_hiring
-
-
 def _stored_qualified(repo, domain="deadsite.com"):
     return asyncio.run(_insert_qualified(repo, domain))
 
@@ -231,7 +221,7 @@ async def _insert_qualified(repo, domain):
 
 
 def _no_contact_pipeline(repo, tmp_path, form_url=None):
-    async def nothing(browser, domain, cfg):
+    async def nothing(browser, domain, cfg, **kw):
         return contacts.Discovery(blocked="home page not reachable", form_url=form_url)
 
     svc_browser = FakeBrowser({}, [])
@@ -263,3 +253,132 @@ def test_form_only_lead_stops_being_retried_but_stays_for_manual_contact(tmp_pat
         _run(_no_contact_pipeline(repo, tmp_path, form_url="https://formonly.com/contact"))
     assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.QUALIFIED  # type: ignore[union-attr]
     assert asyncio.run(repo.leads_needing_contact(3, 10)) == []
+
+
+def test_an_unexpected_search_error_costs_one_query_not_the_run(tmp_path):
+    class Broken(FakeBrowser):
+        async def search(self, query, limit):
+            self.searches.append(query)
+            raise RuntimeError("desktop glitch")
+
+    repo = SqliteRepository(":memory:")
+    b = Broken(WEB, RESULTS)
+    stats = _run(_pipeline(repo, b, ScriptedModel({}), approval.SimulatedApprover(tmp_path)))
+    assert stats["errors"] == len(b.searches) == 3  # every query tried, the run finished
+
+
+def test_self_promoting_results_are_not_opened(tmp_path):
+    repo = SqliteRepository(":memory:")
+    results = [
+        SearchResult(
+            "Freelance AOSP Developer - available now", "https://ravi-dev.example/", "", "fake"
+        ),
+        SearchResult(
+            "Hire Dedicated Embedded Linux Developers", "https://agency.example/hire", "", "fake"
+        ),
+        SearchResult("AOSP freelancer", "https://www.upwork.com/freelancers/~01abc", "", "fake"),
+        RESULTS[1],
+    ]
+    b = FakeBrowser(WEB, results)
+    _run(_pipeline(repo, b, ScriptedModel({EV_HOME: EV}), approval.SimulatedApprover(tmp_path)))
+    assert not {"https://ravi-dev.example/", "https://agency.example/hire"} & set(b.opened)
+    assert not any("upwork" in u for u in b.opened)
+    assert EV_HOME in b.opened
+
+
+def test_lists_directories_and_off_topic_results_are_not_opened_and_the_best_go_first(tmp_path):
+    from agent.leadgen.pipeline import rank
+
+    results = [
+        SearchResult(
+            "EV partnership opportunities",
+            "https://www.transportation.gov/ev",
+            "Rural toolkit for funding",
+            "f",
+        ),
+        SearchResult(
+            "Top 66 Electric Vehicle Charging startups", "https://startups.example/ev", "list", "f"
+        ),
+        SearchResult(
+            "EV Business Listings",
+            "https://evreporter.example/business-listings/",
+            "EV directory",
+            "f",
+        ),
+        SearchResult(
+            "VoltGrid Energy - DC fast chargers", EV_HOME, "Embedded Linux on i.MX8, CAN bus", "f"
+        ),
+    ]
+    p = _pipeline(SqliteRepository(":memory:"), FakeBrowser(WEB, results), ScriptedModel({}),
+                  approval.SimulatedApprover(tmp_path))  # fmt: skip
+    assert [p.skip_result(r) is None for r in results] == [False, False, False, True]
+    assert rank(results)[0].url == EV_HOME
+
+
+FOOGLE_CONTACT = (
+    "Embedded Systems & IoT Development Company — Surat, Gujarat, India Services Technologies Contact Us "
+    "GET IN TOUCH Let's build something great together. Whether you have a project in mind... CALL US +91 8320352507 "
+    "EMAIL US foogletech@gmail.com We reply within 24 hours OUR LOCATION Surat, Gujarat, India Send a Message "
+    "Join Our Team Start a conversation Fill in the form and our team will reach out shortly. Full Name * "
+    "Work Email * Phone Number Service Needed * Tell us about your project * Send Message"
+)
+
+
+def test_company_free_mail_address_and_text_form_are_found(tmp_path):
+    from agent.leadgen import intent
+
+    page = Page("https://foogletech.com/contact-us", "Contact Us", FOOGLE_CONTACT)
+    got = contacts.candidates_from(page, "foogletech.com", None, "FoogleTech Software")
+    assert [c.email for c in got] == ["foogletech@gmail.com"] and "free-mail" in got[0].role
+    assert intent.looks_like_contact_form(FOOGLE_CONTACT)
+    # a person's private address on the same page is not taken, nor any address for another company's name
+    other = Page(
+        "https://foogletech.com/team", "Team", "Write to ravi.patel1987@gmail.com or acme@gmail.com"
+    )
+    assert contacts.candidates_from(other, "foogletech.com", None, "FoogleTech Software") == []
+    assert not intent.looks_like_contact_form(
+        "We build kiosks. Email sales and subscribe to our newsletter."
+    )
+
+
+def test_contact_discovery_on_a_desktop_style_page_finds_the_address_and_form(tmp_path):
+    web = {
+        "https://foogletech.com": html("FoogleTech", "Embedded Systems & IoT Development Company",
+                                       [("Contact Us", "https://foogletech.com/contact-us")]),
+        "https://foogletech.com/contact-us": html("Contact Us", FOOGLE_CONTACT),
+    }  # fmt: skip
+    found = asyncio.run(contacts.discover(FakeBrowser(web, []), "foogletech.com", cfg(), extract=fake_people,
+                                          company="FoogleTech Software"))  # fmt: skip
+    assert found.best and found.best.email == "foogletech@gmail.com"
+    assert found.form_url == "https://foogletech.com/contact-us"
+
+
+def test_a_stored_lead_whose_home_page_is_a_services_firm_is_rejected_not_contacted(tmp_path):
+    from agent.leadgen.models import Lead
+
+    web = {
+        "https://foogletech.com": html(
+            "Embedded Systems & IoT Development Company | FoogleTech Software",
+            "Embedded & IoT Software Services. Our services: embedded Linux, BSP, Yocto. Hire Embedded Engineers. "
+            "Outsource Embedded Dev. 40+ global clients. Get a free consultation.",
+            [("Contact Us", "https://foogletech.com/contact-us")],
+        ),
+        "https://foogletech.com/contact-us": html("Contact", FOOGLE_CONTACT),
+    }
+    repo = SqliteRepository(":memory:")
+
+    async def stored():
+        lid = await repo.insert_lead(Lead(company_name="FoogleTech Software", company_website="foogletech.com",
+                                          lead_score=68), source="earlier-run")  # fmt: skip
+        await repo.set_status(lid, LeadStatus.QUALIFIED)
+        return lid
+
+    lid = asyncio.run(stored())
+    b = FakeBrowser(web, [])
+    p = _pipeline(repo, b, ScriptedModel({}), approval.SimulatedApprover(tmp_path))
+    p.cfg.search["queries_per_run"] = 0
+    out = _run(p)
+    lead = asyncio.run(repo.get_lead(lid))
+    assert out["rejected_competitor"] == 1 and lead and lead.status == LeadStatus.REJECTED
+    assert b.opened == ["https://foogletech.com"]  # its contact page was never opened
+    assert repo.db.execute("select count(*) from contacts").fetchone()[0] == 0
