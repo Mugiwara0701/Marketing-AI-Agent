@@ -6,8 +6,11 @@ Nothing here sends. The one send path is agent.leadgen.sender, which only accept
 import hashlib
 import hmac
 import os
+import re
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
+from html import escape
+from pathlib import Path
 
 from agentkit.config import env
 
@@ -41,12 +44,91 @@ def unsubscribe_url(email_id: str) -> str:
     return f"{base}?e={email_id}&t={token}"
 
 
+_BULLET = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+")
+
+
+def paragraphs(body: str) -> list[str | list[str]]:
+    """The draft as paragraphs: blank lines separate them, single line breaks inside one are the model's wrapping and
+    are joined. Consecutive "- item" lines become a list (returned as list[str])."""
+    out: list[str | list[str]] = []
+    for block in re.split(r"\n\s*\n", (body or "").replace("\r\n", "\n").strip()):
+        text: list[str] = []
+        items: list[str] = []
+        for ln in (x.strip() for x in block.split("\n")):
+            if not ln:
+                continue
+            if _BULLET.match(ln):
+                if text:
+                    out.append(" ".join(text))
+                    text = []
+                items.append(_BULLET.sub("", ln))
+            else:
+                if items:
+                    out.append(items)
+                    items = []
+                text.append(ln)
+        if text:
+            out.append(" ".join(text))
+        if items:
+            out.append(items)
+    return out
+
+
+def plain_text(body: str) -> str:
+    return "\n\n".join(
+        "\n".join(f"- {i}" for i in p) if isinstance(p, list) else p for p in paragraphs(body)
+    )
+
+
+def html_body(body: str) -> str:
+    style = "margin:0 0 14px 0;"
+    parts = []
+    for p in paragraphs(body):
+        if isinstance(p, list):
+            items = "".join(f'<li style="margin:0 0 6px 0;">{escape(i)}</li>' for i in p)
+            parts.append(f'<ul style="{style}padding-left:20px;">{items}</ul>')
+        else:
+            parts.append(f'<p style="{style}">{escape(p)}</p>')
+    return "\n".join(parts)
+
+
+def _template() -> str:
+    path = Path(env("EMAIL_TEMPLATE", "config/email_template.html") or "config/email_template.html")
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return (
+            "<html><body>{{body}}<p>{{sender_name}}<br>{{company_name}}<br>{{company_address}}</p>"
+            '<p><a href="{{unsubscribe_url}}">Unsubscribe</a></p></body></html>'
+        )
+
+
+def render_html(subject: str, body: str, unsubscribe: str) -> str:
+    """The template filled in. Every value is HTML-escaped: the body comes from a model, the rest from settings."""
+    website = (env("COMPANY_WEBSITE", "") or "").strip()
+    url = (
+        website
+        if website.startswith(("http://", "https://")) or not website
+        else f"https://{website}"
+    )
+    first = next((p for p in paragraphs(body) if isinstance(p, str)), "")
+    values = {
+        "subject": escape(subject), "preheader": escape(first[:140]), "body": html_body(body),
+        "sender_name": escape(env("SENDER_NAME", "") or ""), "company_name": escape(env("COMPANY_NAME", "") or ""),
+        "company_address": escape(env("COMPANY_ADDRESS", "") or ""), "company_website": escape(website),
+        "company_website_url": escape(url), "unsubscribe_url": escape(unsubscribe),
+    }  # fmt: skip
+    return re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), ""), _template())
+
+
 def build_message(row, to_addr: str) -> EmailMessage:
+    """multipart/alternative: a clean plain-text part and the HTML template, with the identity footer and the one-click
+    unsubscribe link and headers in both."""
     sender = env("MAIL_FROM", required=True)
     url = unsubscribe_url(str(row["id"]))
+    company, address = env("COMPANY_NAME", required=True), env("COMPANY_ADDRESS", required=True)
     footer = (
-        f"\n\n--\n{env('SENDER_NAME', '')}\n{env('COMPANY_NAME', required=True)}\n"
-        f"{env('COMPANY_ADDRESS', required=True)}\n"
+        f"\n\n--\n{env('SENDER_NAME', '')}\n{company}\n{address}\n"
         f"You received this because your company's public contact details list this address. "
         f"Unsubscribe: {url}"
     )
@@ -59,7 +141,8 @@ def build_message(row, to_addr: str) -> EmailMessage:
         msg["In-Reply-To"] = msg["References"] = row["in_reply_to"]
     if reply_to := env("REPLY_TO"):
         msg["Reply-To"] = reply_to
-    msg.set_content(row["body"] + footer)
+    msg.set_content(plain_text(row["body"]) + footer)
+    msg.add_alternative(render_html(row["subject"], row["body"], url), subtype="html")
     return msg
 
 

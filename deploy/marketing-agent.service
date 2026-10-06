@@ -1,0 +1,21 @@
+[Unit]
+Description=Marketing agent: one long-running service (send approved emails, poll Gmail, daily leads + blog)
+After=network-online.target docker.service graphical-session.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Replaced with the real folder by `deploy/remote.sh install-service`.
+WorkingDirectory=%h/Marketing-AI-Agent
+# Lead research drives the visible Chrome on the logged-in Xubuntu (Xorg) session: auto-login on, screen lock off.
+Environment=DISPLAY=:0
+Environment=BROWSER_BACKEND=desktop
+ExecStart=%h/Marketing-AI-Agent/deploy/start-agent.sh
+Restart=on-failure
+RestartSec=60
+# SIGTERM: the loops finish their current item, then the process exits.
+TimeoutStopSec=120
+Nice=10
+
+[Install]
+WantedBy=default.target

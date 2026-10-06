@@ -39,7 +39,9 @@ class PostgresRepository:
     name = "postgres"
 
     async def close(self) -> None:
-        await db.close_pool()
+        """Nothing to do: the connection pool belongs to the process (closed by the CLI on exit), so concurrent work in
+        the long-running service (`agent start`) keeps it."""
+        return None
 
     # --- pages and queries -----------------------------------------------------------------------------------
 

@@ -27,7 +27,12 @@ Commands:
   init user@host     one-time setup (SSH key, remote folder)
   sync               copy this repo to the office machine (no .env, .venv, Chrome profile, output)
   deps               sync, then install/update Python dependencies there
-  run <args>         stop any running agent, sync, then run: python -m agent run <args>   (e.g. run --desktop --force)
+  install-service    one-time: install the long-running service (marketing-agent) and retire the daily timer
+  up                 sync, then (re)start the service: it sends approved emails, polls Gmail, runs leads + blog daily
+  down               stop the service
+  status             is the service running, and what did it do last
+  logs [-f]          the service log (-f: follow it live)
+  run <args>         one manual run (stops the service and any other run first): python -m agent run <args>
   agent <args>       python -m agent <args>, no sync           (e.g. agent leads review)
   test               sync, then run the tests there
   exec <cmd...>      run any shell command in the remote repo
@@ -99,6 +104,23 @@ case "$cmd" in
     do_sync
     remote_run uv pip install --python .venv/bin/python -r requirements-dev.txt
     ;;
+  install-service)
+    do_sync
+    # shellcheck disable=SC2016  # expanded on the office machine, on purpose
+    rssh "mkdir -p ~/.config/systemd/user && sed 's#%h/Marketing-AI-Agent#'\$HOME/$REMOTE_DIR'#g' ~/$REMOTE_DIR/deploy/marketing-agent.service > ~/.config/systemd/user/marketing-agent.service && systemctl --user daemon-reload && systemctl --user disable --now aosp-agent.timer 2>/dev/null; systemctl --user enable marketing-agent.service && echo 'installed: marketing-agent.service (daily timer retired). Start it with: bash deploy/remote.sh up'"
+    ;;
+  up)
+    do_sync
+    rssh "systemctl --user restart marketing-agent.service && sleep 3 && systemctl --user --no-pager status marketing-agent.service | head -5"
+    ;;
+  down)
+    need_remote
+    rssh "systemctl --user stop marketing-agent.service && echo 'service stopped'"
+    ;;
+  status)
+    need_remote
+    rssh "systemctl --user --no-pager status marketing-agent.service | head -5; echo; journalctl --user -u marketing-agent.service -n 15 --no-pager -o cat"
+    ;;
   run)
     stop_running_agents
     do_sync
@@ -131,7 +153,11 @@ case "$cmd" in
     ;;
   logs)
     need_remote
-    rssh "journalctl --user -u aosp-agent.service -n 100 --no-pager"
+    if [ "${1:-}" = "-f" ]; then
+      rssh -t "journalctl --user -u marketing-agent.service -f -o cat"
+    else
+      rssh "journalctl --user -u marketing-agent.service -n 100 --no-pager -o cat"
+    fi
     ;;
   shots)
     need_remote

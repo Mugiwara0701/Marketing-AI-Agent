@@ -5,6 +5,13 @@ from agent import blog, contacts, mailer, sources, store, web
 from agent.tasks import topics
 
 
+def _part(msg, kind: str) -> str:
+    """The plain or html part of a built message."""
+    body = msg.get_body((kind,))
+    assert body is not None, f"no {kind} part"
+    return body.get_content()
+
+
 def test_registrable_domain():
     assert web.registrable_domain("https://www.careers.acme.co.uk/jobs") == "acme.co.uk"
     assert web.registrable_domain("https://sub.example.com") == "example.com"
@@ -71,7 +78,7 @@ def test_message_has_footer_and_unsubscribe_headers(monkeypatch):
                  "COMPANY_NAME": "Acme Eng", "COMPANY_ADDRESS": "1 Road"}.items():  # fmt: skip
         monkeypatch.setenv(k, v)
     msg = mailer.build_message({"id": "abc", "subject": "Hi", "body": "Hello"}, "to@c.io")
-    assert "Unsubscribe:" in msg.get_content() and "Acme Eng" in msg.get_content()
+    assert "Unsubscribe:" in _part(msg, "plain") and "Acme Eng" in _part(msg, "html")
     assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
 
@@ -82,7 +89,7 @@ def test_message_carries_unsubscribe_reply_to_and_threading_headers(monkeypatch)
     row = {"id": "abc", "subject": "Re: Hi", "body": "Hello", "in_reply_to": "<m1@x>"}
     msg = mailer.build_message(row, "to@c.io")
     assert msg["To"] == "to@c.io" and msg["Reply-To"] == "r@in.b.io" and msg["From"] == "a@b.io"
-    assert "Unsubscribe:" in msg.get_content()
+    assert "Unsubscribe:" in _part(msg, "plain")
     assert msg["In-Reply-To"] == "<m1@x>" and msg["References"] == "<m1@x>"
     assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click" and msg["Message-ID"]
 
@@ -525,3 +532,47 @@ def test_test_recipient_accepts_several_addresses(monkeypatch):
         for a in to.split(",")
     ]
     assert [m["To"] for m in msgs] == ["a@x.io", "b@y.io", "c@z.io"]
+
+
+def _mail_env(monkeypatch):
+    for k, v in {"UNSUBSCRIBE_BASE_URL": "https://x/u", "UNSUBSCRIBE_SECRET": "s", "MAIL_FROM": "a@b.io",
+                 "COMPANY_NAME": "Acme Eng", "COMPANY_ADDRESS": "1 Road", "SENDER_NAME": "Ana",
+                 "COMPANY_WEBSITE": "acme.io"}.items():  # fmt: skip
+        monkeypatch.setenv(k, v)
+
+
+def test_email_is_html_with_a_clean_text_alternative(monkeypatch):
+    _mail_env(monkeypatch)
+    body = ("We noted that Kestrel builds the Android\nkiosk terminal.\n\nWe could help with:\n- BSP bring-up\n"
+            "- HAL work\n\nWould a short call help?")  # fmt: skip
+    msg = mailer.build_message({"id": "abc", "subject": "Hi", "body": body}, "to@c.io")
+    assert msg.get_content_type() == "multipart/alternative"
+    text = _part(msg, "plain")
+    assert (
+        "Android kiosk terminal." in text
+    )  # the model's line wrapping is joined, not shown as broken lines
+    assert "- BSP bring-up\n- HAL work" in text and "Unsubscribe: https://x/u?e=abc" in text
+    html = _part(msg, "html")
+    assert "<li" in html and "BSP bring-up" in html and "Android kiosk terminal." in html
+    assert "https://x/u?e=abc&amp;t=" in html and "1 Road" in html and "https://acme.io" in html
+    assert "{{" not in html  # every placeholder filled
+
+
+def test_model_text_cannot_inject_html(monkeypatch):
+    _mail_env(monkeypatch)
+    body = 'Hello <script>alert(1)</script> <a href="http://evil">click</a>'
+    html = _part(
+        mailer.build_message({"id": "abc", "subject": "<b>x</b>", "body": body}, "to@c.io"), "html"
+    )
+    assert "<script>" not in html and 'href="http://evil"' not in html and "&lt;script&gt;" in html
+
+
+def test_custom_template_file(monkeypatch, tmp_path):
+    _mail_env(monkeypatch)
+    t = tmp_path / "t.html"
+    t.write_text("<p>{{company_name}}</p>{{body}}<a href='{{unsubscribe_url}}'>u</a>")
+    monkeypatch.setenv("EMAIL_TEMPLATE", str(t))
+    html = _part(
+        mailer.build_message({"id": "abc", "subject": "S", "body": "Hi"}, "to@c.io"), "html"
+    )
+    assert html.startswith("<p>Acme Eng</p>") and "<p" in html and "u</a>" in html
