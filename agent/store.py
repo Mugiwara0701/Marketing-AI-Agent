@@ -117,7 +117,7 @@ async def ensure_followup_step() -> None:
 
 
 async def followup_candidates(delay_days: int, limit: int) -> list:
-    """Intros sent at least `delay_days` ago with no open, no reply, no bounce and no follow-up yet."""
+    """Intros sent at least `delay_days` ago with no reply, no bounce and no follow-up yet (Gmail has no open data)."""
     cid = await campaign_id()
     return await db.fetch(
         """select e.id, e.contact_id, e.subject, e.body, e.message_id, c.name, c.role,
@@ -125,7 +125,7 @@ async def followup_candidates(delay_days: int, limit: int) -> list:
              from emails e join contacts c on c.id=e.contact_id join companies co on co.id=c.company_id
             where e.campaign_id=$1 and e.step=1 and e.status='sent'
               and e.sent_at < now() - make_interval(days => $2)
-              and e.opened_at is null and e.bounced_at is null
+              and e.bounced_at is null
               and c.email is not null and not is_suppressed(c.email)
               and co.status not in ('suppressed','closed','rejected')
               and not exists (select 1 from replies r where r.contact_id=e.contact_id)

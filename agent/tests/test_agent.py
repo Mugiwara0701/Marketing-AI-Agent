@@ -75,18 +75,16 @@ def test_message_has_footer_and_unsubscribe_headers(monkeypatch):
     assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
 
-def test_resend_payload_carries_unsubscribe_and_threading_headers(monkeypatch):
+def test_message_carries_unsubscribe_reply_to_and_threading_headers(monkeypatch):
     for k, v in {"UNSUBSCRIBE_BASE_URL": "https://x/u", "UNSUBSCRIBE_SECRET": "s", "MAIL_FROM": "a@b.io",
                  "COMPANY_NAME": "Acme Eng", "COMPANY_ADDRESS": "1 Road", "REPLY_TO": "r@in.b.io"}.items():  # fmt: skip
         monkeypatch.setenv(k, v)
     row = {"id": "abc", "subject": "Re: Hi", "body": "Hello", "in_reply_to": "<m1@x>"}
-    payload = mailer.resend_payload(mailer.build_message(row, "to@c.io"), "to@c.io")
-    assert payload["to"] == ["to@c.io"] and payload["reply_to"] == "r@in.b.io"
-    assert "Unsubscribe:" in payload["text"]
-    h = payload["headers"]
-    assert h["In-Reply-To"] == "<m1@x>" and h["References"] == "<m1@x>"
-    assert h["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click" and "Message-ID" in h
-    assert "From" not in h and "Subject" not in h
+    msg = mailer.build_message(row, "to@c.io")
+    assert msg["To"] == "to@c.io" and msg["Reply-To"] == "r@in.b.io" and msg["From"] == "a@b.io"
+    assert "Unsubscribe:" in msg.get_content()
+    assert msg["In-Reply-To"] == "<m1@x>" and msg["References"] == "<m1@x>"
+    assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click" and msg["Message-ID"]
 
 
 def test_blog_is_skipped_when_today_exists(monkeypatch):
@@ -521,7 +519,9 @@ def test_test_recipient_accepts_several_addresses(monkeypatch):
     monkeypatch.setenv("COMPANY_NAME", "Co")
     monkeypatch.setenv("COMPANY_ADDRESS", "addr")
     to = mailer.test_recipient() or ""
-    payload = mailer.resend_payload(
-        mailer.build_message({"id": "1", "subject": "S", "body": "B"}, to), to
-    )
-    assert payload["to"] == ["a@x.io", "b@y.io", "c@z.io"]
+    # the Gmail transport sends one message per address of the list
+    msgs = [
+        mailer.build_message({"id": "1", "subject": "S", "body": "B"}, a.strip())
+        for a in to.split(",")
+    ]
+    assert [m["To"] for m in msgs] == ["a@x.io", "b@y.io", "c@z.io"]

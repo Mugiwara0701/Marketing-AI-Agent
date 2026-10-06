@@ -49,7 +49,7 @@ def chunks(text: str, size: int = _THREAD_CHUNK) -> list[str]:
 def email_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
     follow = row.get("step", 1) > 1
     head = (
-        f"*Follow-up: {esc(row['company'])}*  ({esc(row['domain'])})  _no open or reply yet_"
+        f"*Follow-up: {esc(row['company'])}*  ({esc(row['domain'])})  _no reply yet_"
         if follow
         else f"*New lead: {esc(row['company'])}*  ({esc(row['domain'])})"
     )

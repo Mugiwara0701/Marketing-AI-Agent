@@ -5,7 +5,8 @@ send_approved(); there is no other caller of a transport.
               intro, whose lead is APPROVED (repository.claim_sendable: the gate is part of the query)
     re-check  sendable_problem() is asked again right before sending (defence in depth)
     clear     only then is a Cleared object made; a transport refuses anything that is not one
-    send      Resend (real) or the outbox folder (dry-run, nothing leaves the machine)
+    send      Gmail API as the logged-in account (real; follow-ups and replies stay in the original Gmail thread)
+              or the outbox folder (dry-run, nothing leaves the machine)
 
 Unapproved, rejected, unknown, suppressed or (in dev) off-allowlist addresses are never sent.
 """
@@ -16,7 +17,7 @@ from email.utils import make_msgid
 from pathlib import Path
 from typing import Protocol
 
-from agentkit import resend
+from agentkit import gmail
 from agentkit.config import env
 from agentkit.log import get_logger
 
@@ -39,6 +40,9 @@ class Cleared:
     to: str
     subject: str
     token: object = field(repr=False, compare=False)
+    thread_id: str | None = (
+        None  # Gmail conversation of the mail this one answers (follow-ups, replies)
+    )
 
     def __post_init__(self) -> None:
         if self.token is not _GATE:
@@ -47,12 +51,17 @@ class Cleared:
             )
 
 
+@dataclass(frozen=True)
+class Sent:
+    message_id: str  # RFC 5322 Message-ID (In-Reply-To / References of later mail)
+    provider_id: str  # Gmail API message id ("dry-run" for the outbox)
+    thread_id: str | None = None  # Gmail conversation id
+
+
 class Transport(Protocol):
     name: str
 
-    async def send(self, item: Cleared) -> tuple[str, str]:
-        """(Message-ID, provider id)."""
-        ...
+    async def send(self, item: Cleared) -> Sent: ...
 
 
 def _check(item: object) -> Cleared:
@@ -61,35 +70,35 @@ def _check(item: object) -> Cleared:
     return item
 
 
-class ResendTransport:
-    name = "resend"
+class GmailTransport:
+    """Sends as the Gmail account that logged in once (`python -m agent gmail-check`, token.json). MAIL_FROM should be
+    that address (or one of its verified aliases)."""
 
-    async def send(self, item: Cleared) -> tuple[str, str]:
+    name = "gmail"
+
+    async def send(self, item: Cleared) -> Sent:
         c = _check(item)
         if not mailer.sending_enabled():
             raise NotApprovedError(
                 "email sending is disabled (EMAIL_SENDING_ENABLED is not true, or locked)"
             )
-        row = {
-            "id": c.email.email_id,
-            "subject": c.subject,
-            "body": c.email.body,
-            "in_reply_to": c.email.in_reply_to,
-        }
-        first: tuple[str, str] | None = None
+        row = {"id": c.email.email_id, "subject": c.subject, "body": c.email.body,
+               "in_reply_to": c.email.in_reply_to}  # fmt: skip
+        service = await asyncio.to_thread(gmail.get_service)  # GmailAuthError: nothing can be sent
+        first: Sent | None = None
         errors: list[str] = []
-        for to in (
-            a.strip() for a in c.to.split(",") if a.strip()
-        ):  # Resend rejects a request if one address fails
+        for to in (a.strip() for a in c.to.split(",") if a.strip()):
             msg = mailer.build_message(row, to)
             try:
-                pid = await resend.send_email(
-                    mailer.resend_payload(msg, to), f"{c.email.email_id}:{to}"
-                )
-            except Exception as exc:
+                got = await asyncio.to_thread(gmail.send_message, service, msg, c.thread_id)
+            except gmail.GmailAuthError:
+                raise
+            except Exception as exc:  # error type only: never log addresses or bodies
                 errors.append(f"{type(exc).__name__}: {str(exc)[:120]}")
                 continue
-            first = first or (str(msg["Message-ID"]), pid)
+            first = first or Sent(
+                got["message_id"], got["gmail_message_id"], got["gmail_thread_id"]
+            )
         if first is None:
             raise RuntimeError("; ".join(errors) or "no recipient")
         return first
@@ -103,7 +112,7 @@ class OutboxTransport:
     def __init__(self, out_dir: Path) -> None:
         self.dir = out_dir / "outbox"
 
-    async def send(self, item: Cleared) -> tuple[str, str]:
+    async def send(self, item: Cleared) -> Sent:
         c = _check(item)
         self.dir.mkdir(parents=True, exist_ok=True)
         msg_id = make_msgid(domain="dry-run.invalid")
@@ -111,7 +120,7 @@ class OutboxTransport:
             f"DRY RUN - NOT SENT\nTo: {c.to}\nSubject: {c.subject}\nMessage-ID: {msg_id}\n\n{c.email.body}\n",
             encoding="utf-8",
         )
-        return msg_id, "dry-run"
+        return Sent(msg_id, "dry-run", c.thread_id)
 
 
 def make_transport(dry_run: bool, out_dir: Path) -> Transport | None:
@@ -119,7 +128,7 @@ def make_transport(dry_run: bool, out_dir: Path) -> Transport | None:
     if dry_run:
         return OutboxTransport(out_dir)
     if mailer.sending_enabled():
-        return ResendTransport()
+        return GmailTransport()
     return None
 
 
@@ -162,12 +171,23 @@ async def send_approved(
                 await repo.release_claim(rest.email_id)
             break
         subject = f"[TEST for {email.to}] {email.subject}" if override else email.subject
+        thread = await repo.thread_id_for(email.email_id)
         try:
-            message_id, provider_id = await transport.send(
-                Cleared(email=email, to=override or email.to, subject=subject, token=_GATE)
-            )
+            sent = await transport.send(
+                Cleared(email=email, to=override or email.to, subject=subject, token=_GATE,
+                        thread_id=thread)
+            )  # fmt: skip
         except NotApprovedError:
             raise
+        except gmail.GmailAuthError as exc:
+            # Not this email's fault: it and the rest go back to the queue untouched (no attempt used).
+            stats["failed"] += 1
+            log.warning(
+                "Gmail login problem, nothing more sent", extra={"ctx": {"error": str(exc)[:200]}}
+            )
+            for rest in claimed[n:]:
+                await repo.release_claim(rest.email_id)
+            break
         except Exception as exc:
             final = email.attempts + 1 >= MAX_ATTEMPTS
             await repo.mark_send_failed(email.email_id, f"{type(exc).__name__}: {exc}", final=final)
@@ -176,7 +196,9 @@ async def send_approved(
                 "Send failed", extra={"ctx": {"email_id": email.email_id, "final": final}}
             )
             continue
-        await repo.mark_sent(email.email_id, message_id, provider_id, mailbox)
+        await repo.mark_sent(
+            email.email_id, sent.message_id, sent.provider_id, mailbox, sent.thread_id
+        )
         stats["sent"] += 1
         log.info("Email sent", extra={"ctx": {"email_id": email.email_id, "transport": transport.name,
                                               "test_redirect": bool(override)}})  # fmt: skip

@@ -356,11 +356,24 @@ class PostgresRepository:
             email_id,
         )
 
-    async def mark_sent(self, email_id, message_id, provider_id, mailbox) -> None:
+    async def thread_id_for(self, email_id: str) -> str | None:
+        """The Gmail conversation this email continues: the reply it answers, else the mail its In-Reply-To names."""
+        row = await db.fetchrow(
+            """select coalesce(
+                 (select r.gmail_thread_id from replies r where r.id = e.reply_id),
+                 (select o.gmail_thread_id from emails o where o.message_id = e.in_reply_to
+                     and o.gmail_thread_id is not null limit 1)) as t
+                 from emails e where e.id = $1::uuid""",
+            email_id,
+        )
+        return row["t"] if row else None
+
+    async def mark_sent(self, email_id, message_id, provider_id, mailbox, thread_id=None) -> None:
         await db.execute(
             """update emails set status='sent', sent_at=now(), message_id=$2, provider_id=$3, mailbox=$4,
-                   updated_at=now() where id=$1::uuid and status='sending'""",
-            email_id, message_id, provider_id, mailbox,
+                   gmail_message_id=nullif($3, 'dry-run'), gmail_thread_id=$5, updated_at=now()
+                where id=$1::uuid and status='sending'""",
+            email_id, message_id, provider_id, mailbox, thread_id,
         )  # fmt: skip
         await db.execute(
             """update companies set lead_status='SENT', updated_at=now() where lead_status='APPROVED' and id =

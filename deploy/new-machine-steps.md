@@ -84,7 +84,8 @@ Fill in by hand (secrets: never commit or paste). Key values:
 - `LLM_MAX_CONCURRENT=1`
 - `MODEL_GUI_STEP=qwen3-vl:8b-instruct`
 - `EXECUTOR_URL=http://127.0.0.1:8765`, `EXECUTOR_TOKEN=` from `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
-- `DATABASE_URL`, `SUPABASE_*`, `SLACK_*`, `RESEND_API_KEY`, `MAIL_FROM` from your accounts
+- `DATABASE_URL`, `SUPABASE_*`, `SLACK_*`, `MAIL_FROM` (your Gmail address) from your accounts; `credentials.json`
+  and `token.json` for Gmail (`python -m agent gmail-check` on a machine with a browser, then `push-secrets`)
 - `TEST_RECIPIENT` set while developing; `EMAIL_SENDING_ENABLED=false` until ready
 
 ## 8. Search (SearXNG) and sandbox

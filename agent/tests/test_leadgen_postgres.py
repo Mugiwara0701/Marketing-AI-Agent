@@ -145,7 +145,7 @@ def test_full_flow_and_gate_in_postgres(pg, monkeypatch):
             async def send(self, item):
                 sender._check(item)
                 sent.append(item.email.email_id)
-                return "<m@x>", "pid"
+                return sender.Sent("<m@x>", "pid")
 
         os.environ.setdefault("MAIL_FROM", "from@x.io")
         stats = await sender.send_approved(pg, T(), gap_seconds=0)
@@ -207,5 +207,35 @@ def test_result_type_and_tier_are_stored_in_postgres(pg):
         await pg.save_lead(got)
         again = await pg.get_lead(lid)
         assert again and again.customer_tier == "potential"
+
+    _run(go())
+
+
+def test_gmail_ids_and_thread_continuation_in_postgres(pg):
+    async def go():
+        lid = await pg.insert_lead(
+            Lead(company_name="Thread Co", company_website="threadco.io"), source="t"
+        )
+        for s in (LeadStatus.QUALIFIED, LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED):
+            await pg.set_status(lid, s)
+        cid = await pg.save_contact(lid, Contact(email="a@threadco.io", source="u"))
+        eid = await pg.save_email_draft(lid, cid, "Hi", "Body", None)
+        await pg.decide_email(eid, True, "tester")
+        assert await pg.thread_id_for(eid) is None  # an intro starts a conversation
+        await db.execute("update emails set status='sending' where id=$1::uuid", eid)
+        await pg.mark_sent(eid, "<intro@x>", "gm1", "from@x.io", "th-1")
+        row = await db.fetchrow(
+            "select gmail_message_id, gmail_thread_id from emails where id=$1::uuid", eid
+        )
+        assert row and (row["gmail_message_id"], row["gmail_thread_id"]) == ("gm1", "th-1")
+        follow = await db.fetchrow(
+            """insert into emails (contact_id, campaign_id, step, status, subject, body, in_reply_to, idempotency_key)
+               select $1::uuid, campaign_id, 2, 'drafted', 'Re: Hi', 'B', '<intro@x>', 'f-1' from emails
+                where id=$2::uuid returning id""",
+            cid, eid,
+        )  # fmt: skip
+        assert (
+            follow and await pg.thread_id_for(str(follow["id"])) == "th-1"
+        )  # stays in the intro's thread
 
     _run(go())

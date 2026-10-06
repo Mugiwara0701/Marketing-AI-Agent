@@ -18,7 +18,7 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         "run",
         help="one bounded daily run (replies -> send approved -> follow-ups -> leads -> blog)",
     )
-    r.add_argument("--only", choices=["replies", "send", "followups", "leads", "blog"])
+    r.add_argument("--only", choices=["inbox", "replies", "send", "followups", "leads", "blog"])
     r.add_argument("--force", action="store_true", help="run even if today's run already succeeded")
     r.add_argument(
         "--redo-blog",
@@ -146,6 +146,11 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     )
     te.add_argument("--count", type=int, default=1, help="how many sample emails (1-3)")
     te.add_argument("--dry-run", action="store_true", help="dry-run store and simulated Slack")
+    sub.add_parser("inbox", help="poll Gmail now: store new replies, mark bounces")
+    sub.add_parser(
+        "gmail-check",
+        help="log in to Gmail once (opens a browser, saves token.json) and show the account",
+    )
     sub.add_parser("replies", help="classify new replies and queue approved answers now")
     sub.add_parser("followups", help="draft follow-ups for unopened, unanswered intros now")
     sub.add_parser("review", help="same as `leads review`")
@@ -166,7 +171,7 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     try:
         dry = bool(getattr(a, "dry_run", False))
         if (
-            a.cmd not in ("check", "desktop-check", "slack-setup", "embedded-list")
+            a.cmd not in ("check", "desktop-check", "slack-setup", "embedded-list", "gmail-check")
             and not dry
             and not os.environ.get("DATABASE_URL")
         ):
@@ -266,6 +271,14 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
             from . import test_email  # noqa: PLC0415
 
             return await test_email.run(a.count, dry_run=dry)
+        elif a.cmd == "inbox":
+            from . import inbox  # noqa: PLC0415
+
+            print(json.dumps(await inbox.poll()))  # noqa: T201
+        elif a.cmd == "gmail-check":
+            from . import gmail_check  # noqa: PLC0415
+
+            return gmail_check.main()
         elif a.cmd == "replies":
             from . import replies  # noqa: PLC0415
 

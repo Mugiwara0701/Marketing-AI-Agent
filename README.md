@@ -37,6 +37,9 @@ resumed by the next one: leads stuck half-way are moved on first, pages and quer
   sending, and a transport refuses anything the gate did not clear. Rejected, pending and unknown emails cannot be sent.
 - Decisions are made in Slack (`supabase/functions/slack-interact` calls the SQL function `decide_email()`) or with
   `python -m agent leads approve|reject <email id>`. Each draft can be decided exactly once.
+- Mail goes out through the **Gmail API** as the account that logged in once (`python -m agent gmail-check`
+  creates `token.json`; follow-ups and replies stay in the original Gmail thread). `agent inbox` polls Gmail for
+  replies and bounces. See `docs/aksaht_Docs/Gmail_Migration.md`.
 - `EMAIL_SENDING_ENABLED` must be `true` as well (default false). `APP_ENV=dev` limits recipients to
   `ALLOWED_RECIPIENT_DOMAINS`; `TEST_RECIPIENT` redirects all mail; suppression list, send cap, unsubscribe footer.
 - `--dry-run`: a local SQLite store, Slack messages written to `out/leadgen/approvals/`, approved mail written to
@@ -72,8 +75,8 @@ Every run writes a Markdown report (`out/leadgen/run-*.md`): each lead with its 
 | `config/leadgen.yaml` | Search vocabulary, thresholds, exclusions, page budgets (edit without touching code) |
 | `config/sources.yaml` | Job / project feed APIs (optional for leads) and blog research feeds |
 | `config/routing.yaml` | Task -> model alias |
-| `libs/agentkit` | Shared LLM client, DB access, prompts, checks, Slack, Resend |
-| `supabase/` | Migrations and Edge Functions (`slack-interact`, `resend-webhook`, `unsubscribe`) |
+| `libs/agentkit` | Shared LLM client, DB access, prompts, checks, Slack, Gmail |
+| `supabase/` | Migrations and Edge Functions (`slack-interact`, `unsubscribe`) |
 | `deploy/` | systemd timer + service, desktop set-up, remote control |
 | `eval/` | Eval sets and runners for prompts/models (`make llm-verify`) |
 

@@ -4,19 +4,17 @@
 | ---------------- | --------------------------------------------------------------------------------------------------------- |
 | `slack-interact` | Slack Request URL for the Approve/Reject buttons: verifies signature, writes the decision onto the email / blog post row (no Slack data is stored) |
 | `unsubscribe`    | RFC 8058 one-click unsubscribe + confirmation page; writes hashed address to `suppression_list`           |
-| `resend-webhook` | Resend webhook (Svix-signed): delivered / opened / bounced / complained update `emails`; inbound mail becomes a `replies` row (`received`). Event ids are deduped in `email_events` |
 
 Secrets (function secrets, never in the repo): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `SLACK_SIGNING_SECRET`, `SLACK_ALLOWED_USERS` (comma-separated Slack user ids allowed to approve, e.g.
-`U012ABC,U034DEF`), `UNSUBSCRIBE_SECRET` (same value as in the agent's `.env`), `RESEND_WEBHOOK_SECRET`
-(the webhook's signing secret, `whsec_...`) and `RESEND_API_KEY` (only to fetch inbound mail text).
+`U012ABC,U034DEF`), and `UNSUBSCRIBE_SECRET` (same value as in the agent's `.env`).
+The former `resend-webhook` function was removed: Gmail is polled by the agent (`agent/inbox.py`); delete the old
+function and its `RESEND_*` secrets from the Supabase project.
 
 ```bash
 supabase functions deploy slack-interact --no-verify-jwt     # Slack sends no JWT; the function checks its own signature
 supabase functions deploy unsubscribe --no-verify-jwt
-supabase functions deploy resend-webhook --no-verify-jwt     # Resend sends no JWT; the function checks the Svix signature
 supabase secrets set SLACK_SIGNING_SECRET=... SLACK_ALLOWED_USERS=U012ABC UNSUBSCRIBE_SECRET=...
-supabase secrets set RESEND_WEBHOOK_SECRET=whsec_... RESEND_API_KEY=re_...
 ```
 
 Not yet run against a live project.

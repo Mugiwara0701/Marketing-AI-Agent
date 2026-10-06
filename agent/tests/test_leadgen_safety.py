@@ -27,7 +27,7 @@ class RecordingTransport:
     async def send(self, item):
         sender._check(item)
         self.sent.append(item.email.email_id)
-        return "<msg@test>", "pid"
+        return sender.Sent("<msg@test>", "pid")
 
 
 def _lead_with_draft(repo: SqliteRepository, domain: str = "voltgrid.com") -> tuple[str, str]:
@@ -133,7 +133,7 @@ def test_a_transport_refuses_anything_not_cleared_by_the_gate():
     with pytest.raises(sender.NotApprovedError):
         asyncio.run(sender.OutboxTransport.__new__(sender.OutboxTransport).send(draft))  # type: ignore[arg-type]
     with pytest.raises(sender.NotApprovedError):
-        asyncio.run(sender.ResendTransport().send(draft))  # type: ignore[arg-type]
+        asyncio.run(sender.GmailTransport().send(draft))  # type: ignore[arg-type]
 
 
 def test_sending_is_off_unless_enabled(repo, monkeypatch, tmp_path):
@@ -148,14 +148,14 @@ def test_sending_is_off_unless_enabled(repo, monkeypatch, tmp_path):
     )  # dry-run never real
 
 
-def test_resend_transport_rechecks_the_switch(monkeypatch):
+def test_gmail_transport_rechecks_the_switch(monkeypatch):
     monkeypatch.delenv("EMAIL_SENDING_ENABLED", raising=False)
     draft = EmailDraft(
         email_id="e", lead_id="l", contact_id="c", to="a@b.io", subject="s", body="b"
     )
     item = sender.Cleared(email=draft, to="a@b.io", subject="s", token=sender._GATE)
     with pytest.raises(sender.NotApprovedError, match="disabled"):
-        asyncio.run(sender.ResendTransport().send(item))
+        asyncio.run(sender.GmailTransport().send(item))
 
 
 def test_dry_run_outbox_writes_and_marks_sent(repo, tmp_path):
@@ -211,7 +211,7 @@ def test_provider_failure_retries_then_fails_the_lead(repo):
 
     class Broken(RecordingTransport):
         async def send(self, item):
-            raise RuntimeError("resend 500")
+            raise RuntimeError("gmail 500")
 
     for _ in range(sender.MAX_ATTEMPTS):
         assert _send(repo, Broken())["failed"] == 1

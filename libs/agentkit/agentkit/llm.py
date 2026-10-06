@@ -107,6 +107,10 @@ async def _post(payload: dict, timeout: float) -> dict:
                     f"{r.status_code}: {r.text[:300]}", request=r.request, response=r
                 )
             return r.json()
+        except httpx.ReadTimeout as exc:
+            # The server took the request and is still working on it (a slow CPU model): asking again only
+            # queues the same work behind it. Give up now; the caller skips this item and goes on.
+            raise LLMError(f"llm too slow: no answer within {timeout:g}s") from exc
         except (httpx.TransportError, LLMError) as exc:
             last = exc
             await asyncio.sleep(2**attempt)

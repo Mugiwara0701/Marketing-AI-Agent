@@ -1,4 +1,4 @@
-"""One bounded daily run: replies -> send approved emails -> follow-ups -> leads -> blog. Then exit."""
+"""One bounded daily run: inbox -> replies -> send approved emails -> follow-ups -> leads -> blog. Then exit."""
 
 import asyncio
 import time
@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from agentkit import db
 from agentkit.log import get_logger
 
-from . import blog, followups, mailer, notify, replies, settings
+from . import blog, followups, inbox, mailer, notify, replies, settings
 from .leadgen import service as leadgen
 
 log = get_logger("agent.run")
@@ -52,7 +52,10 @@ async def daily_run(
     await db.start_run(SERVICE, "daily_run", run_id)
     out: dict = {}
     try:
-        # Replies first: it queues answers a person approved, so the send step below delivers them.
+        # Gmail is polled first so new replies and bounces are known before anything is sent.
+        if only in (None, "inbox"):
+            out["inbox"] = await _step("inbox", inbox.poll, 5 * 60)
+        # Replies next: it queues answers a person approved, so the send step below delivers them.
         if only in (None, "replies"):
             out["replies"] = await _step("replies", replies.run, 20 * 60)
         if only == "send" or (only is None and mailer.sending_enabled()):

@@ -7,7 +7,9 @@ def _no_real_services(monkeypatch):
     for name in (
         "DATABASE_URL",
         "LLM_BASE_URL",
-        "RESEND_API_KEY",
+        "GMAIL_CREDENTIALS_PATH",
+        "GMAIL_TOKEN_PATH",
+        "TEST_RECIPIENT",
         "REPLY_TO",
         "EMAIL_SENDING_ENABLED",
         "SLACK_BOT_TOKEN",

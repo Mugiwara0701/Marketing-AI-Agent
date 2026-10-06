@@ -58,7 +58,7 @@ do_sync() {
   need_remote
   rssh "mkdir -p ~/$REMOTE_DIR"
   rsync -az --delete --info=stats0,name1 -e "ssh ${SSH_OPTS[*]}" \
-    --exclude='.git/' --exclude='.venv/' --exclude='.env' --exclude='credentials.json' --exclude='credential.json' --exclude='.remote.env' \
+    --exclude='.git/' --exclude='.venv/' --exclude='.env' --exclude='credentials.json' --exclude='credential.json' --exclude='token.json' --exclude='.remote.env' \
     --exclude='.chrome-profile/' --exclude='.chrome-desktop-profile/' --exclude='out/' \
     --exclude='.cache/' --exclude='__pycache__/' --exclude='.*_cache/' --exclude='.agent-visited.json' \
     --exclude='node_modules/' --exclude='*.pyc' \
@@ -142,7 +142,7 @@ case "$cmd" in
   push-secrets | push-env)
     need_remote
     files=()
-    for f in .env credentials.json credential.json; do [ -f "$f" ] && files+=("$f"); done
+    for f in .env credentials.json credential.json token.json; do [ -f "$f" ] && files+=("$f"); done
     [ ${#files[@]} -gt 0 ] || { echo "no local .env or credentials.json" >&2; exit 1; }
     read -r -p "Copy ${files[*]} (secrets) to $REMOTE:$REMOTE_DIR/ ? [y/N] " yn
     [ "$yn" = y ] || exit 1

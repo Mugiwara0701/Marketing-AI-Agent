@@ -234,6 +234,8 @@ out/
 
 # credential files: never commit; send with `bash deploy/remote.sh push-secrets`
 credentials.json
+# Gmail OAuth refresh token: never commit (deploy/remote.sh push-secrets copies it)
+token.json
 credential.json
 *.pem
 *.key

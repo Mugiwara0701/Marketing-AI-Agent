@@ -430,7 +430,10 @@ class SqliteRepository:
             (_now(), email_id),
         )
 
-    async def mark_sent(self, email_id, message_id, provider_id, mailbox) -> None:
+    async def thread_id_for(self, email_id: str) -> str | None:
+        return None  # dry-run / tests: there is no Gmail conversation to continue
+
+    async def mark_sent(self, email_id, message_id, provider_id, mailbox, thread_id=None) -> None:
         now = _now()
         self.db.execute(
             "update emails set status='sent', sent_at=?, message_id=?, provider_id=?, mailbox=?, updated_at=? "

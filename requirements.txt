@@ -9,3 +9,7 @@ asyncpg>=0.29
 -e ./libs/agentkit
 playwright>=1.45    # optional: JavaScript-site fallback + fill-form. Then run: playwright install chromium
 openpyxl>=3.1      # embedded-list: writes the Excel workbook
+google-api-python-client>=2.100   # Gmail API (the mail provider)
+google-auth>=2.23
+google-auth-httplib2>=0.2
+google-auth-oauthlib>=1.1

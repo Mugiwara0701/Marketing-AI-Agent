@@ -1,4 +1,4 @@
-"""Outgoing mail: the on/off switch, the message (footer, unsubscribe link and headers) and Resend's payload.
+"""Outgoing mail: the on/off switch and the message (footer, unsubscribe link and headers).
 
 Nothing here sends. The one send path is agent.leadgen.sender, which only accepts emails a person approved.
 """
@@ -15,7 +15,7 @@ from agentkit.config import env
 def lock_sending() -> None:
     """Make sending impossible for the rest of this process, whatever the settings say. The desktop lead run
     calls this first: it only discovers leads and stores drafts."""
-    os.environ["EMAIL_SENDING_LOCKED"] = "1"  # also stops agentkit.resend.send_email
+    os.environ["EMAIL_SENDING_LOCKED"] = "1"
 
 
 def sending_enabled() -> bool:
@@ -61,22 +61,6 @@ def build_message(row, to_addr: str) -> EmailMessage:
         msg["Reply-To"] = reply_to
     msg.set_content(row["body"] + footer)
     return msg
-
-
-def resend_payload(msg: EmailMessage, to_addr: str) -> dict:
-    """Map the built message to Resend's JSON body; everything but the core fields goes in headers."""
-    core = {"from", "to", "subject", "date", "reply-to", "content-type", "mime-version",
-            "content-transfer-encoding"}  # fmt: skip
-    payload = {
-        "from": msg["From"],
-        "to": [a.strip() for a in to_addr.split(",")],
-        "subject": msg["Subject"],
-        "text": msg.get_content(),
-        "headers": {k: str(v) for k, v in msg.items() if k.lower() not in core},
-    }
-    if msg["Reply-To"]:
-        payload["reply_to"] = msg["Reply-To"]
-    return payload
 
 
 def allowed_in_env(addr: str) -> bool:
