@@ -45,6 +45,20 @@ resumed by the next one: leads stuck half-way are moved on first, pages and quer
 - `--dry-run`: a local SQLite store, Slack messages written to `out/leadgen/approvals/`, approved mail written to
   `out/leadgen/outbox/`. Nothing leaves the machine.
 
+## Running it: one service
+
+`python -m agent start` runs everything in one long-running process (installed on the office machine as the systemd
+user service `marketing-agent`):
+
+| Loop | When | What |
+|---|---|---|
+| sender | every 20 s | sends what a person approved in Slack (nothing while `EMAIL_SENDING_ENABLED` is not true) |
+| inbox | every 10 min | polls Gmail for replies and bounces; drafts answers for Slack approval |
+| daily | 09:30 (and at start if today's run has not happened) | follow-ups, lead discovery (drafts go to Slack), blog |
+
+From the laptop: `bash deploy/remote.sh install-service` once (retires the old daily timer), then `up` (sync +
+restart), `down`, `status`, `logs -f`. Emails are HTML (`config/email_template.html`) with a plain-text alternative.
+
 ## Using it
 
 ```bash

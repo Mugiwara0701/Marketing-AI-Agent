@@ -85,6 +85,10 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         action="store_true",
         help="verify and rebuild the workbook from progress files",
     )
+    sub.add_parser(
+        "start",
+        help="the whole agent as one long-running service: send approved emails, poll Gmail, daily leads + blog",
+    )
     sub.add_parser("migrate", help="apply supabase/migrations/*.sql to DATABASE_URL (idempotent)")
     sub.add_parser(
         "notify", help="post unreviewed drafts to Slack (done automatically after each run)"
@@ -182,6 +186,10 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
             return 2
         if a.cmd == "leads":
             return await _leads(a, dry)
+        if a.cmd == "start":
+            from . import supervisor  # noqa: PLC0415
+
+            return await supervisor.start()
         if a.cmd == "run":
             from . import run  # noqa: PLC0415
 

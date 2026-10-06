@@ -204,7 +204,8 @@ async def send_approved(
                                               "test_redirect": bool(override)}})  # fmt: skip
         if gap and n < len(claimed) - 1:
             await asyncio.sleep(gap)
-    log.info("Send done", extra={"ctx": stats})
+    if claimed:  # the long-running service calls this every few seconds: log only when there was something to do
+        log.info("Send done", extra={"ctx": stats})
     return stats
 
 

@@ -244,3 +244,6 @@ service-account*.json
 # lead pipeline: dry-run database, reports, outbox, screenshots (all under out/), browser profiles
 *.sqlite3
 .chrome-desktop-profile/
+
+# Supabase CLI cache (written by `supabase functions deploy`)
+supabase/.temp/
