@@ -121,7 +121,8 @@ exclude_companies:
   [nuro, zoox, waymo, cruise, aurora, mobileye, motional, tusimple, argo, tesla, rivian, lucid, uber,
    lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo, fairphone, arrow, avnet,
    mouser, digikey, farnell, canonical, redhat, "red hat", suse, windriver, "wind river", timesys,
-   montavista, linaro, mender, balena]
+   montavista, linaro, mender, balena,
+   "bosch rexroth"] # matches the site boschrexroth.com and the name "Bosch Rexroth"
 # Business decision: companies based in these countries are not pitched (checked on the site ending and on the
 # location read from the page).
 exclude_countries:

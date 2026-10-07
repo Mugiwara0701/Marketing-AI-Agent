@@ -98,6 +98,14 @@ def test_host_kinds_use_the_brand_whatever_the_country():
         ("Verifying you are human. This may take a few seconds.", "Just a moment...", "bot check"),
         ("Our systems have detected unusual traffic from your computer network.", "", "captcha"),
         ("Sign in to continue to view this page", "", "login wall"),
+        ("no available server", "boschrexroth.com/en/dc/", "server error"),
+        ("502 Bad Gateway\nnginx", "502 Bad Gateway", "server error"),
+        ("no healthy upstream", "", "server error"),
+        (
+            "We restore servers when no available server capacity is left. " * 60,
+            "Hosting blog",
+            None,
+        ),
         ("VoltGrid builds chargers. " * 50, "VoltGrid", None),
     ],
 )

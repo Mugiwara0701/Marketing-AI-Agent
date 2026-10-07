@@ -130,6 +130,8 @@ class Pipeline:
             for lead in batch:
                 if self.stop_reason():
                     return
+                if await self.drop_if_excluded(lead):
+                    continue
                 self.stats.add("resumed")
                 try:
                     await self.advance(lead)
@@ -138,6 +140,18 @@ class Pipeline:
                 except Exception:
                     self.stats.add("errors")
                     log.exception("Resuming lead failed", extra={"ctx": {"lead_id": lead.lead_id}})
+
+    async def drop_if_excluded(self, lead: Lead) -> bool:
+        """A company added to exclude_companies after it was stored: reject it instead of working on it again."""
+        why = intent.exclusion_reason("", lead.company_website or "", lead.company_name or "", [],
+                                      self.cfg.exclude_companies)  # fmt: skip
+        if not why or not lead.lead_id:
+            return False
+        await self.repo.set_status(lead.lead_id, LeadStatus.REJECTED, note=why)
+        lead.status = LeadStatus.REJECTED
+        self.stats.add("rejected")
+        log.info("Lead rejected", extra={"ctx": {"lead_id": lead.lead_id, "why": why}})
+        return True
 
     # --- discovery -----------------------------------------------------------------------------------------
 

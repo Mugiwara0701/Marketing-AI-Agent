@@ -2,10 +2,11 @@
 only the model and the email writer are scripted."""
 
 import asyncio
+import dataclasses
 import functools
 import re
 
-from agent.leadgen import approval, contacts, sender, strategy
+from agent.leadgen import approval, contacts, intent, sender, strategy
 from agent.leadgen.models import LeadStatus, Page, SearchResult
 from agent.leadgen.pipeline import Pipeline, Services
 from agent.leadgen.repository.sqlite import SqliteRepository
@@ -325,7 +326,6 @@ FOOGLE_CONTACT = (
 
 
 def test_company_free_mail_address_and_text_form_are_found(tmp_path):
-    from agent.leadgen import intent
 
     page = Page("https://foogletech.com/contact-us", "Contact Us", FOOGLE_CONTACT)
     got = contacts.candidates_from(page, "foogletech.com", None, "FoogleTech Software")
@@ -408,3 +408,58 @@ def test_stopping_the_run_closes_the_browser():
 
     asyncio.run(go())
     assert SlowBrowser.closed == 1
+
+
+class _ReadsBlocks(FakeBrowser):
+    """Like the real browsers: a page whose text is an error or block page is marked blocked."""
+
+    async def open_url(self, url):
+        page = await super().open_url(url)
+        if page and not page.blocked:
+            page.blocked = intent.block_reason(page.text, page.title)
+        return page
+
+
+def test_a_broken_bare_domain_is_retried_on_www(tmp_path):
+    web = {
+        "https://foogletech.com": "<html><body>no available server</body></html>",
+        "https://www.foogletech.com": html("FoogleTech", "Embedded Systems & IoT Development Company",
+                                           [("Contact Us", "https://foogletech.com/contact-us")]),
+        "https://foogletech.com/contact-us": html("Contact Us", FOOGLE_CONTACT),
+    }  # fmt: skip
+    found = asyncio.run(contacts.discover(_ReadsBlocks(web, []), "foogletech.com", cfg(), extract=fake_people,
+                                          company="FoogleTech Software"))  # fmt: skip
+    assert found.best and found.best.email == "foogletech@gmail.com"
+
+
+def test_a_site_whose_server_is_down_stops_at_once_so_the_attempt_counts(tmp_path):
+    web = {"https://foogletech.com": "<html><body>no available server</body></html>"}
+    browser = _ReadsBlocks(web, [])
+    found = asyncio.run(contacts.discover(browser, "foogletech.com", cfg(), extract=fake_people))
+    assert found.best is None and found.blocked == "server error"
+    assert browser.opened == [
+        "https://foogletech.com",
+        "https://www.foogletech.com",
+    ]  # no page-by-page search
+
+
+def test_a_stored_lead_of_a_company_excluded_later_is_dropped_not_reopened(tmp_path):
+    repo = SqliteRepository(":memory:")
+
+    async def broken_draft(lead, contact):
+        raise TimeoutError("model host down")
+
+    first = _pipeline(repo, FakeBrowser(WEB, RESULTS), ScriptedModel({EV_HOME: EV}),
+                      approval.SimulatedApprover(tmp_path))  # fmt: skip
+    first.svc.draft = broken_draft
+    _run(first)  # leaves VoltGrid half-way (CONTACT_FOUND), to be resumed
+
+    browser = FakeBrowser(WEB, [])
+    again = _pipeline(repo, browser, ScriptedModel({}), approval.SimulatedApprover(tmp_path))
+    added = [*again.cfg.exclude_companies, "voltgrid"]  # added to the list afterwards
+    again.cfg = dataclasses.replace(again.cfg, exclude_companies=added)
+    _run(again)
+    lead = asyncio.run(repo.find_lead(domain="voltgrid.com"))
+    assert lead and lead.status == LeadStatus.REJECTED
+    assert not any("voltgrid" in u for u in browser.opened)  # its site is not opened again
+    assert repo.db.execute("select count(*) from emails").fetchone()[0] == 0

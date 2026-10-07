@@ -238,6 +238,11 @@ _BLOCK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("access denied", re.compile(r"access denied|403 forbidden|you have been blocked|request blocked|error 1020", re.I)),
     ("rate limited", re.compile(r"too many requests|rate limit(ed)? exceeded|error 429", re.I)),
     ("login wall", re.compile(r"(sign in|log in|login) to (continue|view|see|read)|create an account to (view|see|continue)", re.I)),
+    # The site's own proxy or CDN answering instead of the site (its servers are down or unreachable).
+    ("server error", re.compile(
+        r"no available server|no healthy upstream|upstream connect error|502 bad gateway|"
+        r"503 service (temporarily )?unavailable|504 gateway time-?out|origin is unreachable|"
+        r"web server is (down|returning an unknown error)|error 52[0-9]\b", re.I)),
 )  # fmt: skip
 _CONSENT = re.compile(
     r"before you continue|we use cookies|accept all|cookie (settings|preferences|policy)|manage consent",
@@ -246,7 +251,7 @@ _CONSENT = re.compile(
 
 
 def block_reason(text: str, title: str = "") -> str | None:
-    """Why this page is not usable (CAPTCHA, bot check, denial, rate limit, login wall), or None.
+    """Why this page is not usable (CAPTCHA, bot check, denial, rate limit, login wall, server error), or None.
     Only the top of a page counts, so an article that merely mentions 'captcha' is not flagged."""
     head = f"{title}\n{text[:1500]}"
     short = len(text) < 2500

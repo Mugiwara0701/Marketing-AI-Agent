@@ -181,6 +181,16 @@ def competitor(home: Page, cfg: LeadgenConfig) -> str | None:
     return None
 
 
+async def _open_home(browser: Browser, domain: str) -> Page | None:
+    home = await browser.open_url(f"https://{domain}")
+    if home is not None and home.blocked == "server error" and not domain.startswith("www."):
+        # Some companies' bare domain is served by a broken front server while www works (boschrexroth.com).
+        www = await browser.open_url(f"https://www.{domain}")
+        if www is not None and not www.blocked:
+            return www
+    return home
+
+
 async def discover(
     browser: Browser,
     domain: str,
@@ -192,7 +202,7 @@ async def discover(
     if not identity.is_company_site(domain):
         found.blocked = f"{domain} is not a company website"
         return found
-    home = await browser.open_url(f"https://{domain}")
+    home = await _open_home(browser, domain)
     if home is None or home.blocked:
         found.blocked = home.blocked if home else "home page not reachable"
         log.info(
