@@ -239,3 +239,50 @@ def test_gmail_ids_and_thread_continuation_in_postgres(pg):
         )  # stays in the intro's thread
 
     _run(go())
+
+
+def test_pipeline_control_row_round_trip(pg):
+    """Migration 0011: the dashboard's request, the agent's report and heartbeat, offline on shutdown."""
+    import asyncpg
+
+    from agent import control
+
+    store = control.PostgresControl(host="office")
+
+    async def go():
+        fresh = await store.load()
+        asked = await control.request("running", "dashboard:akshat")
+        loaded = await store.load()
+        p = control.Pipeline(rest_minutes=30)
+        p.running, p.step, p.last = (
+            True,
+            "leads",
+            {"outcome": "stopped", "result": {"leads": {"searches": 3}}},
+        )
+        await store.report(p.status())
+        reported = await control.read()
+        again = await store.load()
+        await store.offline()
+        off = await control.read()
+        try:
+            await control.request("paused", "x")
+            bad = None
+        except asyncpg.PostgresError as exc:
+            bad = exc
+        return fresh, asked, loaded, reported, again, off, bad
+
+    fresh, asked, loaded, reported, again, off, bad = _run(go())
+    assert (
+        fresh["desired_state"] == "stopped" and fresh["last_pass"] is None
+    )  # a fresh install is stopped
+    assert asked["desired_state"] == "running" and asked["requested_by"] == "dashboard:akshat"
+    assert loaded["desired_state"] == "running"
+    assert reported["actual_state"] == "running" and reported["current_step"] == "leads"
+    assert reported["heartbeat_at"] is not None and reported["agent_host"] == "office"
+    assert again["last_pass"] == {"outcome": "stopped", "result": {"leads": {"searches": 3}}}
+    assert (
+        off["heartbeat_at"] is None
+        and off["actual_state"] == "stopped"
+        and off["desired_state"] == "running"
+    )
+    assert bad is not None and "running or stopped" in str(bad)

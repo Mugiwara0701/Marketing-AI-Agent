@@ -48,16 +48,22 @@ resumed by the next one: leads stuck half-way are moved on first, pages and quer
 ## Running it: one service
 
 `python -m agent start` runs everything in one long-running process (installed on the office machine as the systemd
-user service `marketing-agent`):
+user service `marketing-agent`). **Nothing runs on a schedule**: the dashboard starts and stops the pipeline through
+the REST API in `api/` (hosted separately; `POST /api/v1/pipeline/start`, `POST /api/v1/pipeline/stop`,
+`GET /api/v1/pipeline/status`; see [docs/pipeline-api.md](docs/pipeline-api.md)). Nothing calls the office machine:
+the API stores the request in the database, and the agent polls it every 5 s and reports back with a heartbeat, so it
+works behind any router. While it is running:
 
 | Loop | When | What |
 |---|---|---|
+| passes | one after another, 30 min apart | follow-ups, lead discovery (drafts go to Slack), blog (once a day). Stop cancels the pass in progress |
 | sender | every 20 s | sends what a person approved in Slack (nothing while `EMAIL_SENDING_ENABLED` is not true) |
 | inbox | every 10 min | polls Gmail for replies and bounces; drafts answers for Slack approval |
-| daily | 09:30 (and at start if today's run has not happened) | follow-ups, lead discovery (drafts go to Slack), blog |
 
-From the laptop: `bash deploy/remote.sh install-service` once (retires the old daily timer), then `up` (sync +
-restart), `down`, `status`, `logs -f`. Emails are HTML (`config/email_template.html`) with a plain-text alternative.
+While stopped, nothing is searched, sent or polled (Slack approvals are recorded and sent after the next start). The
+requested state lives in the database, so a restart or reboot resumes it. From the laptop: `bash deploy/remote.sh install-service` once, then `up`
+(sync + restart), `pipeline start|stop|status`, `down`, `status`, `logs -f`. Emails are HTML
+(`config/email_template.html`) with a plain-text alternative.
 
 ## Using it
 
@@ -81,6 +87,7 @@ Every run writes a Markdown report (`out/leadgen/run-*.md`): each lead with its 
 
 | Path | What it is |
 |---|---|
+| `api/` | Pipeline control REST API for the dashboard (separately hosted; `api/README.md`) |
 | `agent/leadgen/` | The lead pipeline (see its `__init__.py` for one line per module) |
 | `agent/tasks/` | LLM tasks with schemas: `assess` (page reading), `contact`, `proposal`, `search` (desktop SERP), replies, follow-ups, blog |
 | `agent/prompts/` | Prompt files (`lead_assess.txt`, `lead_extract_contact.txt`, `outreach_draft.txt`...) |

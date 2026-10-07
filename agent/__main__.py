@@ -89,6 +89,11 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         "start",
         help="the whole agent as one long-running service: send approved emails, poll Gmail, daily leads + blog",
     )
+    pc = sub.add_parser(
+        "pipeline",
+        help="what the dashboard buttons do: start / stop the pipeline (the service applies it within seconds)",
+    )
+    pc.add_argument("action", choices=["start", "stop", "status"], nargs="?", default="status")
     sub.add_parser("migrate", help="apply supabase/migrations/*.sql to DATABASE_URL (idempotent)")
     sub.add_parser(
         "notify", help="post unreviewed drafts to Slack (done automatically after each run)"
@@ -211,6 +216,13 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
                 else embedded_list.run(discover=not a.no_discover, limit=a.limit, fresh=a.fresh)
             )
             print(json.dumps(summary, indent=2))  # noqa: T201
+        elif a.cmd == "pipeline":
+            from . import control  # noqa: PLC0415
+
+            if a.action != "status":
+                state = "running" if a.action == "start" else "stopped"
+                await control.request(state, f"cli:{os.environ.get('USER', 'unknown')}")
+            print(json.dumps(await control.read(), indent=2, default=str))  # noqa: T201
         elif a.cmd == "migrate":
             from . import migrate  # noqa: PLC0415
 
