@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,18 +34,67 @@ _ONLY_A_URL = re.compile(r"(https?://|www\.)\S+|[\w.-]+\.[a-z]{2,}(/\S*)?", re.I
 _CHROME_BINARIES = ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser")
 
 
-# Text that shows a popup is covering the page, and its buttons in the order to try them (refuse before accept).
-_POPUP_HINTS = re.compile(
-    r"cookie|consent|your privacy|privacy (choices|preferences|settings)|"
-    r"(select|choose) your (country|region|language)|country and language|"
-    r"subscribe to our newsletter|sign up for our newsletter",
-    re.I,
+@dataclass(frozen=True)
+class PopupKind:
+    """One kind of popup: the text that shows it is covering the page, and its buttons in the order to try them."""
+
+    name: str
+    hints: re.Pattern[str]
+    buttons: tuple[str, ...]
+
+
+# Checked in this order. Region pickers keep the site we opened ("Stay on ..."), never switch to another one; ads and
+# sign-up boxes are refused, never accepted. A tiny "x" is not readable by OCR: the vision model closes those.
+# fmt: off
+_POPUPS = (
+    PopupKind(
+        "cookie",
+        re.compile(r"cookie|consent|your privacy|privacy (choices|preferences|settings)", re.I),
+        ("Decline All", "Reject All", "Reject non-essential", "Only necessary", "Necessary only", "Deny",
+         "Accept All", "Accept cookies", "Allow all", "I agree", "Agree", "Accept", "Save", "Confirm",
+         "Got it", "Close"),
+    ),
+    PopupKind(
+        "region",
+        re.compile(
+            r"(select|choose|change) your (country|region|language|location)|country and language|"
+            r"(country|region|language) selector|based on your (location|region|country)|"
+            r"you( a|')re (visiting|viewing|browsing|on) (our|the|a)\b.{0,40}\b(site|website|page)|"
+            r"(looks|seems) like you( a|')re (in|visiting|from|located)|"
+            r"(visit|go to|switch to|continue to) (our|the)\b.{0,30}\b(site|website)|"
+            r"stay on (this|the|our)\b.{0,30}\b(site|website|page)|"
+            r"(global|international|local|regional) (site|website)",
+            re.I,
+        ),
+        ("Stay on", "Stay here", "Remain on", "No, stay", "Continue on this", "Global site", "Global website",
+         "International site", "International website", "Not now", "No thanks", "Close"),
+    ),
+    PopupKind(
+        "ad",
+        re.compile(
+            r"subscribe to our newsletter|sign up for our newsletter|join our (newsletter|mailing list)|"
+            r"\b\d{1,2}\s?% off\b|limited[- ]time (offer|deal)|special offer|exclusive (offer|deal)|"
+            r"before you (go|leave)|don'?t miss (out|this)|"
+            r"\bno,? thanks\b|maybe later|i'?m not interested|no,? i don'?t want",
+            re.I,
+        ),
+        ("No thanks", "No, thanks", "Maybe later", "Not now", "I'm not interested", "No, I", "Skip", "Dismiss",
+         "Continue to site", "Continue to website", "Close"),
+    ),
 )
-_POPUP_BUTTONS = (
-    "Decline All", "Reject All", "Reject non-essential", "Only necessary", "Necessary only", "Deny",
-    "No thanks", "Not now", "Maybe later", "Accept All", "Accept cookies", "Allow all", "I agree",
-    "Agree", "Accept", "Save", "Confirm", "Continue", "Got it", "Close",
-)  # fmt: skip
+# fmt: on
+
+
+def popup_on_screen(words: list["Word"]) -> tuple[str, tuple[int, int] | None] | None:
+    """(kind, where its button is) for the first popup whose wording OCR sees, or None. The spot is None when the
+    wording is there but none of its buttons is (an "x" icon only, an unusual label): the vision model then looks."""
+    text = " ".join(w.text for w in words)
+    for kind in _POPUPS:
+        if kind.hints.search(text):
+            return kind.name, next(
+                (p for b in kind.buttons if (p := find_phrase(words, b, 110))), None
+            )
+    return None
 
 
 class DesktopError(ExecutorError):
@@ -101,6 +151,10 @@ def find_phrase(words: list[Word], phrase: str, min_y: int = 0) -> tuple[int, in
                 y1 = max(w.y + w.h for w in span)
                 return (x0 + x1) // 2, (y0 + y1) // 2
     return None
+
+
+def _near(a: tuple[int, int], b: tuple[int, int], px: int = 15) -> bool:
+    return abs(a[0] - b[0]) <= px and abs(a[1] - b[1]) <= px
 
 
 def preflight() -> list[tuple[bool, str, str, bool]]:
@@ -161,6 +215,9 @@ class Desktop:
         # OCR first (seconds), the vision model only when OCR cannot find the popup button or the link. On a CPU one
         # vision call takes minutes. DESKTOP_VISION_FIRST=1 asks the vision model first (fast only on a GPU).
         self.vision_first = (env("DESKTOP_VISION_FIRST", "0") or "0") == "1"
+        # DESKTOP_VISION_LOOK=1 also asks the vision model on pages where OCR sees no popup wording, for popups OCR
+        # cannot read (an ad that is one image with an "x"). One model call per page: worth it on a GPU only.
+        self.vision_look = (env("DESKTOP_VISION_LOOK", "0") or "0") == "1"
         self.vision_timeout = float(env("DESKTOP_VISION_TIMEOUT", "240") or 240)
         self._vision_fails = 0
 
@@ -203,6 +260,8 @@ class Desktop:
         self.profile.mkdir(parents=True, exist_ok=True)
         args = [binary, f"--user-data-dir={self.profile}", "--no-first-run", "--no-default-browser-check",
                 "--disable-features=Translate", "--hide-crash-restore-bubble", "--start-maximized",
+                # no system keyring: with auto-login it is locked and Chrome's "Unlock keyring" prompt takes the keys
+                "--password-store=basic",
                 "--new-window", "about:blank"]  # fmt: skip
         log.info("launching Chrome (visible, no automation port)")
         self._proc = subprocess.Popen(  # noqa: S603, ASYNC220 - fixed argv, no shell; returns at once
@@ -278,6 +337,8 @@ class Desktop:
         """One mouse/keyboard/screenshot action; the result carries a fresh base64 PNG in 'screenshot'."""
         if self._ex is None:
             raise DesktopError("desktop not started")
+        if body.get("action") in ("type", "key"):
+            await self._keys_to_chrome()
         try:
             return await asyncio.to_thread(self._ex.handle, body)
         except (ActionError, LimitError, ExecError) as exc:
@@ -285,6 +346,32 @@ class Desktop:
 
     async def reset(self) -> None:
         return None
+
+    async def _keys_to_chrome(self) -> None:
+        """Keystrokes go to the agent's Chrome only. Another window in front (an "Unlock keyring" prompt, a system
+        dialog): Chrome is brought back to the front once; if it cannot be, nothing is typed."""
+        wins = await self.chrome_windows()
+        if not wins:
+            raise DesktopError("Chrome has no window: nothing typed")
+        for attempt in range(2):
+            with contextlib.suppress(DesktopError):
+                if (await self._run(["xdotool", "getactivewindow"], 5)).decode().strip() in wins:
+                    return
+            if attempt == 0:
+                name = ""
+                with contextlib.suppress(DesktopError):
+                    active = (await self._run(["xdotool", "getactivewindow"], 5)).decode().strip()
+                    name = (
+                        (await self._run(["xdotool", "getwindowname", active], 5)).decode().strip()
+                    )
+                log.warning(
+                    "another window is in front of Chrome", extra={"ctx": {"window": name[:80]}}
+                )
+                with contextlib.suppress(DesktopError):
+                    await self._run(["xdotool", "windowactivate", "--sync", wins[-1]])
+        raise DesktopError(
+            "another window has the keyboard (e.g. an 'Unlock keyring' prompt): nothing typed"
+        )
 
     async def clipboard_after(self, *keys: str) -> str:
         for k in keys:
@@ -311,9 +398,9 @@ class Desktop:
 
     # --- browsing -------------------------------------------------------------------------------
 
-    async def navigate(self, target: str) -> None:
+    async def navigate(self, target: str, *, popups: bool = True) -> None:
         """Address bar use, like a person: mouse to the address bar, click, type, Return. `target` is a URL
-        or a search."""
+        or a search. `popups=False` leaves what covers the page open (popup-check shows it first)."""
         await self.ensure_chrome()
         if wins := await self.chrome_windows():
             with contextlib.suppress(DesktopError):
@@ -329,7 +416,8 @@ class Desktop:
         )  # drop the inline autocomplete so Return opens what was typed
         await self.act(action="key", key="Return")
         await self._loaded()
-        await self.dismiss_popups()
+        if popups:
+            await self.dismiss_popups()
 
     async def _click_address_bar(self) -> None:
         """Move the pointer to the middle of Chrome's address bar and click it (the window is maximised)."""
@@ -481,38 +569,50 @@ class Desktop:
         w, h = self._shot_size()
         return vision.to_pixels(target.x, target.y, w, h)
 
-    async def _popup_spot(self) -> tuple[bool, tuple[int, int] | None]:
+    async def _popup_spot(self, ask_model: bool = False) -> tuple[bool, tuple[int, int] | None]:
         """(is a popup covering the page, where to click to close it). OCR looks first: popup wording plus a known
-        button label. The vision model is asked when OCR sees popup wording but no button, or when OCR is missing or
+        button label. The vision model is asked when OCR sees popup wording but no button, when OCR's button did not
+        close it (`ask_model`), on every page with DESKTOP_VISION_LOOK=1, or when OCR is missing or
         DESKTOP_VISION_FIRST=1."""
         w, h = self._shot_size()
-        if shutil.which("tesseract") and not self.vision_first:
-            words = parse_tsv(await self._ocr("tsv"))
-            if not _POPUP_HINTS.search(" ".join(x.text for x in words)):
+        have_ocr = bool(shutil.which("tesseract")) and not self.vision_first
+        seen = None
+        if have_ocr:
+            seen = popup_on_screen(parse_tsv(await self._ocr("tsv")))
+            if seen is None and not self.vision_look:
                 return False, None
-            spot = next((p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110))), None)
-            if spot is not None:
-                return True, spot
+            if seen is not None and seen[1] is not None and not ask_model:
+                log.info("popup seen by OCR", extra={"ctx": {"kind": seen[0]}})
+                return True, seen[1]
         look = await self.see()
-        if look is None:
-            return (False, None) if not shutil.which("tesseract") else (True, None)
-        log.info("popup seen", extra={"ctx": {"popup": look.popup, "button": look.label}})
+        if look is None:  # model off or failing: OCR's answer (no button: Escape)
+            return seen is not None, seen[1] if seen else None
+        log.info(
+            "popup seen",
+            extra={"ctx": {"popup": look.popup, "kind": look.kind, "button": look.label}},
+        )
         return look.popup, vision.to_pixels(look.x, look.y, w, h) if look.popup else None
 
     async def dismiss_popups(self) -> int:
-        """Close what covers the page (cookie banner, country/language picker, newsletter box) by clicking its
-        button with the mouse, the way a person would. Up to 3 rounds."""
+        """Close what covers the page (cookie banner, stay-on-this-region box, ad or newsletter box, chat prompt) by
+        clicking its button with the mouse, the way a person would. A click that leaves the popup there is not
+        repeated: Escape, and the vision model chooses the next click. Up to 4 rounds."""
         if (env("DESKTOP_DISMISS_POPUPS", "1") or "1") == "0":
             return 0
         closed = 0
-        for _ in range(3):
-            popup, spot = await self._popup_spot()
+        last: tuple[int, int] | None = None
+        ask_model = False
+        for _ in range(4):
+            popup, spot = await self._popup_spot(ask_model)
             if not popup:
                 break
+            if spot is not None and last is not None and _near(spot, last):
+                spot, ask_model = None, True  # the same click again would not close it
             if spot is None:
                 await self.act(action="key", key="Escape")  # many modals close on Escape
             else:
                 await self.click_at(*spot)
+            last = spot
             closed += 1
             await asyncio.sleep(1.5)
         if closed:
@@ -567,6 +667,9 @@ class Desktop:
                 return True
             return False
 
+        await (
+            self.dismiss_popups()
+        )  # an ad or region box that opened after the page loaded would take the click
         for how in (by_vision, by_ocr) if self.vision_first else (by_ocr, by_vision):
             if await how():
                 self.last_look = None
@@ -610,3 +713,28 @@ class Desktop:
                 log.info("result opened", extra={"ctx": {"how": name}})
                 return now
         return ""
+
+
+async def popup_check(urls: list[str]) -> int:
+    """Manual check of popup handling (`python -m agent popup-check <url>...`): open each site in the visible Chrome,
+    screenshot it, close what covers it, screenshot again. Nothing is stored; the screenshots go to out/desktop/."""
+    desk = Desktop("popup-check-" + time.strftime("%Y%m%d-%H%M%S"))
+    desk.save_shots = True
+    await desk.start()
+    try:
+        for url in urls:
+            await desk.navigate(url, popups=False)
+            await desk.shot(f"{url} before")
+            rounds = await desk.dismiss_popups()
+            await desk.shot(f"{url} after")
+            look = desk.last_look
+            seen = (
+                f"vision: kind={look.kind or '-'} button={look.label or '-'}"
+                if look
+                else "vision: not asked"
+            )
+            print(f"{url}\n  rounds={rounds}  {seen}")  # noqa: T201
+    finally:
+        await desk.close_chrome()
+    print(f"screenshots: {desk.shot_dir}")  # noqa: T201
+    return 0

@@ -7,16 +7,34 @@ Coordinates: use a 0-1000 grid over the whole screenshot. (0,0) is the top-left 
 bottom-right, (500,500) the centre. x grows to the right, y grows downward.
 
 Report:
-- popup: true when something covers the page and must be closed first: a cookie / consent banner, a country or
-  language picker, a newsletter or sign-up box, a chat widget prompt. false for a normal page.
-- label / x / y: only when popup is true. The button that closes it, with its centre. Prefer a button that
-  refuses or dismisses ("Decline All", "Reject all", "No thanks", "Not now", "Close", "x"); if there is none,
-  the button that confirms ("Accept All", "Save", "Continue", "OK"). Never choose a button that buys, signs in
-  or subscribes.
+- popup: true when something covers or blocks part of the page and must be closed first. Signs: a box in front
+  of the page, the page behind it dimmed or greyed, a banner pinned over the content. false for a normal page.
+- kind: only when popup is true, one of:
+  "cookie"     cookie / consent / privacy banner
+  "region"     country, region or language box: "You are visiting our India site", "Stay on this site or go to
+               the global site?", "Select your country", a list of countries or flags
+  "ad"         promotion, offer, discount, "book a demo", download or webinar box, "before you go" box
+  "newsletter" sign-up / subscribe / enter-your-email box
+  "chat"       chat widget prompt that covers the page
+  "other"      anything else that covers the page
+- label / x / y: only when popup is true. The button that closes it, with the centre of that button:
+  cookie      prefer refusing ("Decline All", "Reject all", "Only necessary"); if there is none, the accept
+              button ("Accept All", "OK").
+  region      keep the site that is open now: "Stay on ...", "Stay here", "Continue on this site", "No, stay".
+              If you must pick from a list, pick Global / International / English. Never pick a button that
+              moves to another country's site or another language when a "stay" option exists.
+  ad, newsletter, chat, other
+              close it, never accept it: the close "x" or "×" (often small, in the top-right corner of the
+              box), or "No thanks", "Maybe later", "Not now", "Skip", "Close". Give the centre of the "x"
+              itself, not of the box. Never the offer's own button ("Download", "Get offer", "Book a demo",
+              "Subscribe", "Sign up", "Claim").
+  Never choose a button that buys, signs in, subscribes or enters data.
 - not_found: true for a 404 / "page not found" / error page or a blank page.
 - blocked: true for a CAPTCHA, "verify you are human", access denied or login wall.
 - summary: one short sentence about what the visible page is (company, product, kind of page).
 
 Reply with a single JSON object only, for example:
-{"popup": true, "label": "Decline All", "x": 540, "y": 470, "not_found": false, "blocked": false, "summary": "Philips support contact page behind a cookie banner"}
-{"popup": false, "label": "", "x": null, "y": null, "not_found": false, "blocked": false, "summary": "Murena home page: privacy-focused smartphones"}
+{"popup": true, "kind": "cookie", "label": "Decline All", "x": 540, "y": 470, "not_found": false, "blocked": false, "summary": "Philips support contact page behind a cookie banner"}
+{"popup": true, "kind": "region", "label": "Stay on Global site", "x": 410, "y": 560, "not_found": false, "blocked": false, "summary": "Acme Robotics home page with a box asking to switch to the India site"}
+{"popup": true, "kind": "ad", "label": "×", "x": 712, "y": 268, "not_found": false, "blocked": false, "summary": "Acme product page behind a 20% off offer box"}
+{"popup": false, "kind": "", "label": "", "x": null, "y": null, "not_found": false, "blocked": false, "summary": "Murena home page: privacy-focused smartphones"}

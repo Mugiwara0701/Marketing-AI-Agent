@@ -17,6 +17,7 @@ contact discovery, drafting, Slack approval and the sending gate are the same co
 | Judging a page | `agent/leadgen/intent.py` rules (shops, distributors, docs, job boards...), then `lead.assess`, code checks and the 0-100 score |
 | Contact | the company's home page, then the Contact / Team / About links clicked on screen (no URL is ever typed from a guess); an address must be literally on the company's own site |
 | Dedup / resume | canonical URL, company domain and normalised name, stored in the database; queries already run are skipped |
+| Popups | cookie banner (refused), region box ("Stay on ..." the site that was opened), ad / newsletter box (closed, never accepted): OCR finds the button; the vision model when OCR cannot (an "x" icon) or its click did not close it. Checked after each page load and before each click |
 | Blocked | CAPTCHA, Cloudflare check, access denied, rate limit, login wall: logged, the engine or site rests, the run goes on. Nothing tries to get past them |
 | Recovery | Chrome gone or failing: the window is closed and reopened |
 | Email | drafts go to Slack for approval; nothing is sent unless a person approved it and `EMAIL_SENDING_ENABLED=true` |
@@ -52,6 +53,8 @@ Search vocabulary, thresholds, exclusions, page budgets and the desktop search e
 | `DESKTOP_PAGE_WAIT` | 5 | seconds a page is given to load |
 | `DESKTOP_SAVE_SHOTS` | 1 | save screenshots under `out/desktop/` |
 | `DESKTOP_VISION` / `DESKTOP_VISION_FIRST` / `DESKTOP_VISION_TIMEOUT` | 1 / 0 / 240 | vision model as fallback for clicking |
+| `DESKTOP_VISION_LOOK` | 0 | 1: the vision model also checks pages where OCR sees no popup wording (image-only ads); one call per page, for a GPU |
+| `VISION_SHOT_WIDTH` | 768 | screenshot width sent to the vision model; 1024+ on a GPU helps it hit a small "x" |
 | `CHROME_BIN`, `DESKTOP_CHROME_PROFILE`, `DISPLAY` | auto | overrides |
 
 Models: `lead.search` (results list), `lead.assess`, `lead.extract_contact`, `outreach.draft` use the text model; `gui.step`

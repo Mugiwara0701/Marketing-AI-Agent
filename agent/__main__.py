@@ -134,6 +134,11 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     gf.add_argument(
         "--dry", action="store_true", help="only print the verified contact: no database, no Slack"
     )
+    pk = sub.add_parser(
+        "popup-check",
+        help="open sites in the desktop Chrome and close their popups; before/after screenshots, no database",
+    )
+    pk.add_argument("urls", nargs="+")
     sp = sub.add_parser(
         "gui-spike",
         help="run short fixed browser tasks with the vision model and report the success rate",
@@ -184,7 +189,15 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     try:
         dry = bool(getattr(a, "dry_run", False))
         if (
-            a.cmd not in ("check", "desktop-check", "slack-setup", "embedded-list", "gmail-check")
+            a.cmd
+            not in (
+                "check",
+                "desktop-check",
+                "popup-check",
+                "slack-setup",
+                "embedded-list",
+                "gmail-check",
+            )
             and not dry
             and not os.environ.get("DATABASE_URL")
         ):
@@ -296,6 +309,10 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
                     if report:
                         print(f"  {report}")  # noqa: T201
             return 0 if all(f.ok for _, f, _ in results) else 1
+        elif a.cmd == "popup-check":
+            from .gui import desktop  # noqa: PLC0415
+
+            return await desktop.popup_check(a.urls)
         elif a.cmd == "gui-spike":
             from .gui import spike  # noqa: PLC0415
 
