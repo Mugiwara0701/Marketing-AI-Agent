@@ -60,7 +60,14 @@ class DesktopBrowser:
         await self.desk.start()
 
     async def close(self) -> None:
-        return None  # the window stays open on the desktop for the person to see
+        """End of the lead search, a dashboard Stop or a service shutdown: close the agent's Chrome (the next pass
+        opens it again in seconds). DESKTOP_KEEP_CHROME=1 leaves it open, e.g. to look at a manual run."""
+        if (env("DESKTOP_KEEP_CHROME", "0") or "0") == "1":
+            return
+        try:
+            await self.desk.close_chrome()
+        except (DesktopError, OSError):
+            log.warning("could not close Chrome", exc_info=True)
 
     async def _read(self, label: str) -> Page:
         desk = self.desk

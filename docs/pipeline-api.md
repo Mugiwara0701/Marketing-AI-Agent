@@ -30,7 +30,7 @@ the dashboard's origin in the API's `PIPELINE_API_CORS_ORIGINS`.
 | Method | Path | What it does |
 |---|---|---|
 | `POST` | `/api/v1/pipeline/start` | Ask the agent to start. Already asked: nothing changes (`"changed": false`). |
-| `POST` | `/api/v1/pipeline/stop` | Ask the agent to stop. It cancels the pass in progress (for example a lead search). |
+| `POST` | `/api/v1/pipeline/stop` | Ask the agent to stop. It cancels the pass in progress (for example a lead search) and closes Chrome on the office machine. |
 | `GET` | `/api/v1/pipeline/status` | What the agent is doing. Poll every 5–10 s while the page is open. |
 | `GET` | `/health` | `{"status": "ok"}` when the API is up. No token. Says nothing about the office machine. |
 

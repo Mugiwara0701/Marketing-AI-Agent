@@ -226,17 +226,38 @@ class Desktop:
         """Chrome crashed or hangs: close what is left of it and open a fresh window."""
         self.recoveries += 1
         log.warning("recovering Chrome", extra={"ctx": {"count": self.recoveries}})
+        await self.close_chrome()
+        await asyncio.sleep(1)
+        await self.ensure_chrome()
+
+    async def close_chrome(self, wait: float = 10) -> bool:
+        """Close the agent's Chrome: only the processes using its own profile (--user-data-dir), so a person's
+        Chrome on the same desktop stays open. Asks politely first, kills what is left after `wait` seconds.
+        Returns True if an agent Chrome was running."""
+        mine = ["--", f"--user-data-dir={self.profile}"]
+
+        async def proc(cmd: list[str]) -> int:
+            try:
+                done = await asyncio.to_thread(subprocess.run, cmd, check=False, timeout=10,
+                                               capture_output=True)  # fmt: skip
+            except (OSError, subprocess.SubprocessError):
+                return 1
+            return done.returncode
+
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()
-        with contextlib.suppress(OSError):
-            await asyncio.to_thread(
-                subprocess.run,
-                ["pkill", "-f", "--", f"--user-data-dir={self.profile}"],
-                check=False,
-                timeout=10,
-            )
-        await asyncio.sleep(3)
-        await self.ensure_chrome()
+        running = await proc(["pgrep", "-f", *mine]) == 0
+        if running:
+            await proc(["pkill", "-f", *mine])
+            for _ in range(int(wait * 2)):
+                if await proc(["pgrep", "-f", *mine]) != 0:
+                    break
+                await asyncio.sleep(0.5)
+            else:
+                await proc(["pkill", "-9", "-f", *mine])
+            log.info("Chrome closed")
+        self._proc = None
+        return running
 
     async def chrome_windows(self) -> list[str]:
         try:

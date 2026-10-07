@@ -382,3 +382,29 @@ def test_a_stored_lead_whose_home_page_is_a_services_firm_is_rejected_not_contac
     assert out["rejected_competitor"] == 1 and lead and lead.status == LeadStatus.REJECTED
     assert b.opened == ["https://foogletech.com"]  # its contact page was never opened
     assert repo.db.execute("select count(*) from contacts").fetchone()[0] == 0
+
+
+def test_stopping_the_run_closes_the_browser():
+    """Dashboard Stop cancels the run mid-search: the browser (Chrome on the office desktop) still gets closed."""
+
+    class SlowBrowser(FakeBrowser):
+        closed = 0
+
+        async def search(self, query, limit):
+            await asyncio.sleep(60)
+            return []
+
+        async def close(self):
+            SlowBrowser.closed += 1
+
+    async def go():
+        p = _pipeline(
+            SqliteRepository(":memory:"), SlowBrowser(WEB, RESULTS), ScriptedModel({}), None
+        )
+        task = asyncio.create_task(p.run())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(go())
+    assert SlowBrowser.closed == 1

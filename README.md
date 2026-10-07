@@ -56,7 +56,7 @@ works behind any router. While it is running:
 
 | Loop | When | What |
 |---|---|---|
-| passes | one after another, 30 min apart | lead discovery first (drafts go to Slack), then follow-ups, blog (once a day). Stop cancels the pass in progress |
+| passes | one after another, 30 min apart | lead discovery first (drafts go to Slack), then follow-ups, blog (once a day). Chrome is closed after the lead search and on Stop, which cancels the pass in progress |
 | sender | every 20 s | sends what a person approved in Slack (nothing while `EMAIL_SENDING_ENABLED` is not true) |
 | inbox | every 10 min | polls Gmail for replies and bounces; drafts answers for Slack approval |
 

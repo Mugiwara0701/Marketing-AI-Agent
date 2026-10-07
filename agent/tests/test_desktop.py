@@ -283,3 +283,81 @@ def test_asking_for_the_address_gives_focus_back_to_the_page(monkeypatch):
     monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
     assert asyncio.run(desktop.Desktop("t").current_url()) == "https://acme.io/contact"
     assert keys == ["ctrl+l", "ctrl+c", "Escape"] and clicks == [(1277, 400)]
+
+
+class _Procs:
+    """Stands in for subprocess.run: pgrep says an agent Chrome runs for `alive` checks, then it is gone."""
+
+    def __init__(self, alive: int):
+        self.alive = alive
+        self.cmds: list[list[str]] = []
+
+    def __call__(self, cmd, **_k):
+        import subprocess
+
+        self.cmds.append(cmd)
+        code = 0
+        if cmd[0] == "pgrep":
+            code = 0 if self.alive > 0 else 1
+            self.alive -= 1
+        return subprocess.CompletedProcess(cmd, code, b"", b"")
+
+
+def test_stop_closes_only_the_agents_chrome(monkeypatch, tmp_path):
+    from agent.gui import desktop
+
+    monkeypatch.setenv("DESKTOP_CHROME_PROFILE", str(tmp_path / "agent-profile"))
+    procs = _Procs(alive=2)  # running, still running once after the polite close, then gone
+    monkeypatch.setattr(desktop.subprocess, "run", procs)
+    assert asyncio.run(desktop.Desktop("t").close_chrome(wait=1)) is True
+    mine = f"--user-data-dir={tmp_path / 'agent-profile'}"
+    assert ["pkill", "-f", "--", mine] in procs.cmds
+    assert not any("-9" in c for c in procs.cmds)  # it closed on its own: no force kill
+    assert all(
+        c[-1] == mine for c in procs.cmds
+    )  # never a plain "chrome": a person's Chrome stays open
+
+
+def test_a_chrome_that_will_not_close_is_killed(monkeypatch, tmp_path):
+    from agent.gui import desktop
+
+    monkeypatch.setenv("DESKTOP_CHROME_PROFILE", str(tmp_path / "p"))
+    procs = _Procs(alive=10**6)
+    monkeypatch.setattr(desktop.subprocess, "run", procs)
+    monkeypatch.setattr(desktop.asyncio, "sleep", _no_sleep)
+    assert asyncio.run(desktop.Desktop("t").close_chrome(wait=1)) is True
+    assert procs.cmds[-1][:3] == ["pkill", "-9", "-f"]
+
+
+def test_nothing_to_close_does_nothing(monkeypatch, tmp_path):
+    from agent.gui import desktop
+
+    monkeypatch.setenv("DESKTOP_CHROME_PROFILE", str(tmp_path / "p"))
+    procs = _Procs(alive=0)
+    monkeypatch.setattr(desktop.subprocess, "run", procs)
+    assert asyncio.run(desktop.Desktop("t").close_chrome()) is False
+    assert [c[0] for c in procs.cmds] == ["pgrep"]
+
+
+async def _no_sleep(_s):
+    return None
+
+
+def test_lead_browser_closes_chrome_unless_asked_to_keep_it(monkeypatch):
+    from agent.leadgen.browser.desktop import DesktopBrowser
+
+    class Desk:
+        closed = 0
+
+        async def close_chrome(self):
+            Desk.closed += 1
+            return True
+
+    from typing import Any, cast
+
+    b = DesktopBrowser(cast(Any, None), [], 0, desk=cast(Any, Desk()), lookup=cast(Any, object()))
+    asyncio.run(b.close())
+    assert Desk.closed == 1
+    monkeypatch.setenv("DESKTOP_KEEP_CHROME", "1")
+    asyncio.run(b.close())
+    assert Desk.closed == 1
