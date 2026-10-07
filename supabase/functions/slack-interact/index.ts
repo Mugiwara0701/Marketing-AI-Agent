@@ -90,7 +90,9 @@ Deno.serve(async (req) => {
 
   // Button value is "<kind>:<row id>". Nothing about Slack is stored: the decision is written onto the row.
   const [kind, refId] = String(act.value ?? "").split(":");
-  if (kind !== spec.kind || !/^[0-9a-f-]{36}$/.test(refId ?? "")) return new Response("bad value", { status: 400 });
+  if (kind !== spec.kind || !/^[0-9a-f-]{36}$/.test(refId ?? "")) {
+    return new Response("bad value", { status: 400 });
+  }
 
   if (spec.kind === "email") {
     const { data: result, error } = await db.rpc("decide_email", {
