@@ -28,7 +28,8 @@ Commands:
   sync               copy this repo to the office machine (no .env, .venv, Chrome profile, output)
   deps               sync, then install/update Python dependencies there
   install-service    one-time: install the long-running service (marketing-agent) and retire the daily timer
-  up                 sync, then (re)start the service: it sends approved emails, polls Gmail, runs leads + blog daily
+  up                 sync, then (re)start the service (the pipeline keeps its running/stopped state)
+  pipeline start|stop|status   what the dashboard buttons do (the service applies it within seconds)
   down               stop the service
   status             is the service running, and what did it do last
   logs [-f]          the service log (-f: follow it live)
@@ -112,6 +113,10 @@ case "$cmd" in
   up)
     do_sync
     rssh "systemctl --user restart marketing-agent.service && sleep 3 && systemctl --user --no-pager status marketing-agent.service | head -5"
+    ;;
+  pipeline)
+    need_remote
+    remote_run .venv/bin/python -m agent pipeline "$@"
     ;;
   down)
     need_remote

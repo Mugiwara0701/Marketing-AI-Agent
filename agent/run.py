@@ -23,6 +23,9 @@ async def _step(name: str, fn: Callable[[], Awaitable[dict]], seconds: float) ->
         async with asyncio.timeout(seconds):
             result = await fn()
         await db.finish_run(run_id, "succeeded", result)
+    except asyncio.CancelledError:  # stopped from the dashboard (or the service is stopping)
+        await db.finish_run(run_id, "failed", None, "stopped")
+        raise
     except Exception as exc:
         log.exception("step failed", extra={"ctx": {"step": name}})
         await db.finish_run(run_id, "failed", None, f"{type(exc).__name__}: {exc}"[:500])
@@ -31,8 +34,13 @@ async def _step(name: str, fn: Callable[[], Awaitable[dict]], seconds: float) ->
 
 
 async def daily_run(
-    *, force: bool = False, only: str | None = None, redo_blog: bool = False
+    *,
+    force: bool = False,
+    only: str | None = None,
+    redo_blog: bool = False,
+    on_step: Callable[[str], None] | None = None,
 ) -> dict:
+    """`on_step(name)` is called as each step begins (the dashboard shows it)."""
     cfg = settings.load()
     if not force and await db.fetchrow(
         "select 1 from agent_runs where service=$1 and job='daily_run' and started_at::date = current_date "
@@ -51,39 +59,44 @@ async def daily_run(
     run_id = str(uuid.uuid4())
     await db.start_run(SERVICE, "daily_run", run_id)
     out: dict = {}
+
+    async def step(name: str, fn: Callable[[], Awaitable[dict]], seconds: float) -> dict:
+        if on_step:
+            on_step(name)
+        return await _step(name, fn, seconds)
+
     try:
         # Gmail is polled first so new replies and bounces are known before anything is sent.
         if only in (None, "inbox"):
-            out["inbox"] = await _step("inbox", inbox.poll, 5 * 60)
+            out["inbox"] = await step("inbox", inbox.poll, 5 * 60)
         # Replies next: it queues answers a person approved, so the send step below delivers them.
         if only in (None, "replies"):
-            out["replies"] = await _step("replies", replies.run, 20 * 60)
+            out["replies"] = await step("replies", replies.run, 20 * 60)
         if only == "send" or (only is None and mailer.sending_enabled()):
-            out["send"] = await _step(
+            out["send"] = await step(
                 "send", leadgen.send, 15 * 60
             )  # approved emails only (the gate)
         if only in (None, "followups"):
             deadline = time.monotonic() + 10 * 60
-            out["followups"] = await _step("followups", lambda: followups.run(deadline), 12 * 60)
+            out["followups"] = await step("followups", lambda: followups.run(deadline), 12 * 60)
         if only in (None, "leads"):
             reserve = (
                 0 if only == "leads" else cfg.blog_reserve_minutes * 60
             )  # no blog follows: use it all
             budget = total - reserve - (time.monotonic() - start)
             deadline = time.monotonic() + budget
-            out["leads"] = await _step(
+            out["leads"] = await step(
                 "leads",
                 lambda: leadgen.run_leads(dry_run=False, deadline=deadline),
                 max(budget, 60) + 120,
             )
         if only in (None, "blog"):
-            out["blog"] = await _step(
-                "blog", blog.run, max(total - (time.monotonic() - start), 300)
-            )
+            out["blog"] = await step("blog", blog.run, max(total - (time.monotonic() - start), 300))
         failed = any("error" in v for v in out.values())
         await db.finish_run(run_id, "failed" if failed else "succeeded", {"processed": len(out)})
     except BaseException as exc:
-        await db.finish_run(run_id, "failed", None, type(exc).__name__)
+        stopped = isinstance(exc, asyncio.CancelledError)
+        await db.finish_run(run_id, "failed", None, "stopped" if stopped else type(exc).__name__)
         raise
     try:
         await notify.summary(out)

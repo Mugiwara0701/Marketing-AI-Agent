@@ -1,0 +1,5 @@
+# Docker builds (api/Dockerfile) only need api/. Never send secrets or local state to a build.
+*
+!api/
+api/tests/
+**/__pycache__

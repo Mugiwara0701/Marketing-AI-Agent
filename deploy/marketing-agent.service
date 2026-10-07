@@ -1,5 +1,5 @@
 [Unit]
-Description=Marketing agent: one long-running service (send approved emails, poll Gmail, daily leads + blog)
+Description=Marketing agent: one long-running service; the dashboard starts/stops the pipeline (polled from the database)
 After=network-online.target docker.service graphical-session.target
 Wants=network-online.target
 
@@ -13,7 +13,7 @@ Environment=BROWSER_BACKEND=desktop
 ExecStart=%h/Marketing-AI-Agent/deploy/start-agent.sh
 Restart=on-failure
 RestartSec=60
-# SIGTERM: the loops finish their current item, then the process exits.
+# SIGTERM: the loops finish their current item, the pass in progress is cancelled, then the process exits.
 TimeoutStopSec=120
 Nice=10
 

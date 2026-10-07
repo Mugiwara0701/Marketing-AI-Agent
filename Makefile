@@ -8,7 +8,7 @@ hooks:
 	pre-commit install --install-hooks
 
 test:
-	pytest libs/agentkit agent sandbox
+	pytest libs/agentkit agent sandbox api
 
 lint:
 	ruff check .
@@ -22,7 +22,7 @@ format:
 	ruff check --fix .
 
 typecheck:
-	mypy libs/agentkit/agentkit eval/runner agent
+	mypy libs/agentkit/agentkit eval/runner agent api
 
 # everything CI runs (deno, hadolint, actionlint and markdownlint run in CI only)
 check: lint typecheck test
