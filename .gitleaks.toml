@@ -8,4 +8,5 @@ description = "Templates and generated docs contain no real secrets"
 paths = [
   '''\.env\.example$''',
   '''^docs/''',
+  '''^eval/dashboardbackend/tests/''',  # deleted; a made-up JWT signing value for its tests, still in history
 ]

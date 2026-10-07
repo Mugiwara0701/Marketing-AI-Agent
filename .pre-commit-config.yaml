@@ -43,7 +43,7 @@ repos:
         args: [-c, .yamllint.yaml]
 
   - repo: https://github.com/sqlfluff/sqlfluff
-    rev: 3.4.2
+    rev: 4.4.0   # same as .github/workflows/lint.yml
     hooks:
       - id: sqlfluff-lint
         files: ^supabase/migrations/.*\.sql$

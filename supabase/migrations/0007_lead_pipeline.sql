@@ -11,7 +11,7 @@ alter table companies
   add column if not exists lead_score int not null default 0,
   add column if not exists score jsonb,
   add column if not exists evidence jsonb not null default '[]'::jsonb,
-  add column if not exists source_urls text [] not null default '{}',
+  add column if not exists source_urls text[] not null default '{}',
   add column if not exists qualification_notes jsonb not null default '[]'::jsonb,
   add column if not exists status_note text;
 
