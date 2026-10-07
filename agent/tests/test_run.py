@@ -43,3 +43,13 @@ def test_only_runs_a_single_step(monkeypatch):
     _fake_steps(monkeypatch, order)
     asyncio.run(run.daily_run(only="followups"))
     assert order == ["followups"]
+
+
+def test_dashboard_pass_starts_with_the_lead_search(monkeypatch):
+    """The service's loops poll Gmail, answer replies and send; its passes go straight to the lead search."""
+    order: list[str] = []
+    steps: list[str] = []
+    _fake_steps(monkeypatch, order)
+    monkeypatch.setenv("EMAIL_SENDING_ENABLED", "true")
+    out = asyncio.run(run.daily_run(force=True, leads_first=True, on_step=steps.append))
+    assert order == ["leads", "followups", "blog"] and steps == order and list(out) == order

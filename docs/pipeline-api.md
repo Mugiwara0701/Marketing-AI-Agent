@@ -2,12 +2,12 @@
 
 The agent runs on the office machine, behind the office router: nothing on the internet can call it. So the dashboard
 calls this **REST API** (folder `api/` in this repo, hosted on any server), which records the requested state in the
-database. The agent checks the database every 5 seconds over its own outbound connection, applies the request, and
+database. The agent checks the database every 2 seconds over its own outbound connection, applies the request, and
 writes back what it is doing plus a heartbeat.
 
 ```
 dashboard frontend ─▶ dashboard backend ──HTTPS──▶ pipeline API ──▶ Supabase Postgres ◀── office agent
-   (its own repo)       (its own repo)              (api/, hosted)    pipeline_control     (polls every 5 s,
+   (its own repo)       (its own repo)              (api/, hosted)    pipeline_control     (polls every 2 s,
                                                                                             reports + heartbeat)
 ```
 
@@ -34,7 +34,7 @@ the dashboard's origin in the API's `PIPELINE_API_CORS_ORIGINS`.
 | `GET` | `/api/v1/pipeline/status` | What the agent is doing. Poll every 5–10 s while the page is open. |
 | `GET` | `/health` | `{"status": "ok"}` when the API is up. No token. Says nothing about the office machine. |
 
-Start and Stop are **requests**: they return at once, and the agent applies them within about 5 seconds (stopping
+Start and Stop are **requests**: they return at once, and the agent applies them within about 2 seconds (stopping
 can take up to 30 s while the current step winds down). The response shows the request (`desired_state`) and what the
 agent was doing at that moment (`state`); poll `status` until `in_sync` is true.
 
@@ -77,7 +77,7 @@ If the office machine is off, the request is kept and applied when it comes back
 | `in_sync` | `true` once the agent has applied `desired_state`. |
 | `requested_by`, `requested_at` | Who pressed the button last, and when. |
 | `state_since` | When the agent last started or stopped (`null` when offline). |
-| `current_pass` | The pass in progress, or `null`. `step` is one of `inbox`, `replies`, `send`, `followups`, `leads`, `blog`. |
+| `current_pass` | The pass in progress, or `null`. `step` is `leads`, `followups` or `blog`, in that order. |
 | `next_pass_at` | While running, between two passes: when the next one starts. Otherwise `null`. |
 | `last_pass` | The last finished pass, or `null`. `outcome`: `succeeded`, `failed` or `stopped`. It has `result` (numbers per step; a step that failed has an `error` key) or `error`. |
 | `sending_enabled` | `false` means approved emails are not sent at all. |
@@ -110,9 +110,10 @@ Errors have the body `{"detail": "<message>"}`.
 
 ## What "running" means
 
-- Passes run one after another, 30 minutes apart. A pass is: Gmail inbox → replies → send approved → follow-ups →
-  lead discovery → blog (at most one blog post a day).
-- Emails approved in Slack go out within about 20 seconds; Gmail is polled every 10 minutes.
+- Passes run one after another, 30 minutes apart. A pass is: lead discovery (Chrome opens on the office desktop within
+  seconds of Start) → follow-ups → blog (at most one blog post a day).
+- Alongside the passes: emails approved in Slack go out within about 20 seconds, and Gmail is polled for replies and
+  bounces every 10 minutes (the first time right at Start).
 
 While stopped, nothing is searched, drafted, sent or polled. Approve/Reject in Slack still records the decision (Slack
 talks to Supabase, not to the office machine), and those emails go out after the next start.

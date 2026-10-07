@@ -23,7 +23,7 @@ def test_dashboard_start_reaches_the_agent_and_back(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", URL)
     migration = Path("supabase/migrations/0011_pipeline_control.sql").read_text()
 
-    async def slow_run(*, force, on_step):
+    async def slow_run(*, force, leads_first, on_step):
         on_step("leads")
         await asyncio.sleep(60)
 

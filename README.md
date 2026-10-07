@@ -51,12 +51,12 @@ resumed by the next one: leads stuck half-way are moved on first, pages and quer
 user service `marketing-agent`). **Nothing runs on a schedule**: the dashboard starts and stops the pipeline through
 the REST API in `api/` (hosted separately; `POST /api/v1/pipeline/start`, `POST /api/v1/pipeline/stop`,
 `GET /api/v1/pipeline/status`; see [docs/pipeline-api.md](docs/pipeline-api.md)). Nothing calls the office machine:
-the API stores the request in the database, and the agent polls it every 5 s and reports back with a heartbeat, so it
+the API stores the request in the database, and the agent polls it every 2 s and reports back with a heartbeat, so it
 works behind any router. While it is running:
 
 | Loop | When | What |
 |---|---|---|
-| passes | one after another, 30 min apart | follow-ups, lead discovery (drafts go to Slack), blog (once a day). Stop cancels the pass in progress |
+| passes | one after another, 30 min apart | lead discovery first (drafts go to Slack), then follow-ups, blog (once a day). Stop cancels the pass in progress |
 | sender | every 20 s | sends what a person approved in Slack (nothing while `EMAIL_SENDING_ENABLED` is not true) |
 | inbox | every 10 min | polls Gmail for replies and bounces; drafts answers for Slack approval |
 

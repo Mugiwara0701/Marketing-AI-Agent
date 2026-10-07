@@ -1,12 +1,12 @@
 """Start / stop the pipeline from the dashboard, with the office machine behind NAT: nothing ever calls in.
 
-    dashboard backend --HTTPS--> REST API (api/) --> pipeline_control row (Supabase) <--polls every 5 s-- this agent
+    dashboard backend --HTTPS--> REST API (api/) --> pipeline_control row (Supabase) <--polls every 2 s-- this agent
 
 The dashboard sets the desired state through the API (api/, docs/pipeline-api.md). `link()` reads it every
-PIPELINE_POLL_SECONDS (5), starts or stops the pipeline to match, and writes back what it is doing with a heartbeat,
+PIPELINE_POLL_SECONDS (2), starts or stops the pipeline to match, and writes back what it is doing with a heartbeat,
 so the dashboard can tell "stopped" from "the office machine is off".
 
-While running, passes (inbox -> replies -> send -> follow-ups -> lead discovery -> blog; agent.run.daily_run) run one
+While running, passes (lead discovery -> follow-ups -> blog; agent.run.daily_run with leads_first) run one
 after another with PIPELINE_REST_MINUTES (30) between them; the service's sender and inbox loops only work while
 running. Stop cancels the pass in progress. The desired state lives in the database, so a restart (or a reboot)
 picks up where the dashboard left it; a fresh install is stopped.
@@ -94,7 +94,7 @@ class Pipeline:
             self.next_at, self.step, self.pass_started = None, None, _now()
             outcome: dict[str, Any] = {"started_at": _iso(self.pass_started)}
             try:
-                result = await run.daily_run(force=True, on_step=self._on_step)
+                result = await run.daily_run(force=True, leads_first=True, on_step=self._on_step)
                 outcome |= {
                     "outcome": "failed" if _any_error(result) else "succeeded",
                     "result": result,
@@ -204,9 +204,7 @@ async def link(pipeline: Pipeline, store: ControlStore, stop: asyncio.Event, eve
             raise
         except Exception:
             failures += 1
-            if (
-                failures in (1, 10) or failures % 100 == 0
-            ):  # not one line every 5 s during an outage
+            if failures in (1, 10) or failures % 100 == 0:  # not one line per poll during an outage
                 log.exception("Pipeline control unreachable", extra={"ctx": {"in_a_row": failures}})
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=every)
@@ -225,7 +223,7 @@ async def shutdown(pipeline: Pipeline, store: ControlStore) -> None:
 def from_env() -> tuple[Pipeline, float]:
     return (
         Pipeline(float(env("PIPELINE_REST_MINUTES", "30") or 30)),
-        float(env("PIPELINE_POLL_SECONDS", "5") or 5),
+        float(env("PIPELINE_POLL_SECONDS", "2") or 2),
     )
 
 

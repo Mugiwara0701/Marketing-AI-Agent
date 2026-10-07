@@ -1,12 +1,12 @@
 """Pipeline control REST API: what the dashboard backend calls to start and stop the agent.
 
 The agent runs on the office machine, behind NAT; nothing can call it. This API (hosted anywhere: next to the
-dashboard backend, a VPS, Render...) writes the requested state into the database, and the agent polls it every 5 s,
+dashboard backend, a VPS, Render...) writes the requested state into the database, and the agent polls it every 2 s,
 applies it and reports back with a heartbeat (agent/control.py).
 
     GET  /health                    no token: the API is up (says nothing about the office machine)
     GET  /api/v1/pipeline/status    what the agent is doing (state, step, last pass, online)
-    POST /api/v1/pipeline/start     ask the agent to start (applied within ~5 s)
+    POST /api/v1/pipeline/start     ask the agent to start (applied within ~2 s)
     POST /api/v1/pipeline/stop      ask the agent to stop (the pass in progress is cancelled)
 
 Auth: `Authorization: Bearer <PIPELINE_API_TOKEN>`. Interactive docs: /docs (OpenAPI: /openapi.json).
@@ -140,7 +140,7 @@ def create_app(
         title="Marketing agent: pipeline control",
         version="1.0.0",
         description="Start / stop the lead + outreach pipeline running on the office machine. "
-        "Requests are applied by the agent within ~5 s; poll `status` until `in_sync`.",
+        "Requests are applied by the agent within ~2 s; poll `status` until `in_sync`.",
         lifespan=lifespan,
         docs_url="/docs" if docs else None,
         redoc_url=None,

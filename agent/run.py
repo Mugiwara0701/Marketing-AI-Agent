@@ -33,14 +33,22 @@ async def _step(name: str, fn: Callable[[], Awaitable[dict]], seconds: float) ->
     return result
 
 
+FOLLOWUPS_MINUTES = 10
+
+
 async def daily_run(
     *,
     force: bool = False,
     only: str | None = None,
     redo_blog: bool = False,
     on_step: Callable[[str], None] | None = None,
+    leads_first: bool = False,
 ) -> dict:
-    """`on_step(name)` is called as each step begins (the dashboard shows it)."""
+    """`on_step(name)` is called as each step begins (the dashboard shows it).
+
+    `leads_first`: the dashboard-started pass in the long-running service, whose own loops already poll Gmail, answer
+    replies and send approved emails. It runs only leads -> follow-ups -> blog, so the lead search (Chrome) starts
+    right away instead of after the mail steps."""
     cfg = settings.load()
     if not force and await db.fetchrow(
         "select 1 from agent_runs where service=$1 and job='daily_run' and started_at::date = current_date "
@@ -65,31 +73,42 @@ async def daily_run(
             on_step(name)
         return await _step(name, fn, seconds)
 
+    async def run_followups() -> None:
+        deadline = time.monotonic() + FOLLOWUPS_MINUTES * 60
+        out["followups"] = await step(
+            "followups", lambda: followups.run(deadline), (FOLLOWUPS_MINUTES + 2) * 60
+        )
+
+    async def run_leads(reserve: float) -> None:
+        budget = total - reserve - (time.monotonic() - start)
+        deadline = time.monotonic() + budget
+        out["leads"] = await step(
+            "leads",
+            lambda: leadgen.run_leads(dry_run=False, deadline=deadline),
+            max(budget, 60) + 120,
+        )
+
     try:
-        # Gmail is polled first so new replies and bounces are known before anything is sent.
-        if only in (None, "inbox"):
-            out["inbox"] = await step("inbox", inbox.poll, 5 * 60)
-        # Replies next: it queues answers a person approved, so the send step below delivers them.
-        if only in (None, "replies"):
-            out["replies"] = await step("replies", replies.run, 20 * 60)
-        if only == "send" or (only is None and mailer.sending_enabled()):
-            out["send"] = await step(
-                "send", leadgen.send, 15 * 60
-            )  # approved emails only (the gate)
-        if only in (None, "followups"):
-            deadline = time.monotonic() + 10 * 60
-            out["followups"] = await step("followups", lambda: followups.run(deadline), 12 * 60)
-        if only in (None, "leads"):
-            reserve = (
-                0 if only == "leads" else cfg.blog_reserve_minutes * 60
-            )  # no blog follows: use it all
-            budget = total - reserve - (time.monotonic() - start)
-            deadline = time.monotonic() + budget
-            out["leads"] = await step(
-                "leads",
-                lambda: leadgen.run_leads(dry_run=False, deadline=deadline),
-                max(budget, 60) + 120,
-            )
+        if leads_first:
+            # Time left for the follow-ups and the blog that come after the lead search.
+            await run_leads(cfg.blog_reserve_minutes * 60 + FOLLOWUPS_MINUTES * 60)
+            await run_followups()
+        else:
+            # Gmail is polled first so new replies and bounces are known before anything is sent.
+            if only in (None, "inbox"):
+                out["inbox"] = await step("inbox", inbox.poll, 5 * 60)
+            # Replies next: it queues answers a person approved, so the send step below delivers them.
+            if only in (None, "replies"):
+                out["replies"] = await step("replies", replies.run, 20 * 60)
+            if only == "send" or (only is None and mailer.sending_enabled()):
+                out["send"] = await step(
+                    "send", leadgen.send, 15 * 60
+                )  # approved emails only (the gate)
+            if only in (None, "followups"):
+                await run_followups()
+            if only in (None, "leads"):
+                # no blog follows a leads-only run: it uses the whole budget
+                await run_leads(0 if only == "leads" else cfg.blog_reserve_minutes * 60)
         if only in (None, "blog"):
             out["blog"] = await step("blog", blog.run, max(total - (time.monotonic() - start), 300))
         failed = any("error" in v for v in out.values())

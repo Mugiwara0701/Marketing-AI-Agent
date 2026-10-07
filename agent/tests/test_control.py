@@ -29,8 +29,9 @@ class FakeRow:
 
 
 def _slow_pass(monkeypatch, cancelled: list):
-    async def slow_run(*, force, on_step):
+    async def slow_run(*, force, leads_first, on_step):
         assert force  # the once-a-day guard does not apply to a dashboard start
+        assert leads_first  # Chrome starts right away; the service's loops do the mail steps
         on_step("leads")
         try:
             await asyncio.sleep(60)

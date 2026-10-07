@@ -1,11 +1,11 @@
 """`python -m agent start`: the whole agent as ONE long-running process (systemd: deploy/marketing-agent.service).
 
 Nothing runs on a schedule: the dashboard starts and stops the pipeline. Nothing calls this machine either: the agent
-polls the desired state from the database every PIPELINE_POLL_SECONDS (5) and reports back (agent/control.py).
+polls the desired state from the database every PIPELINE_POLL_SECONDS (2) and reports back (agent/control.py).
 While it is running:
 
-    passes   one after another, PIPELINE_REST_MINUTES (30) apart: follow-ups, lead discovery, blog
-             (agent.run.daily_run, with its own time budget). Stop cancels the pass in progress.
+    passes   one after another, PIPELINE_REST_MINUTES (30) apart: lead discovery first (Chrome starts within
+             seconds of Start), then follow-ups, blog (agent.run.daily_run, own time budget). Stop cancels the pass.
     sender   every SEND_EVERY_SECONDS (20): send what a person approved in Slack. Only approved emails (the gate in
              agent/leadgen/sender.py); nothing at all while EMAIL_SENDING_ENABLED is not true.
     inbox    every INBOX_EVERY_MINUTES (10): poll Gmail for replies and bounces, classify replies and draft answers
