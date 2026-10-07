@@ -15,9 +15,11 @@ picks up where the dashboard left it; a fresh install is stopped.
 import asyncio
 import contextlib
 import json
+import secrets
 import socket
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from agentkit import db
 from agentkit.config import env
@@ -236,3 +238,16 @@ async def request(state: str, by: str) -> dict:
 async def read() -> dict:
     row = await db.fetchrow("select * from pipeline_control where id = 1")
     return dict(row) if row else {}
+
+
+async def api_credentials(database_url: str) -> str:
+    """Give the pipeline_api role (migration 0012) a new random password and return the DATABASE_URL for the
+    hosted API: same host as `database_url`, that role instead of postgres. Running it again rotates the password."""
+    password = secrets.token_urlsafe(32)  # [A-Za-z0-9_-] only: safe inside the quoted literal below
+    await db.execute(f"alter role pipeline_api login password '{password}'")
+    u = urlsplit(database_url)
+    user = u.username or ""
+    # The Supabase pooler names the project after the role: postgres.<ref> -> pipeline_api.<ref>
+    api_user = "pipeline_api" + (user[user.index(".") :] if "." in user else "")
+    netloc = f"{api_user}:{password}@{u.hostname}" + (f":{u.port}" if u.port else "")
+    return urlunsplit((u.scheme, netloc, u.path, u.query, ""))

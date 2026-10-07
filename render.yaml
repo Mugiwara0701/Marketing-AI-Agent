@@ -1,0 +1,27 @@
+# Render Blueprint for the pipeline control API (api/). Render -> New -> Blueprint -> this repo.
+# Only the API is deployed here; the agent itself runs on the office machine. See api/README.md.
+services:
+  - type: web
+    name: marketing-agent-pipeline-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: .
+    plan: free  # sleeps after 15 min idle (first request then takes ~30-60 s); "starter" stays up
+    region: singapore  # closest to the Supabase project (ap-southeast-2)
+    healthCheckPath: /health
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - api/**
+        - render.yaml
+      ignoredPaths:
+        - api/tests/**
+    envVars:
+      - key: DATABASE_URL  # from `python -m agent api-credentials`: the limited pipeline_api login, pooler host
+        sync: false
+      - key: PIPELINE_API_TOKEN  # Render generates it; copy it to the dashboard backend
+        generateValue: true
+      - key: PIPELINE_OFFLINE_AFTER_SECONDS
+        value: "60"
+      - key: PIPELINE_API_CORS_ORIGINS  # only if a browser calls the API directly; empty = server-to-server
+        sync: false

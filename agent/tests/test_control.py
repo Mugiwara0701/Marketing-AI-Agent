@@ -168,3 +168,28 @@ def test_a_stopped_step_is_recorded_as_stopped_not_left_running(monkeypatch):
 
     asyncio.run(go())
     assert finished == [("failed", "stopped")]
+
+
+def test_api_credentials_url_keeps_the_pooler_and_swaps_the_user(monkeypatch):
+    executed = []
+
+    async def execute(sql, *a):
+        executed.append(sql)
+
+    monkeypatch.setattr(control.db, "execute", execute)
+    pooler = (
+        "postgresql://postgres.abcref:oldpw@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres"
+    )
+    url = asyncio.run(control.api_credentials(pooler))
+    user, _, rest = url.removeprefix("postgresql://").partition("@")
+    name, _, password = user.partition(":")
+    assert (
+        name == "pipeline_api.abcref"
+        and rest == "aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres"
+    )
+    assert len(password) >= 40 and "oldpw" not in url
+    assert executed == [f"alter role pipeline_api login password '{password}'"]
+    plain = asyncio.run(control.api_credentials("postgresql://postgres:pw@127.0.0.1:5432/postgres"))
+    assert plain.startswith("postgresql://pipeline_api:") and plain.endswith(
+        "@127.0.0.1:5432/postgres"
+    )
