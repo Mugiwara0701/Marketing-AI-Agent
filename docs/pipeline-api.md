@@ -17,7 +17,7 @@ Nothing runs on a schedule: the pipeline runs only between Start and Stop.
 
 | | |
 |---|---|
-| Base URL | where the API is hosted, e.g. `https://agent-api.example.com` (see `api/README.md`) |
+| Base URL | where the API is hosted, e.g. `https://marketing-agent-pipeline-api.onrender.com` (see `api/README.md`) |
 | Auth | header `Authorization: Bearer <PIPELINE_API_TOKEN>` on every `/api/v1/*` route |
 | Format | JSON. `start` / `stop` take an optional body `{"requested_by": "<dashboard user>"}` (max 100 chars) |
 | Interactive docs | `<base URL>/docs` (Swagger UI); machine-readable spec at `<base URL>/openapi.json` |
@@ -120,7 +120,7 @@ talks to Supabase, not to the office machine), and those emails go out after the
 ## Examples
 
 ```bash
-BASE=https://agent-api.example.com
+BASE=https://marketing-agent-pipeline-api.onrender.com
 TOKEN=...   # PIPELINE_API_TOKEN
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
      -d '{"requested_by": "akshat"}' $BASE/api/v1/pipeline/start

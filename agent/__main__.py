@@ -94,6 +94,10 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         help="what the dashboard buttons do: start / stop the pipeline (the service applies it within seconds)",
     )
     pc.add_argument("action", choices=["start", "stop", "status"], nargs="?", default="status")
+    sub.add_parser(
+        "api-credentials",
+        help="new password for the pipeline API's limited database login; prints its DATABASE_URL (for Render)",
+    )
     sub.add_parser("migrate", help="apply supabase/migrations/*.sql to DATABASE_URL (idempotent)")
     sub.add_parser(
         "notify", help="post unreviewed drafts to Slack (done automatically after each run)"
@@ -223,6 +227,15 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
                 state = "running" if a.action == "start" else "stopped"
                 await control.request(state, f"cli:{os.environ.get('USER', 'unknown')}")
             print(json.dumps(await control.read(), indent=2, default=str))  # noqa: T201
+        elif a.cmd == "api-credentials":
+            from . import control  # noqa: PLC0415
+
+            url = await control.api_credentials(os.environ["DATABASE_URL"])
+            if ".supabase.co" in url and "pooler" not in url:
+                print("warning: direct Supabase host (IPv6 only); Render needs the pooler URL")  # noqa: T201
+            what = "DATABASE_URL for the pipeline API (a Render secret; any earlier one stops working):"
+            print(what)  # noqa: T201
+            print(url)  # noqa: T201
         elif a.cmd == "migrate":
             from . import migrate  # noqa: PLC0415
 

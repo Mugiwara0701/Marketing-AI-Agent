@@ -76,3 +76,55 @@ def test_dashboard_start_reaches_the_agent_and_back(monkeypatch):
         and stopped["last_pass"]["outcome"] == "stopped"
     )
     assert offline["state"] == "offline" and offline["desired_state"] == "stopped"
+
+
+def test_the_api_login_can_only_read_the_row_and_request(monkeypatch):
+    """Migration 0012: the role the hosted API logs in with reads pipeline_control and calls request_pipeline(),
+    nothing else; Supabase's anon / authenticated roles cannot start or stop the pipeline."""
+    monkeypatch.setenv("DATABASE_URL", URL)
+    migrations = [
+        Path(f"supabase/migrations/{n}").read_text()
+        for n in ("0011_pipeline_control.sql", "0012_pipeline_api_role.sql")
+    ]
+
+    async def go():
+        admin = await asyncpg.connect(URL)
+        await admin.execute("""
+            drop table if exists pipeline_control cascade; drop table if exists secrets_demo;
+            drop owned by pipeline_api; drop role if exists pipeline_api;
+            do $$ begin create role anon nologin; exception when duplicate_object then null; end $$;
+            create table secrets_demo (x text); insert into secrets_demo values ('lead data');
+        """)
+        for sql in migrations:
+            await admin.execute(sql)
+        api_url = await control.api_credentials(URL)
+        await db.close_pool()
+        await admin.close()
+
+        api = await asyncpg.connect(api_url)
+        row = await api.fetchrow("select * from request_pipeline('running', 'dashboard:qa')")
+        seen = await api.fetchval("select desired_state from pipeline_control where id = 1")
+        refused = []
+        for sql in (
+            "select * from secrets_demo",
+            "update pipeline_control set desired_state = 'stopped'",
+            "delete from pipeline_control",
+        ):
+            try:
+                await api.execute(sql)
+            except asyncpg.InsufficientPrivilegeError:
+                refused.append(sql.split()[0])
+        await api.close()
+
+        admin = await asyncpg.connect(URL)
+        anon_can = await admin.fetchval(
+            "select has_function_privilege('anon', 'request_pipeline(text, text)', 'execute')"
+        )
+        await admin.close()
+        return api_url, row["desired_state"], seen, refused, anon_can
+
+    api_url, requested, seen, refused, anon_can = asyncio.run(go())
+    assert api_url.startswith("postgresql://pipeline_api:")
+    assert requested == "running" and seen == "running"
+    assert refused == ["select", "update", "delete"]
+    assert anon_can is False
