@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-SECRET = "test-secret-that-is-long-enough-for-hs256"  # noqa: S105
 client = TestClient(app)
 
 
