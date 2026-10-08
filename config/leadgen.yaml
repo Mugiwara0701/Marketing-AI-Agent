@@ -55,19 +55,8 @@ search:
     - hardware bring-up
     - firmware development
     - hardware integration
-    # --- peripheral / device integration ---
-    - sensor integration
-    - camera integration
-    - display integration
-    - touchscreen integration
-    - Bluetooth integration
-    - Wi-Fi integration
-    - USB integration
-    - CAN bus integration
-    - NFC integration
-    - RFID integration
-    - cellular integration
-    - GNSS integration
+    # Component technologies (RFID, NFC, CAN, GNSS, cameras, Wi-Fi...) are NOT capabilities here: the strategy only
+    # uses them as a modifier of a product ("RFID access control system"), from project_context technologies.
     # --- same work, other names ---
     - Android Open Source Project
     - Yocto Project

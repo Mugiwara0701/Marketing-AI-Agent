@@ -450,6 +450,17 @@ class Desktop:
             await self.act(action="scroll", direction="down", amount=amount)
             await asyncio.sleep(1.2)
 
+    async def scroll_to(self, where: str) -> None:
+        """Mouse wheel to the top ("top": the menu bar) or the bottom ("bottom": the footer) of the page, the way a
+        person looks for a Contact link. Needs no keyboard focus on the page."""
+        w, h = self._shot_size()
+        await self.glide(w // 2, h // 2)
+        direction, rounds = ("up", 3) if where == "top" else ("down", 8)
+        for _ in range(rounds):
+            await self.act(action="scroll", direction=direction, amount=25)
+            await asyncio.sleep(0.5)
+        await asyncio.sleep(0.8)
+
     def _shot_size(self) -> tuple[int, int]:
         cfg = self._ex.cfg if self._ex else None
         return (cfg.shot_w, cfg.shot_h) if cfg else (1280, 800)
@@ -473,14 +484,16 @@ class Desktop:
             text = await self.ocr_text() or text
         return text.strip()
 
-    async def current_url(self) -> str:
+    async def current_url(self, *, refocus: bool = True) -> str:
         """The address in Chrome's address bar. Leaves the keyboard focus back on the page, so that a following
-        Ctrl+A / Home / End acts on the page and not on the address bar."""
+        Ctrl+A / Home / End acts on the page and not on the address bar. `refocus=False` skips that (focus_page clicks
+        the scrollbar and so scrolls the page): for callers that use only the mouse wheel and clicks."""
         with contextlib.suppress(DesktopError):
             await self._run(["xclip", "-selection", "clipboard", "-i", "/dev/null"], 5)
         url = await self.clipboard_after("ctrl+l", "ctrl+c")
         await self.act(action="key", key="Escape")
-        await self.focus_page()
+        if refocus:
+            await self.focus_page()
         return url.strip()
 
     async def focus_page(self) -> None:
@@ -660,10 +673,19 @@ class Desktop:
         link texts."""
 
         async def by_ocr() -> bool:
+            # Reading the page selected all of it: with the keyboard focus on the page the selection is white text on
+            # blue and OCR misses the menu (it found only a floating "Contact" chat button). Focus in the address bar
+            # greys the selection. One OCR serves every label.
+            with contextlib.suppress(DesktopError):
+                await self.act(action="key", key="ctrl+l")
+            words = parse_tsv(await self._ocr("tsv"))
+            with contextlib.suppress(DesktopError):
+                await self.act(
+                    action="key", key="Escape"
+                )  # close the address bar's suggestion list over the page
             for label in labels:
-                words = parse_tsv(await self._ocr("tsv"))
                 if spot := find_phrase(words, label, 110):
-                    await self.click_at(*spot)
+                    await self.click_at(*spot)  # the click itself gives the page the focus
                     return True
             return False
 
