@@ -5,6 +5,7 @@ tasks:
   lead.extract_contact: dev
   lead.search: dev
   outreach.draft: dev
+  outreach.pitch: dev
   email.reply: dev
   email.followup: dev
   content.plan: dev

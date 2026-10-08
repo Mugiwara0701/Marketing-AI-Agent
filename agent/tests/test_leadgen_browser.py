@@ -254,12 +254,12 @@ def test_email_grounding_flags_invented_technology():
 def test_email_writer_flags_generic_drafts(monkeypatch):
     from agent.tasks import proposal
 
-    async def generic(ctx):
+    async def generic(ctx, company=""):
         return proposal.EmailDraft(
             subject="Engineering services", body="We offer Android services. " * 6
         ), []
 
-    monkeypatch.setattr(proposal, "draft_proposal", generic)
+    monkeypatch.setattr(proposal, "draft_pitch", generic)
     lead = Lead(company_name="Acme EV", company_website="acme-ev.com")
     _, problems = asyncio.run(outreach.draft(lead, Contact(email="a@acme-ev.com")))
     assert any("does not name the company" in p for p in problems)

@@ -6,6 +6,7 @@ tasks:
   lead.extract_contact: dev
   lead.search: dev
   outreach.draft: dev
+  outreach.pitch: dev
   content.plan: dev
   content.adapt: dev
   content.draft_post: dev
