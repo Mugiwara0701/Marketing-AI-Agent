@@ -58,11 +58,27 @@ def message_text(lead: Lead, contact: Contact, email: EmailDraft) -> str:
     return clip("\n".join(lines), _MAX)
 
 
+def draft_sections(email: EmailDraft) -> list[dict]:
+    """The whole email, split at paragraph breaks into Slack sections (3000 characters each): an approver must see every
+    word that will be sent, so a long proposal is never cut."""
+    chunks: list[str] = []
+    cur = f"*Generated email*\n*Subject:* {esc(email.subject)}\n"
+    for para in esc(email.body).split("\n\n"):
+        if len(cur) + len(para) + 2 > _MAX and cur.strip():
+            chunks.append(cur)
+            cur = ""
+        cur += "\n" + para + "\n"
+    chunks.append(cur)
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": clip(c.strip(), _MAX)}}
+        for c in chunks
+    ]
+
+
 def blocks(lead: Lead, contact: Contact, email: EmailDraft) -> list[dict]:
-    draft = f"*Generated email*\n*Subject:* {esc(email.subject)}\n\n{esc(email.body)}"
     return [
         {"type": "section", "text": {"type": "mrkdwn", "text": message_text(lead, contact, email)}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": clip(draft, _MAX)}},
+        *draft_sections(email),
         *slack.approval_blocks(
             "Approve this email for sending?", f"email:{email.email_id}",
             [("Approve", "approve_email"), ("Reject", "skip_email")],

@@ -30,6 +30,7 @@ def lead_context(lead: Lead, contact: Contact) -> str:
         for e in lead.evidence[:5]
     )
     return (
+        f"Our company: {env('COMPANY_NAME', '') or 'our engineering team'}\n"
         f"Company: {lead.company_name}\n"
         f"Website: {lead.company_website}\n"
         f"Industry: {lead.industry or 'not stated'}\n"
@@ -82,7 +83,7 @@ def with_services(body: str, services: str | None = None) -> str:
 async def draft(lead: Lead, contact: Contact) -> tuple[proposal.EmailDraft, list[str]]:
     """(draft, problems). Problems go to the approver as a warning; they never send anything."""
     ctx = lead_context(lead, contact)
-    d, problems = await proposal.draft_proposal(ctx)
+    d, problems = await proposal.draft_pitch(ctx, lead.company_name)
     problems = [*problems, *ungrounded_tech(d.subject + " " + d.body, ctx)]
     if lead.company_name.lower() not in (d.subject + d.body).lower():
         problems.append("the email does not name the company: probably generic")
