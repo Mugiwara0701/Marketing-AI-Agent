@@ -16,4 +16,4 @@ PYTHONPATH=. python eval/runner/run_eval.py lead.qualify eval/sets/lead_qualify.
 ```
 
 Sets are JSONL (`{"input": ..., "expected": {...}}`); start with 40 listings (job/project posts, company pages), growing to the Playbook targets (qualify 100, extract 60,
-20 each of email and blog drafts). Labelled data must come from the team; none is committed yet.
+20 email drafts). Labelled data must come from the team; none is committed yet.

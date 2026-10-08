@@ -1,8 +1,6 @@
 import asyncio
-from datetime import date
 
-from agent import blog, contacts, mailer, sources, store, web
-from agent.tasks import topics
+from agent import contacts, mailer, sources, web
 
 
 def _part(msg, kind: str) -> str:
@@ -56,13 +54,6 @@ def test_signal_hash_stable():
     assert a.hash == sources.Signal("job_post", "y", "http://u", "t2", "body").hash
 
 
-def test_topic_similarity():
-    assert blog.too_similar(
-        "Bringing up a custom board on AOSP", ["Bringing up custom boards on AOSP"]
-    )
-    assert not blog.too_similar("Yocto layer hygiene", ["Bringing up a custom board on AOSP"])
-
-
 def test_unsubscribe_token_matches_edge_function(monkeypatch):
     import hashlib
     import hmac
@@ -92,79 +83,6 @@ def test_message_carries_unsubscribe_reply_to_and_threading_headers(monkeypatch)
     assert "Unsubscribe:" in _part(msg, "plain")
     assert msg["In-Reply-To"] == "<m1@x>" and msg["References"] == "<m1@x>"
     assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click" and msg["Message-ID"]
-
-
-def test_blog_is_skipped_when_today_exists(monkeypatch):
-    async def exists(_):
-        return True
-
-    monkeypatch.setattr(store, "blog_exists", exists)
-    assert asyncio.run(blog.run(date(2026, 1, 1))) == {"processed": 0, "skipped": 1}
-
-
-def test_blog_picks_first_new_and_well_sourced_topic(monkeypatch):
-    saved = {}
-
-    def topic(title, ids):
-        return topics.Topic(
-            title=title, angle="a", keywords=[], why_now="w", kind="news_analysis", source_ids=ids
-        )
-
-    async def no(_):
-        return False
-
-    async def recent(*_):
-        return ["Yocto vs Buildroot in 2026"]
-
-    item = sources.Item("hn", "Android 17 news", "http://x/1", "s", score=500)
-
-    async def items():
-        return [item]
-
-    async def plan(_):
-        return topics.TopicPlan(topics=[
-            topic("Yocto vs Buildroot in 2026!", [1]),  # repeat of a recent title
-            topic("Thin topic", [9]),  # cites no real item, so there are no sources
-            topic("GKI vendor module checklist", [1]),
-        ])  # fmt: skip
-
-    async def page(_url):
-        return "Android 17 adds APIs. " * 120
-
-    async def draft(t, grounding=""):
-        saved["topic"], saved["grounding"] = t, grounding
-
-        class P:
-            title, tags = "T", ["gki"]
-            body_markdown = "B" * 900
-
-        return P(), []
-
-    async def save(day, topic, post, meta, status):
-        saved["picked"], saved["body"], saved["kind"] = (
-            topic.title,
-            post.body_markdown,
-            meta["kind"],
-        )
-        return "id"
-
-    async def no_variants(*_a, **_k):
-        return {}
-
-    monkeypatch.setattr(store, "blog_exists", no)
-    monkeypatch.setattr(store, "recent_post_titles", recent)
-    monkeypatch.setattr(store, "save_blog", save)
-    monkeypatch.setattr(blog.research, "research_items", items)
-    monkeypatch.setattr(blog.topics_task, "plan_topics", plan)
-    monkeypatch.setattr(blog.web, "fetch_page_text", page)
-    monkeypatch.setattr(blog.variants, "generate", no_variants)
-    monkeypatch.setattr(blog.blog_task, "draft_post", draft)
-    assert asyncio.run(blog.run(date(2026, 1, 1)))["processed"] == 1
-    assert saved["picked"] == "GKI vendor module checklist" and saved["kind"] == "news_analysis"
-    assert "SOURCES:" in saved["topic"] and "Android 17 adds APIs" in saved["grounding"]
-    assert (
-        saved["body"].endswith("- [Android 17 news](http://x/1)") and "## Sources" in saved["body"]
-    )
 
 
 def test_slack_text_is_escaped_and_chunked():
@@ -285,170 +203,6 @@ def test_balance_caps_per_company_and_interleaves_sources():
     out = sources.balance(nuro + others, 5)
     assert len(out) == 5 and [s.source for s in out].count("greenhouse") == 2
     assert out[0].source == "greenhouse" and out[1].source == "ashby"
-
-
-def test_research_ranking_prefers_popular_and_fresh_and_drops_stale():
-    import time
-
-    from agent import research
-
-    now = time.time()
-    hot = sources.Item(
-        "hn", "Android 17 drops AOSP source", "u1", score=900, comments=300, published=now - 86400
-    )
-    old_hot = sources.Item("hn", "Old viral post", "u2", score=900, published=now - 40 * 86400)
-    quiet = sources.Item("feed", "Minor Yocto note", "u3", published=now - 86400)
-    ranked = research.rank([quiet, old_hot, hot], now)
-    assert [i.url for i in ranked] == ["u1", "u3"]
-
-
-def test_recurring_terms_and_dates():
-    from agent import research
-
-    titles = [
-        "Android 17 changes",
-        "Why Android 17 matters",
-        "Android 17 and AOSP",
-        "Yocto release",
-    ]
-    items = [sources.Item("x", t, str(n)) for n, t in enumerate(titles)]
-    assert ("android 17", 3) in research.recurring_terms(items)
-    assert research.parse_date("Wed, 30 Sep 2026 10:00:00 +0000") and research.parse_date(
-        "2026-09-30T10:00:00Z"
-    )
-    assert research.parse_date("not a date") is None
-
-
-def test_platform_format_checks_and_render():
-    from agent.tasks import adapt
-
-    li = {"render": "linkedin_post", "max_chars": 2800, "tags_max": 5, "label": "LinkedIn"}
-    body = (
-        "Android 17 changes who gets new platform APIs.\n\nOEM teams should check their release plans.\n\nWhat is your plan? "
-        + "x" * 80
-    )
-    good = adapt.Variant(
-        title="", description="", body=body, tags=["Android", "GKI", "embedded-linux"]
-    )
-    text = adapt.render(li, good)
-    assert text.endswith("#android #gki #embeddedlinux") and not adapt.check_format(li, good)
-    bad = adapt.Variant(
-        title="", description="", body="## Heading\n\n**bold** `code` " + "y" * 120, tags=["a"]
-    )
-    problems = adapt.check_format(li, bad)
-    assert any("markdown" in p for p in problems) and any("hashtags" in p for p in problems)
-
-    dv = {"render": "devto_frontmatter", "max_chars": 9000, "tags_max": 4, "label": "dev.to"}
-    v = adapt.Variant(title="T", description="d" * 200, body="intro\n\n```bash\nls\n" + "z" * 120,
-                      tags=["Android", "linux-kernel", "a b", "x", "y"])  # fmt: skip
-    assert adapt.clean_tags(v.tags, 4) == ["android", "linuxkernel", "ab", "x"]
-    rendered = adapt.render(dv, v)
-    assert (
-        rendered.startswith("---\ntitle: T\npublished: false")
-        and "tags: android, linuxkernel, ab, x" in rendered
-    )
-    probs = adapt.check_format(dv, v)
-    assert all(
-        any(k in p for p in probs) for k in ("description", "unclosed", "TL;DR", "Key points")
-    )
-    ok = adapt.Variant(title="T", description="short", tags=["android"],
-                       body="TL;DR: two sentences here.\n\n## Why this matters\n\nx\n\n## Key points\n\n- a\n- b\n" + "z" * 100)  # fmt: skip
-    assert not adapt.check_format(dv, ok)
-
-
-def test_x_thread_checks():
-    from agent.tasks import adapt
-
-    spec = {"render": "x_thread", "max_chars": 2400, "tags_max": 2, "label": "X"}
-    posts = "\n\n".join(
-        f"{i}/ point number {i} about the platform change and what teams should do"
-        for i in range(1, 7)
-    )
-    ok = adapt.Variant(title="", description="", body=posts, tags=["android"])
-    assert not adapt.check_format(spec, ok)
-    long_first = adapt.Variant(
-        title="", description="", body=posts.replace("1/ point", "1/ " + "w" * 300), tags=[]
-    )
-    assert any("max 270" in p for p in adapt.check_format(spec, long_first))
-
-
-def test_grounding_flags_invented_identifiers_and_leaks():
-    from agentkit import checks
-
-    source = "Android 17 QPR1 adds APIs. Set CONFIG_KPROBES=y and read /sys/kernel/tracing."
-    ok = "On Android 17, enable CONFIG_KPROBES and read /sys/kernel/tracing."
-    assert not checks.check_grounded(ok, source)
-    bad = "Use CONFIG_KDUMP, boot with --crash-kernel and open /var/lib/kdump on Linux 7.4."
-    flagged = " ".join(checks.check_grounded(bad, source))
-    assert all(
-        x in flagged for x in ("CONFIG_KDUMP", "--crash-kernel", "/var/lib/kdump", "Linux 7.4")
-    )
-    assert checks.check_no_leaks("Reference material: foo") and not checks.check_no_leaks(
-        "plain text"
-    )
-
-
-def test_draft_repairs_once_and_keeps_the_better_draft(monkeypatch):
-    from agent.tasks import blog as blog_task
-
-    calls = []
-
-    async def once(topic, sources_text, feedback):
-        calls.append(feedback)
-        return ("draft", ["invented: CONFIG_X"]) if feedback is None else ("fixed", [])
-
-    monkeypatch.setattr(blog_task, "_once", once)
-    post, problems = asyncio.run(blog_task.draft_post("topic", "sources"))
-    assert (post, problems) == ("fixed", []) and calls[0] is None and "CONFIG_X" in calls[1]
-
-    async def worse(topic, sources_text, feedback):
-        return ("a", ["p1"]) if feedback is None else ("b", ["p1", "p2"])
-
-    monkeypatch.setattr(blog_task, "_once", worse)
-    assert asyncio.run(blog_task.draft_post("t", "s")) == ("a", ["p1"])
-
-
-def test_linkedin_and_thread_layout_fixes():
-    from agent.tasks import adapt
-
-    li = {"render": "linkedin_post", "max_chars": 2800, "tags_max": 5, "label": "LinkedIn"}
-    raw = ("Android 17 changed who gets new APIs. OEM teams get them late. Backporting costs time. "
-           "Security fixes lag too. How do you plan for it?\n\nandroid automotive embedded\n\n#android #aosp #bsp")  # fmt: skip
-    v = adapt.Variant(
-        title="", description="", body=raw, tags=["android", "automotive", "embedded"]
-    )
-    text = adapt.render(li, v)
-    assert "automotive embedded" not in text
-    assert text.split("\n\n")[0] == "Android 17 changed who gets new APIs."
-    assert text.endswith("#android #aosp #bsp") and not adapt.check_format(li, v)
-
-    x = {"render": "x_thread", "max_chars": 2400, "tags_max": 2, "label": "X"}
-    body = "\n\n".join(
-        [
-            "1/ one point here",
-            "two points made",
-            "3) three of them",
-            "4. four of them",
-            "five more things",
-            "six and done",
-            "Last point? #android " + "w" * 90,
-        ]
-    )
-    out = adapt.render(x, adapt.Variant(title="", description="", body=body, tags=[]))
-    assert [p.split(" ")[0] for p in out.split("\n\n")] == [f"{i}/" for i in range(1, 8)]
-    assert not adapt.check_format(x, adapt.Variant(title="", description="", body=body, tags=[]))
-
-
-def test_linkedin_drops_keyword_line_above_hashtags():
-    from agent.tasks import adapt
-
-    li = {"render": "linkedin_post", "max_chars": 2800, "tags_max": 5, "label": "LinkedIn"}
-    body = ("Hook line about the change.\n\nSecond paragraph explains what it means for teams in detail here.\n\n"
-            "What is your plan?\n\nAOSP updates, security bulletins, and feature access\n\n#android #aosp #security")  # fmt: skip
-    text = adapt.render(li, adapt.Variant(title="", description="", body=body, tags=["android"]))
-    assert (
-        "feature access" not in text and "What is your plan?" in text and text.endswith("#security")
-    )
 
 
 def test_contact_form_detection():

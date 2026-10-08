@@ -1,5 +1,5 @@
 # Free, public sources only (no paid APIs): job / project feeds for the lead pipeline (optional, see
-# config/leadgen.yaml) and the blog research feeds. Search vocabulary and lead rules live in config/leadgen.yaml.
+# config/leadgen.yaml). Search vocabulary and lead rules live in config/leadgen.yaml.
 
 # A listing/page is only looked at by the LLM if it mentions at least one of these (case-insensitive).
 keywords:
@@ -68,40 +68,3 @@ project_keywords:
   - short term
   - agency
   - turnkey
-
-# Blog research: what is hot right now. Items are ranked by popularity (HN points, dev.to reactions) x freshness.
-topic_feeds:
-  - https://lwn.net/headlines/rss
-  - https://android-developers.googleblog.com/feeds/posts/default
-  - https://www.phoronix.com/rss.php
-  - https://bootlin.com/blog/feed/
-  - https://www.collabora.com/news-and-blog/blog.atom
-  - https://www.cnx-software.com/feed/
-  - https://hackaday.com/blog/feed/
-  - https://www.androidauthority.com/feed/
-  - https://9to5google.com/guides/android/feed/
-  - https://www.linuxfoundation.org/blog/rss.xml
-  - https://www.yoctoproject.org/feed/
-  - https://lobste.rs/t/linux.rss
-  - https://lobste.rs/t/android.rss
-topic_hn_queries:
-  - AOSP
-  - Android Automotive
-  - Android 16
-  - Android 17
-  - embedded Linux
-  - Yocto
-  - Linux kernel
-  - Rust for Linux
-  - RISC-V
-  - device bring-up
-topic_devto_tags:
-  - android
-  - aosp
-  - embedded
-  - linux
-  - kernel
-  - yocto
-  - automotive
-  - rust
-  - iot

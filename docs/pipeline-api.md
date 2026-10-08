@@ -111,7 +111,7 @@ Errors have the body `{"detail": "<message>"}`.
 ## What "running" means
 
 - Passes run one after another, 30 minutes apart. A pass is: lead discovery (Chrome opens on the office desktop within
-  seconds of Start) → follow-ups → blog (at most one blog post a day).
+  seconds of Start) → follow-ups → blog step (the model writes no blog posts; the weekly file is uploaded by a person).
 - Alongside the passes: emails approved in Slack go out within about 20 seconds, and Gmail is polled for replies and
   bounces every 10 minutes (the first time right at Start).
 

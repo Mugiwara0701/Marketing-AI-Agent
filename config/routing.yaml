@@ -8,8 +8,5 @@ tasks:
   outreach.pitch: dev
   email.reply: dev
   email.followup: dev
-  content.plan: dev
-  content.adapt: dev
-  content.draft_post: primary
   # Vision model for the GUI agent; a name not listed in SERVED is used as the served model name as is.
   gui.step: vlm

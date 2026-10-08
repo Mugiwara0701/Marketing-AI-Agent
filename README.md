@@ -1,7 +1,7 @@
 # AI Marketing Agent
 
 B2B lead generation and outreach for an AOSP / BSP / embedded Linux engineering-services company, plus a daily
-technical blog. It finds **companies that may buy our engineering** (they build EV chargers, kiosks, industrial
+technical blog (written by a person, not by the model: the weekly blog file comes from the dashboard). It finds **companies that may buy our engineering** (they build EV chargers, kiosks, industrial
 controllers, robots, medical devices, infotainment, IoT / edge devices... on Android or embedded Linux, or they ask for
 outside help), never sellers of boards or devices and never competitors. Every outreach email is **sent only after a
 person approved it** in Slack. The pipeline runs only between a **Start** and a **Stop** pressed in the dashboard.
@@ -52,7 +52,7 @@ pipeline is running:
 
 | Loop | When | What |
 |---|---|---|
-| passes | one after another, 30 min apart (`PIPELINE_REST_MINUTES`) | lead discovery first (Chrome opens within seconds of Start; drafts go to Slack), then follow-ups, blog (once a day) |
+| passes | one after another, 30 min apart (`PIPELINE_REST_MINUTES`) | lead discovery first (Chrome opens within seconds of Start; drafts go to Slack), then follow-ups, blog step (the model writes no blog: it only waits for the weekly file) |
 | sender | every 20 s | sends what a person approved in Slack (nothing while `EMAIL_SENDING_ENABLED` is not true) |
 | inbox | every 10 min | polls Gmail for replies and bounces; drafts answers for Slack approval |
 
@@ -158,13 +158,13 @@ evidence (quotes and URLs), contact, draft and approval state. Logs are one JSON
 |---|---|
 | `agent/leadgen/` | The lead pipeline (see its `__init__.py` for one line per module) |
 | `agent/control.py`, `agent/supervisor.py` | Start / stop from the database, the long-running service and its loops |
-| `agent/tasks/` | LLM tasks with schemas: `assess` (page reading), `contact`, `proposal`, `search` (desktop SERP), replies, follow-ups, blog |
+| `agent/tasks/` | LLM tasks with schemas: `assess` (page reading), `contact`, `proposal`, `search` (desktop SERP), replies, follow-ups |
 | `agent/prompts/` | Prompt files (`lead_assess.txt`, `lead_extract_contact.txt`, `outreach_draft.txt`...) |
 | `agent/gui/` | Desktop Chrome driver (xdotool, OCR, vision fallback) and the sandboxed GUI agent |
-| `agent/` (rest) | Run steps `run.py`, CLI `__main__.py`, mail building `mailer.py`, replies, follow-ups, blog, polite fetching `web.py`, job feeds `sources.py` |
+| `agent/` (rest) | Run steps `run.py`, CLI `__main__.py`, mail building `mailer.py`, replies, follow-ups, polite fetching `web.py`, job feeds `sources.py` |
 | `api/` | Pipeline control REST API for the dashboard (own requirements and Dockerfile; `api/README.md`) |
 | `config/leadgen.yaml` | Search vocabulary, thresholds, exclusions, page budgets (edit without touching code) |
-| `config/sources.yaml` | Job / project feed APIs (optional for leads) and blog research feeds |
+| `config/sources.yaml` | Job / project feed APIs (optional for leads) |
 | `config/routing.yaml` | Task -> model alias |
 | `config/email_template.html` | The HTML email design |
 | `libs/agentkit` | Shared LLM client, DB access, prompts, checks, Slack, Gmail |

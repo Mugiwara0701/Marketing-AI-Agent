@@ -36,7 +36,6 @@ ignore = [
 "agent/tests/*" = ["S101", "S105", "S107", "PLC0415", "SLF001", "PT018", "N803", "PLW0108"]  # fakes mirror Google API names
 "agent/sources.py" = ["S101", "PERF401"]
 "agent/portals.py" = ["PERF401"]
-"agent/research.py" = ["PERF401"]   # one parser per portal; explicit loops read better          # CLI prints its report
 "libs/agentkit/agentkit/db.py" = ["PLW0603", "S608"]   # pool singleton; table name is validated
 "agent/leadgen/repository/*" = ["S608"]   # SQL is built only from fixed class constants
 "libs/agentkit/agentkit/llm.py" = ["PLW0603", "PLR0915"]
