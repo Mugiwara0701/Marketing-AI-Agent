@@ -191,6 +191,12 @@ class FakeDesk:
     async def dismiss_consent(self):
         return False
 
+    async def ocr_text(self):
+        return ""
+
+    async def scroll_to(self, where):
+        return None
+
     async def shot(self, label):
         return ""
 
@@ -365,3 +371,69 @@ def test_desktop_never_takes_a_search_page_for_a_result(monkeypatch):
     b = DesktopBrowser(Guard(), ["default"], 30, desk=FakeDesk({}), lookup=_Lookup())  # type: ignore[arg-type]
     assert asyncio.run(b.open_url(stale)) is None
     assert asyncio.run(b.open_url("http://127.0.0.1:8888/search?q=x")) is None
+
+
+def test_embedded_form_counts_only_on_a_contact_page():
+    from agent.leadgen import intent
+    from agent.web import has_embedded_form
+
+    hubspot = '<div><iframe id="hs-form-iframe-0"></iframe><script src="//js.hsforms.net/forms/embed/v2.js">'
+    assert has_embedded_form(hubspot)
+    assert not has_embedded_form("<p>Subscribe</p><form><input name=q></form>")
+    assert intent.CONTACT_URL.search("https://www.l4b-software.com/contact-us/")
+    assert intent.CONTACT_URL.search("https://acme.de/kontakt")
+    assert intent.CONTACT_URL.search("https://acme.com/en/get-in-touch?x=1")
+    assert not intent.CONTACT_URL.search(
+        "https://acme.com/"
+    )  # a newsletter script on the home page
+    assert not intent.CONTACT_URL.search("https://acme.com/contact-center-software/pricing")
+
+
+def test_http_browser_sees_a_hubspot_form_on_the_contact_page(monkeypatch):
+    from agent import web
+    from agent.leadgen.browser.http import HttpBrowser
+
+    html = '<html><body><h1>Contact us</h1><p>Please fill in the form.</p><iframe id="hs-form-iframe-0"></iframe></body></html>'
+
+    async def fake_fetch(url, **kw):
+        return web.Fetched(url, 200, html)
+
+    monkeypatch.setattr(web, "fetch_page", fake_fetch)
+    b = HttpBrowser(Guard())
+    page = asyncio.run(b.open_url("https://acme.com/contact-us/"))
+    assert page is not None and page.has_contact_form
+    home = asyncio.run(b.open_url("https://acme.com/"))
+    assert home is not None and not home.has_contact_form  # same script, but not a contact page
+
+
+def test_screen_form_is_seen_from_the_lower_half_of_a_form():
+    from agent.leadgen import intent
+
+    # what OCR read on l4b-software.com/contact-us when only the bottom of the form was in view
+    seen = (
+        "Please Select Message* L4B Software Inc. is committed to protecting and respecting your privacy "
+        "I agree to receive other communications from L4B Software Inc. protected by reCAPTCHA Submit Share this:"
+    )
+    assert intent.looks_like_screen_form(seen)
+    assert not intent.looks_like_contact_form(
+        seen
+    )  # the text rule alone says no: the labels above were scrolled off
+    assert intent.looks_like_screen_form("First name Email Company Send message")
+    assert not intent.looks_like_screen_form(
+        "Contact us. Our office is in Munich. Submit your CV to jobs@acme.com"
+    )
+    assert not intent.looks_like_screen_form("Message from the CEO. Read more about our products")
+
+
+def test_screen_form_top_labels_and_bottom_button_are_judged_together():
+    from agent.leadgen import intent
+
+    top = "Let's keep in touch First Name* Last Name* Company name Email* Your industry"
+    bottom = "Message* I agree to receive other communications protected by reCAPTCHA Submit"
+    assert intent.looks_like_screen_form(top)  # three labels, one a person's name
+    assert intent.looks_like_screen_form(top + "\n" + bottom)
+    assert not intent.looks_like_screen_form(
+        "Our offices Company name: Acme GmbH Phone: +49 Email: a@b.de"
+    )
+    assert intent.CONTACT_TITLE.search("Contact us - L4B Software")
+    assert not intent.CONTACT_TITLE.search("Embedded Linux BSP - Acme")

@@ -281,6 +281,19 @@ class _Forms(HTMLParser):
             self._cur = None
 
 
+# A form that a script builds inside an iframe (HubSpot, Marketo, Typeform...): the page source holds only the embed.
+EMBEDDED_FORM = re.compile(
+    r"hs-form-iframe|hsforms\.(net|com)|hbspt\.forms\.create|mktoForm|pardot\.com|typeform\.com/to|jotform\.com|"
+    r"tally\.so/(embed|r)|formspree\.io|docs\.google\.com/forms|forms\.office\.com|forms\.gle|cognitoforms\.com|"
+    r"wufoo\.com|wpcf7|gform_wrapper|fluentform|ninja-forms|elementor-form",
+    re.I,
+)
+
+
+def has_embedded_form(html: str) -> bool:
+    return bool(EMBEDDED_FORM.search(html))
+
+
 def has_contact_form(html: str) -> bool:
     p = _Forms()
     try:

@@ -486,13 +486,46 @@ def test_qualified_lead_without_contact_goes_to_manual_check_once_when_final(tmp
     assert len(calls) == 1 and calls[0][:2] == ("Dead Co", "dead.example.com")
 
 
-def test_form_only_lead_goes_to_manual_check_once_with_its_form(tmp_path):
+def test_form_only_lead_goes_to_form_fill_once_not_manual_check(tmp_path):
     repo = SqliteRepository(":memory:")
     _stored_qualified(repo, "formonly.com")
-    calls = _manual_calls(
-        repo, tmp_path, 4, form_url="https://formonly.com/contact"
-    )  # a 4th run adds nothing
-    assert len(calls) == 1 and calls[0][3] == "https://formonly.com/contact"
+    forms = []
+
+    async def form_notify(lead, url):
+        forms.append((lead.company_name, url))
+
+    manual = []
+
+    async def manual_notify(lead, reason, form):
+        manual.append(lead.company_name)
+
+    for _ in range(4):  # a 4th run adds nothing
+        p = _no_contact_pipeline(repo, tmp_path, form_url="https://formonly.com/contact")
+        p.svc.form_notify, p.svc.manual_notify = form_notify, manual_notify
+        _run(p)
+    assert forms == [("Dead Co", "https://formonly.com/contact")]
+    assert manual == []
+
+
+def test_form_fill_failure_does_not_fail_the_run(tmp_path):
+    repo = SqliteRepository(":memory:")
+    _stored_qualified(repo, "x.example.com")
+
+    async def broken(lead, url):
+        raise RuntimeError("slack down")
+
+    p = _no_contact_pipeline(repo, tmp_path, form_url="https://x.example.com/contact")
+    p.svc.form_notify = broken
+    _run(p)  # no exception
+
+
+def test_form_text_has_company_site_and_form_page():
+    from agent.leadgen.models import Lead
+
+    text = approval.form_text(
+        Lead(company_name="A & B", company_website="ab.com"), "https://ab.com/contact"
+    )
+    assert "A &amp; B" in text and "https://ab.com" in text and "https://ab.com/contact" in text
 
 
 def test_manual_check_failure_does_not_fail_the_run(tmp_path):
@@ -515,3 +548,87 @@ def test_manual_check_text_has_company_and_website():
         Lead(company_name="A & B", company_website="ab.com", lead_score=70), "no contact", None
     )
     assert "A &amp; B" in text and "https://ab.com" in text and "70" in text
+
+
+def test_form_check_posts_the_form_it_finds(monkeypatch, capsys):
+    from agent.leadgen import approval as appr
+    from agent.leadgen import contacts, service
+
+    posted = []
+
+    async def fake_discover(browser, domain, cfg, company=""):
+        return contacts.Discovery(
+            form_url=f"https://{domain}/contact" if "form" in domain else None
+        )
+
+    class FakeBrowser:
+        started = False
+
+        async def start(self):
+            FakeBrowser.started = True
+
+        async def close(self):
+            return None
+
+    async def notify(lead, url):
+        posted.append((lead.company_name, url))
+
+    monkeypatch.setattr(contacts, "discover", fake_discover)
+    monkeypatch.setattr(service, "make_browser", lambda kind, cfg: FakeBrowser())
+    monkeypatch.setattr(appr, "make_form_notifier", lambda dry, out: notify)
+    assert asyncio.run(service.form_check(["has-form.com", "no.com"])) == 0
+    assert posted == [
+        ("has-form.com", "https://has-form.com/contact")
+    ]  # nothing posted for a site without a form
+    posted.clear()
+    asyncio.run(service.form_check(["no.com"], post_anyway=True))
+    assert posted == [("no.com", "https://no.com")]
+    posted.clear()
+    asyncio.run(service.form_check(["has-form.com"], post=False))
+    assert posted == []
+
+
+def _form_posts(repo, tmp_path, discovery=None):
+    forms = []
+
+    async def form_notify(lead, url):
+        forms.append((lead.company_name, url))
+
+    async def found(browser, domain, cfg, **kw):
+        return discovery or contacts.Discovery(form_url="https://x.com/contact")
+
+    p = _no_contact_pipeline(repo, tmp_path, form_url="https://x.com/contact")
+    p.svc.find_contacts = found
+    p.svc.form_notify = form_notify
+    _run(p)
+    return forms
+
+
+def test_form_is_posted_only_for_a_qualified_lead(tmp_path):
+    from agent.leadgen.models import Lead
+
+    repo = SqliteRepository(":memory:")
+    rejected = asyncio.run(
+        repo.insert_lead(
+            Lead(company_name="No Co", company_website="no.com", lead_score=20), source="t"
+        )
+    )
+    asyncio.run(repo.set_status(rejected, LeadStatus.REJECTED))
+    discovered_low = asyncio.run(  # score below min_qualify: rejected on resume, never contacted
+        repo.insert_lead(
+            Lead(company_name="Low Co", company_website="low.com", lead_score=10), source="t"
+        )
+    )
+    assert asyncio.run(repo.get_lead(discovered_low)).status == LeadStatus.DISCOVERED  # type: ignore[union-attr]
+    assert _form_posts(repo, tmp_path) == []
+    _stored_qualified(repo, "yes.com")
+    assert len(_form_posts(repo, tmp_path)) == 1  # the qualified one only
+
+
+def test_form_of_a_competitor_is_not_posted(tmp_path):
+    repo = SqliteRepository(":memory:")
+    _stored_qualified(repo, "rival.com")
+    found = contacts.Discovery(
+        form_url="https://rival.com/contact", competitor="engineering services firm"
+    )
+    assert _form_posts(repo, tmp_path, found) == []

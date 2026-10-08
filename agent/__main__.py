@@ -139,6 +139,16 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
         help="open sites in the desktop Chrome and close their popups; before/after screenshots, no database",
     )
     pk.add_argument("urls", nargs="+")
+    fc = sub.add_parser(
+        "form-check",
+        help="look for a contact form on company sites and post it to Slack (#form-fill); no database",
+    )
+    fc.add_argument("domains", nargs="+", help="company domains, e.g. acme-ev.com")
+    fc.add_argument("--browser", choices=["http", "chrome", "desktop"])
+    fc.add_argument("--no-slack", action="store_true", help="only look, post nothing")
+    fc.add_argument(
+        "--post-anyway", action="store_true", help="post the home page even if no form was found"
+    )
     sp = sub.add_parser(
         "gui-spike",
         help="run short fixed browser tasks with the vision model and report the success rate",
@@ -194,6 +204,7 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
                 "check",
                 "desktop-check",
                 "popup-check",
+                "form-check",
                 "slack-setup",
                 "embedded-list",
                 "gmail-check",
@@ -309,6 +320,12 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
                     if report:
                         print(f"  {report}")  # noqa: T201
             return 0 if all(f.ok for _, f, _ in results) else 1
+        elif a.cmd == "form-check":
+            from .leadgen import service  # noqa: PLC0415
+
+            return await service.form_check(
+                a.domains, post=not a.no_slack, post_anyway=a.post_anyway
+            )
         elif a.cmd == "popup-check":
             from .gui import desktop  # noqa: PLC0415
 

@@ -226,12 +226,15 @@ class SqliteRepository:
         )
         return int(row["n"]) if row else 0
 
-    async def set_manual(self, lead_id: str, form_url: str | None, reason: str | None) -> None:
+    async def set_manual(self, lead_id: str, form_url: str | None, reason: str | None) -> bool:
+        row = self._one("select contact_form_url from companies where id=?", lead_id)
+        new_form = bool(form_url) and (row is None or row["contact_form_url"] != form_url)
         self.db.execute(
             "update companies set contact_form_url=coalesce(?, contact_form_url), "
             "manual_reason=coalesce(?, manual_reason), updated_at=? where id=?",
             (form_url, reason, _now(), lead_id),
         )
+        return new_form
 
     async def record_contact_attempt(self, lead_id: str) -> int:
         row = self._one(
