@@ -7,8 +7,5 @@ tasks:
   lead.search: dev
   outreach.draft: dev
   outreach.pitch: dev
-  content.plan: dev
-  content.adapt: dev
-  content.draft_post: dev
   # The GUI agent needs a vision model even when everything else uses the one dev model.
   gui.step: vlm

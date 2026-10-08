@@ -35,7 +35,7 @@ run_eval() { # task set schema min
 run_eval lead.assess lead_assess agent.tasks.assess:Assessment 0.8
 run_eval lead.extract_contact lead_extract_contact agent.tasks.contact:ContactResult 0.85
 
-echo "== drafts: schema, length, banned phrases"
+echo "== drafts: schema, length, banned phrases (outreach)"
 "$PY" eval/runner/draft_check.py || fail=1
 
 if [ "$fail" -ne 0 ]; then echo "VERIFY FAILED"; exit 1; fi

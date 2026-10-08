@@ -19,7 +19,6 @@ class Settings:
     followup_max_per_run: int  # follow-up drafts per run
     user_agent: str
     sources_file: str
-    platforms_file: str
 
 
 def load() -> Settings:
@@ -33,5 +32,4 @@ def load() -> Settings:
         user_agent=env("AGENT_USER_AGENT", "AOSPMarketingAgent/1.0 (business research bot)")
         or "AOSPMarketingAgent/1.0",
         sources_file=env("SOURCES_CONFIG", "config/sources.yaml") or "config/sources.yaml",
-        platforms_file=env("PLATFORMS_CONFIG", "config/platforms.yaml") or "config/platforms.yaml",
     )

@@ -29,7 +29,7 @@ make llm-verify        # or: bash services/llm-service/scripts/verify.sh
 
 It checks reachability, a plain reply, a schema-constrained reply, embeddings (1024 dims), accuracy on the labelled
 synthetic sets (`lead.qualify`, `lead.extract_contact`, threshold 0.85) and the generative
-tasks (`outreach.draft`, `content.plan`, `content.draft_post`) against length and banned-phrase
+tasks (`outreach.draft`) against length and banned-phrase
 checks. Any failure exits non-zero. Read the failing cases it prints, then adjust the prompt in
 `agent/prompts/*.txt`. Generated text still needs a human read; the checks catch format problems only.
 

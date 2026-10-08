@@ -45,7 +45,7 @@ swaps them in and out of memory by itself.
 
 ```bash
 sudo systemctl restart ollama
-ollama pull <text model>         # the Qwen text model used for emails, qualifying, blog
+ollama pull <text model>         # the Qwen text model used for emails and qualifying
 ollama pull <vision model>       # e.g. a Qwen3-VL 8B tag: confirm the exact name on ollama.com/library
 ollama list                      # note the exact names
 curl -s localhost:11434/v1/models | head -c 200

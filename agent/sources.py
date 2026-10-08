@@ -1,4 +1,4 @@
-"""Free public sources: job/project listings for leads, news and discussions for blog research.
+"""Free public sources: job/project listings for leads.
 
 Every function is best-effort: a source that is down, changed or blocks us returns [] and the run
 continues with the others.
@@ -40,20 +40,6 @@ class Signal:
 
     def __post_init__(self) -> None:
         self.hash = hashlib.sha256(f"{self.url}|{self.text[:2000]}".encode()).hexdigest()
-
-
-@dataclass
-class Item:
-    """One article/discussion for blog research."""
-
-    source: str
-    title: str
-    url: str
-    summary: str = ""
-    score: int = 0  # points / reactions where the source has them
-    comments: int = 0
-    published: float | None = None  # epoch seconds when known
-    heat: float = 0.0  # popularity x freshness, set by research.rank()
 
 
 def load_config() -> dict:
@@ -378,7 +364,4 @@ async def collect_signals(max_items: int) -> list[Signal]:
     return picked
 
 
-# ----------------------------------------------------------------------------- blog research
-
-
-__all__ = ["Item", "Signal", "collect_signals", "web_search"]
+__all__ = ["Signal", "collect_signals", "web_search"]
