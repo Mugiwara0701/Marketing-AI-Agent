@@ -11,6 +11,7 @@ screen (agent.gui.desktop.Desktop). It cannot see the DOM, so:
 A CAPTCHA or bot check is never worked around: the engine rests, the site is skipped.
 """
 
+import asyncio
 from urllib.parse import quote_plus, urlparse
 
 from agentkit.config import env
@@ -187,23 +188,25 @@ class DesktopBrowser:
         )  # the page is read first; its final address after
 
     async def follow(self, labels: list[str]) -> Page | None:
-        before = await self.desk.current_url()
+        # Only the mouse wheel and mouse clicks, like a person: the menu bar at the top first, then the footer. No
+        # keyboard focus is needed, so nothing clicks the scrollbar (which would scroll the menu out of view).
+        before = await self.desk.current_url(refocus=False)
         host = urlparse(before).hostname or ""
-        for key in (
-            "Home",
-            "End",
-        ):  # header links first, then the footer, like a person scrolling down
-            await self.desk.act(action="key", key=key)
+        for where in ("top", "bottom"):
+            await self.desk.scroll_to(where)
             if await self.desk.click_link(*labels):
                 break
         else:
             return None
-        now = await self.desk.current_url()
-        if (
-            not now
-            or now == before
-            or intent.registrable_domain(now) != intent.registrable_domain(host)
-        ):
+        now = await self.desk.current_url(refocus=False)
+        for _ in range(3):  # a slow page has not changed the address yet: give it a few seconds
+            if now and now != before:
+                break
+            await asyncio.sleep(3)
+            now = await self.desk.current_url(refocus=False)
+        if not now or now == before:
+            return None  # nothing opened (a chat widget, a dead link). No Back: it would leave the site for about:blank
+        if intent.registrable_domain(now) != intent.registrable_domain(host):
             await (
                 self.desk.back()
             )  # it led off the company's site: not what a contact link should do

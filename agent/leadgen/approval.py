@@ -7,6 +7,8 @@
 Nothing here sends mail. In a dry-run the Slack message is written to a file instead of posted.
 """
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -106,6 +108,58 @@ def make_approver(dry_run: bool, out_dir: Path) -> Approver | None:
     if env("SLACK_BOT_TOKEN"):
         return SlackApprover()
     return None  # no Slack: drafts wait for the CLI (python -m agent leads review)
+
+
+# A qualified lead with no public contact: company name and website go to a person, who contacts it by hand.
+ManualNotifier = Callable[[Lead, str, "str | None"], Awaitable[None]]
+
+
+def manual_text(lead: Lead, reason: str, form_url: str | None) -> str:
+    site = lead.company_website or ""
+    url = site if site.startswith("http") else f"https://{site}"
+    lines = [
+        ":mag: *Manual check: no contact found*",
+        f"*Company:* {esc(lead.company_name)}",
+        f"*Website:* {esc(url)}",
+    ]
+    if form_url:
+        lines.append(f"*Contact form:* {esc(form_url)}")
+    lines.append(f"*Why:* {esc(reason)}")
+    if lead.lead_score is not None:
+        lines.append(f"*Score:* {lead.lead_score}")
+    return clip("\n".join(lines), _MAX)
+
+
+def _append(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(text + "\n\n")
+
+
+def make_manual_notifier(dry_run: bool, out_dir: Path) -> ManualNotifier | None:
+    """Slack channel SLACK_CHANNEL_MANUAL (default #manual-check). Dry-run: appended to out/.../manual-check.md.
+    None without Slack: the leads stay on `python -m agent manual`."""
+    if dry_run:
+
+        async def to_file(lead: Lead, reason: str, form_url: str | None) -> None:
+            await asyncio.to_thread(
+                _append, out_dir / "manual-check.md", manual_text(lead, reason, form_url)
+            )
+
+        return to_file
+    if not env("SLACK_BOT_TOKEN"):
+        return None
+    channel = env("SLACK_CHANNEL_MANUAL", "#manual-check") or "#manual-check"
+
+    async def to_slack(lead: Lead, reason: str, form_url: str | None) -> None:
+        text = manual_text(lead, reason, form_url)
+        await slack.post_message(
+            channel,
+            f"Manual check: {lead.company_name}",
+            [{"type": "section", "text": {"type": "mrkdwn", "text": text}}],
+        )
+
+    return to_slack
 
 
 async def request(

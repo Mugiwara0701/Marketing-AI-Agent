@@ -13,6 +13,7 @@ _CHANNELS = [
     ("SLACK_CHANNEL_OUTREACH", "outreach-approvals"),
     ("SLACK_CHANNEL_CONTENT", "content"),
     ("SLACK_CHANNEL_ALERTS", "agent-alerts"),
+    ("SLACK_CHANNEL_MANUAL", "manual-check"),
 ]
 
 

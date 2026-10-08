@@ -113,7 +113,7 @@ Main settings (`.env`):
 | Database | `DATABASE_URL` (Supabase pooler URL; empty = only `--dry-run` commands work) |
 | Models | `LLM_BASE_URL`, `LLM_API_KEY`, `ROUTING_CONFIG`, `LLM_MIN_TIMEOUT` (raise on a CPU-only machine) |
 | Lead search | `BROWSER_BACKEND` (`http` / `chrome` / `desktop`), `SEARXNG_URL`, `MAX_NEW_LEADS_PER_DAY`, `HOST_DELAY_SECONDS` |
-| Slack | `SLACK_BOT_TOKEN`, `SLACK_ALLOWED_USERS`, `SLACK_CHANNEL_OUTREACH` / `_CONTENT` / `_ALERTS` |
+| Slack | `SLACK_BOT_TOKEN`, `SLACK_ALLOWED_USERS`, `SLACK_CHANNEL_OUTREACH` / `_CONTENT` / `_ALERTS` / `_MANUAL` (qualified leads with no contact: company + website, default `#manual-check`) |
 | Gmail | `GMAIL_CREDENTIALS_PATH`, `GMAIL_TOKEN_PATH`, `MAIL_FROM`, `REPLY_TO` |
 | Sending safety | `EMAIL_SENDING_ENABLED`, `APP_ENV`, `ALLOWED_RECIPIENT_DOMAINS`, `TEST_RECIPIENT`, `DAILY_SEND_CAP_PER_MAILBOX` |
 | Email identity | `SENDER_NAME`, `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_WEBSITE`, `UNSUBSCRIBE_BASE_URL`, `UNSUBSCRIBE_SECRET` |

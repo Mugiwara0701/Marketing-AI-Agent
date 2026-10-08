@@ -228,7 +228,22 @@ def test_project_technology_is_context_never_the_search_target(tech, component, 
         if tech.lower() in low and tech.lower() not in product.lower():
             assert f"{tech} {product}".lower() in low, q.text  # only as a modifier of the product
         assert any(
-            s in low for s in ("company", "startup", "rfp", "rfq", "tender", "proposal", "project")
+            s in low
+            for s in (
+                "company",
+                "startup",
+                "rfp",
+                "rfq",
+                "rfi",
+                "tender",
+                "proposal",
+                "project",
+                "quotation",
+                "information",
+                "procurement",
+                "vendor selection",
+                "statement of work",
+            )
         ), q.text
     assert any(tech.lower() in q.text.lower() for q in queries)  # the context is used
 

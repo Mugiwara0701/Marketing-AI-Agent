@@ -25,7 +25,7 @@ Not yet run against a live project.
    User OAuth Token** (`xoxb-...`) into the agent's `.env` as `SLACK_BOT_TOKEN`.
 2. Either run `python -m agent slack-setup` (creates the channels and invites you; first add bot scopes
    `channels:manage`, `channels:read`, `channels:join` and reinstall the app), or invite the bot to the three
-   channels (`/invite @YourBot`): `#outreach-approvals`, `#content`, `#agent-alerts` (or change the
+   channels (`/invite @YourBot`): `#outreach-approvals`, `#content`, `#agent-alerts`, `#manual-check` (or change the
    `SLACK_CHANNEL_*` names).
 3. **Basic Information** -> **Signing Secret** -> set as the `SLACK_SIGNING_SECRET` function secret.
 4. **Interactivity & Shortcuts** -> on -> Request URL
