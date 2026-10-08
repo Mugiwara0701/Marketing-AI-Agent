@@ -103,17 +103,59 @@ def _template() -> str:
         )
 
 
+def _website() -> tuple[str, str]:
+    """(shown, link) for COMPANY_WEBSITE; both empty when it is not set."""
+    site = (env("COMPANY_WEBSITE", "") or "").strip()
+    if not site:
+        return "", ""
+    return site, site if site.startswith(("http://", "https://")) else f"https://{site}"
+
+
+def signature_lines() -> list[str]:
+    """The sender block, only what is set: person, title, company, website, phone."""
+    site, _ = _website()
+    values = [
+        env("SENDER_NAME", ""),
+        env("SENDER_TITLE", ""),
+        env("COMPANY_NAME", ""),
+        site,
+        env("COMPANY_PHONE", ""),
+    ]
+    return [v.strip() for v in values if v and v.strip()]
+
+
+def identity_problems() -> list[str]:
+    """Settings that would make a mail look unprofessional: placeholders and missing fields. Shown to a person; nothing
+    here blocks sending."""
+    out = []
+    if not (env("SENDER_NAME", "") or "").strip():
+        out.append("SENDER_NAME is not set: the mail has no sender name")
+    if not (env("COMPANY_WEBSITE", "") or "").strip():
+        out.append("COMPANY_WEBSITE is not set: the signature has no website")
+    address = (env("COMPANY_ADDRESS", "") or "").strip().lower()
+    if address in {"", "address", "your address", "company address", "todo", "tbd"}:
+        out.append("COMPANY_ADDRESS is a placeholder: the footer shows it")
+    return out
+
+
 def render_html(subject: str, body: str, unsubscribe: str) -> str:
     """The template filled in. Every value is HTML-escaped: the body comes from a model, the rest from settings."""
-    website = (env("COMPANY_WEBSITE", "") or "").strip()
-    url = (
-        website
-        if website.startswith(("http://", "https://")) or not website
-        else f"https://{website}"
+    website, url = _website()
+    lines = signature_lines()
+    signature = "<br>".join(
+        f"<strong>{escape(x)}</strong>"
+        if i == 0
+        else (
+            f'<a href="{escape(url)}" style="color:#1f6feb;text-decoration:none;">{escape(x)}</a>'
+            if x == website
+            else escape(x)
+        )
+        for i, x in enumerate(lines)
     )
     first = next((p for p in paragraphs(body) if isinstance(p, str)), "")
     values = {
         "subject": escape(subject), "preheader": escape(first[:140]), "body": html_body(body),
+        "signature": signature, "sender_title": escape(env("SENDER_TITLE", "") or ""),
         "sender_name": escape(env("SENDER_NAME", "") or ""), "company_name": escape(env("COMPANY_NAME", "") or ""),
         "company_address": escape(env("COMPANY_ADDRESS", "") or ""), "company_website": escape(website),
         "company_website_url": escape(url), "unsubscribe_url": escape(unsubscribe),
@@ -127,8 +169,9 @@ def build_message(row, to_addr: str) -> EmailMessage:
     sender = env("MAIL_FROM", required=True)
     url = unsubscribe_url(str(row["id"]))
     company, address = env("COMPANY_NAME", required=True), env("COMPANY_ADDRESS", required=True)
+    sign = "\n".join(signature_lines())
     footer = (
-        f"\n\n--\n{env('SENDER_NAME', '')}\n{company}\n{address}\n"
+        f"\n\nBest regards,\n{sign}\n\n--\n{company} - {address}\n"
         f"You received this because your company's public contact details list this address. "
         f"Unsubscribe: {url}"
     )

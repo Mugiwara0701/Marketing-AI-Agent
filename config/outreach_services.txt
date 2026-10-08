@@ -1,0 +1,1 @@
+Beyond this, we also provide AOSP and Android platform customization, Android and Linux BSP and board bring-up, Linux kernel and device drivers, Yocto and embedded Linux builds, U-Boot and bootloader work, embedded firmware, peripheral integration and OTA update systems, either as a defined project or as extra engineering capacity for your team.

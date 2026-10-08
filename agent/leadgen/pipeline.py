@@ -19,7 +19,7 @@ from agentkit.config import env
 from agentkit.llm import LLMError
 from agentkit.log import get_logger
 
-from .. import sources, web
+from .. import mailer, sources, web
 from ..tasks.assess import assess_page
 from . import approval, contacts, identity, intent, outreach, scoring, strategy
 from .browser import Browser, BudgetExhaustedError, SearchBlockedError
@@ -530,6 +530,10 @@ class Pipeline:
                 log.warning("Email generation failed; retried next run",
                             extra={"ctx": {"lead_id": lead.lead_id, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}})  # fmt: skip
                 return False
+            if setup := mailer.identity_problems():
+                log.warning(
+                    "Email identity settings incomplete", extra={"ctx": {"problems": setup}}
+                )
             contact_id = lead.contact.id or await self.repo.save_contact(lead.lead_id, lead.contact)
             note = "; ".join(problems) or None
             if (

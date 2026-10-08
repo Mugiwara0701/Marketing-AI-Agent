@@ -6,6 +6,9 @@ A flagged draft still goes to approval, with the problems shown to the person de
 """
 
 import re
+from pathlib import Path
+
+from agentkit.config import env
 
 from ..tasks import proposal
 from . import intent
@@ -53,6 +56,29 @@ def ungrounded_tech(body: str, context: str) -> list[str]:
     return out
 
 
+def services_paragraph() -> str:
+    """The "what else we provide" paragraph, from OUTREACH_SERVICES_FILE (default config/outreach_services.txt). Fixed
+    text written by a person, so it never contains an invented claim; empty when the file is missing or empty."""
+    path = Path(
+        env("OUTREACH_SERVICES_FILE", "config/outreach_services.txt")
+        or "config/outreach_services.txt"
+    )
+    try:
+        return " ".join(path.read_text(encoding="utf-8").split())
+    except OSError:
+        return ""
+
+
+def with_services(body: str, services: str | None = None) -> str:
+    """The draft with the services paragraph placed before the closing question (the last paragraph). Added once."""
+    services = services_paragraph() if services is None else services
+    if not services or services in body:
+        return body
+    paras = re.split(r"\n\s*\n", body.strip())
+    at = len(paras) - 1 if len(paras) >= 3 else len(paras)
+    return "\n\n".join([*paras[:at], services, *paras[at:]])
+
+
 async def draft(lead: Lead, contact: Contact) -> tuple[proposal.EmailDraft, list[str]]:
     """(draft, problems). Problems go to the approver as a warning; they never send anything."""
     ctx = lead_context(lead, contact)
@@ -60,4 +86,5 @@ async def draft(lead: Lead, contact: Contact) -> tuple[proposal.EmailDraft, list
     problems = [*problems, *ungrounded_tech(d.subject + " " + d.body, ctx)]
     if lead.company_name.lower() not in (d.subject + d.body).lower():
         problems.append("the email does not name the company: probably generic")
-    return d, problems
+    # Added after the checks above: it is our own fixed text, not something the model could have invented
+    return d.model_copy(update={"body": with_services(d.body)}), problems
