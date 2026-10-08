@@ -7,12 +7,12 @@
 search:
   # Each run takes the next queries from the strategy (least recently run first). A query run in the last
   # `repeat_after_days` is not repeated.
-  queries_per_run: 12
+  queries_per_run: 16
   repeat_after_days: 14
-  results_per_query: 10
+  results_per_query: 15
   use_job_feeds: false # also read the job / project feed APIs of config/sources.yaml (hiring signals)
   feed_items: 40
-  pages_per_query: 4 # results opened per query (after the cheap pre-filter)
+  pages_per_query: 6 # results opened per query (after the cheap pre-filter)
   # Optional text added to every query. Empty: marketplaces, shops and job boards are dropped from the result list
   # by the pre-filter instead, so the visible Chrome searches read like a person's.
   query_suffix: ""
@@ -38,6 +38,40 @@ search:
     - OTA updates
     - embedded Android app
     - peripheral integration
+    # --- added: the same work under other names (Android / AOSP) ---
+    - Android platform development
+    - Android framework customization
+    - Android system development
+    - Android device bring-up
+    - Android device integration
+    - Android OTA
+    # --- embedded Linux ---
+    - Buildroot
+    - Linux platform development
+    - Linux board support package
+    # --- low level ---
+    - Linux kernel development
+    - device driver development
+    - hardware bring-up
+    - firmware development
+    - hardware integration
+    # --- peripheral / device integration ---
+    - sensor integration
+    - camera integration
+    - display integration
+    - touchscreen integration
+    - Bluetooth integration
+    - Wi-Fi integration
+    - USB integration
+    - CAN bus integration
+    - NFC integration
+    - RFID integration
+    - cellular integration
+    - GNSS integration
+    # --- same work, other names ---
+    - Android Open Source Project
+    - Yocto Project
+    - bootloader development
   # Who might need it: products and systems companies build (related ones spread apart).
   products:
     - EV charging station
@@ -62,9 +96,68 @@ search:
     - smart energy meter
     - interactive classroom display
     - vehicle gateway
-  industries: [automotive, industrial automation, healthcare, retail, logistics, energy, smart building, security]
+    # --- added: automotive ---
+    - digital cockpit
+    - instrument cluster
+    - telematics device
+    - automotive head unit
+    - rear-seat entertainment system
+    - connected vehicle device
+    # --- industrial ---
+    - industrial control panel
+    - industrial gateway
+    - edge gateway
+    - rugged tablet
+    - machine controller
+    - operator terminal
+    - factory automation controller
+    # --- retail ---
+    - self-checkout terminal
+    - retail kiosk
+    - interactive display
+    - smart locker
+    - payment terminal
+    # --- security ---
+    - biometric terminal
+    - video surveillance device
+    - smart intercom
+    - visitor management kiosk
+    # --- healthcare ---
+    - patient monitoring device
+    - medical tablet
+    - medical kiosk
+    - connected medical device
+    - diagnostic device
+    # --- energy ---
+    - EV charger
+    - energy management device
+    - battery management system
+    - solar monitoring device
+    # --- logistics ---
+    - warehouse handheld
+    - fleet tracking device
+    - parcel locker
+    - asset tracking device
+    # --- IoT / smart devices ---
+    - smart appliance
+    - edge AI device
+    - edge computing device
+    - connected device
+    # --- robotics ---
+    - industrial robot
+    - autonomous mobile robot
+    - robotic controller
+    # --- agriculture ---
+    - agricultural IoT device
+    - precision agriculture device
+    - farm monitoring device
+    # --- more complete products ---
+    - access control terminal
+    - energy gateway
+  industries: [automotive, industrial automation, healthcare, retail, logistics, energy, smart building, security,
+               robotics, agriculture, smart city, education]
   # Generic platforms used as product modifiers alongside project technologies.
-  platforms: [Android, embedded Linux, ""]
+  platforms: [Android, embedded Linux, Android-based, Linux-based, ""]
   # Customer signals, written the way the CUSTOMER writes ("developer" alone brings developers advertising
   # themselves; "manufacturer" / "supplier" bring sellers: both are refused in code).
   builder_phrases:
@@ -72,6 +165,18 @@ search:
     - startup building
     - company launches new
     - product company building
+    # builder queries read "<phrase> <technology> <product>": each phrase ends where a technology / product fits,
+    # and does not repeat a word the technology or product already supplies (no "Android-based" here)
+    - company developing a new
+    - company designing hardware and software for
+    - startup building a commercial
+    - company launching a new hardware platform for
+    - company launching a new
+    - startup developing
+    - company engineering team building
+    - company hardware product development for
+    - company building a new embedded product for
+    - company working on a new
   need_phrases:
     - looking for development partner for
     - seeking vendor for
@@ -81,11 +186,30 @@ search:
     - subcontracting
     - looking for outside team for
     - wants to outsource
+    # need queries read "<technology> <product> company <phrase> <capability>": each phrase ends with "for" / "with" / "of".
+    # 8 + 11 = 19 phrases: not a multiple of 3 or 5, which the generator strides by
+    - looking for a development partner for
+    - looking for an engineering partner for
+    - looking for an embedded development partner for
+    - looking for a technology partner for
+    - seeking an engineering partner for
+    - seeking external engineering support for
+    - need additional engineering resources for
+    - augment our engineering team with
+    - external development team for
+    - outsourced product development of
+    - contract engineering for
   rfp_words:
     - RFP
     - RFQ
     - tender
     - request for proposal
+    - request for quotation
+    - request for information
+    - RFI
+    - procurement
+    - vendor selection
+    - statement of work
 
 # Optional context of the CURRENT project. Only shapes queries; the target stays "potential customers". Example:
 #   project_context:
@@ -122,7 +246,19 @@ exclude_companies:
    lyft, apple, google, amazon, microsoft, samsung, xiaomi, huawei, oppo, vivo, fairphone, arrow, avnet,
    mouser, digikey, farnell, canonical, redhat, "red hat", suse, windriver, "wind river", timesys,
    montavista, linaro, mender, balena,
-   "bosch rexroth"] # matches the site boschrexroth.com and the name "Bosch Rexroth"
+   "bosch rexroth", # matches the site boschrexroth.com and the name "Bosch Rexroth"
+   # big brands that build in-house (added)
+   sony, lg, lenovo, dell, hp, "hewlett packard", meta, facebook,
+   # semiconductor / chip companies (added; the page-type check in code covers the rest)
+   nxp, qualcomm, mediatek, broadcom, intel, amd, nvidia, stmicroelectronics, renesas, infineon, microchip,
+   marvell, arm, realtek, rockchip, allwinner, espressif, "texas instruments", "nordic semiconductor",
+   "silicon labs", "analog devices", onsemi,
+   # board / module vendors and more distributors
+   toradex, variscite, congatec, olimex, seeed, "raspberry pi", technexion, phytec, forlinx,
+   element14, "rs components", newark, "digi key",
+   # engineering competitors and staffing firms
+   globallogic, luxoft, "tata elxsi", sasken, einfochips, embitel, softteco,
+   randstad, adecco, manpower, "robert half", "kelly services"]
 # Business decision: companies based in these countries are not pitched (checked on the site ending and on the
 # location read from the page).
 exclude_countries:
@@ -143,7 +279,7 @@ contacts:
 # --------------------------------------------------------------------------------------------------- limits
 limits:
   max_new_leads_per_run: 10 # leads that reach EMAIL_DRAFTED in one run
-  max_pages_per_run: 60
+  max_pages_per_run: 100 # >= queries_per_run x pages_per_query (16 x 6 = 96), or late queries are starved
   max_pages_per_domain: 6
   host_delay_seconds: 2.0
   engine_rest_minutes: 30 # a search engine that shows a CAPTCHA is not used again for this long
