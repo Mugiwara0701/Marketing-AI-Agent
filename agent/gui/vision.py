@@ -23,6 +23,7 @@ GRID = 1000
 
 class Look(BaseModel):
     popup: bool = False
+    kind: str = ""  # cookie / region / ad / newsletter / chat / other, when popup is true
     label: str = ""
     x: int | None = None
     y: int | None = None
@@ -47,9 +48,11 @@ def to_pixels(x: int | None, y: int | None, width: int, height: int) -> tuple[in
     return (min(width - 1, x * width // GRID), min(height - 1, y * height // GRID))
 
 
-async def shrink(shot_b64: str, width: int = 768) -> str:
-    """The screenshot scaled down to `width` px (ImageMagick): fewer image tokens, much faster on a CPU. The model's
-    coordinates use a 0-1000 grid, so the size does not matter to them. Unchanged if ImageMagick fails."""
+async def shrink(shot_b64: str, width: int = 0) -> str:
+    """The screenshot scaled down to `width` px (ImageMagick; VISION_SHOT_WIDTH, default 768): fewer image tokens,
+    much faster on a CPU. On a GPU 1024 or more helps the model see a small "x". The model's coordinates use a
+    0-1000 grid, so the size does not matter to them. Unchanged if ImageMagick fails."""
+    width = width or int(env("VISION_SHOT_WIDTH", "768") or 768)
     try:
         proc = await asyncio.create_subprocess_exec(
             "convert", "png:-", "-resize", f"{width}x", "png:-",

@@ -18,20 +18,49 @@ def test_find_phrase_on_ocr_output():
     assert find_phrase(words, "Linux kernel drivers") is None
 
 
-def test_popup_hints_and_buttons():
-    from agent.gui.desktop import _POPUP_BUTTONS, _POPUP_HINTS
+def _screen(*lines: tuple[int, str]):
+    """OCR words for one screen: each (x, text) is its own line, word by word."""
+    return parse_tsv(_tsv(*lines))
 
-    assert _POPUP_HINTS.search("Cookies and Data Processing We and our 12 partners")
-    assert _POPUP_HINTS.search("Set your country and language")
-    assert not _POPUP_HINTS.search("Senior Android engineer, AOSP bring-up, apply now")
-    tsv = "level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext\n" + "".join(
-        f"5\t1\t1\t1\t{ln}\t{i}\t{x}\t400\t60\t20\t90\t{t}\n"
-        for ln, (x, words) in enumerate([(730, "Decline All"), (880, "Accept All")], start=1)
-        for i, t in enumerate(words.split())
+
+def test_popup_kinds_and_buttons():
+    from agent.gui.desktop import popup_on_screen
+
+    kind, spot = popup_on_screen(
+        _screen((100, "We use cookies"), (730, "Decline All"), (880, "Accept All"))
+    )  # type: ignore[misc]
+    assert kind == "cookie" and spot and spot[0] < 850  # refuses before accepting
+    assert popup_on_screen(_screen((100, "Set your country and language"))) == ("region", None)
+    assert (
+        popup_on_screen(_screen((100, "Senior Android engineer, AOSP bring-up, apply now"))) is None
     )
-    words = parse_tsv(tsv)
-    spot = next(p for b in _POPUP_BUTTONS if (p := find_phrase(words, b, 110)))
-    assert spot[0] < 800  # refuses before accepting
+    assert popup_on_screen(_screen((100, "Our global presence in 40 countries"))) is None
+
+
+def test_region_popup_stays_on_the_open_site():
+    from agent.gui.desktop import popup_on_screen
+
+    words = _screen(
+        (100, "It looks like you're in India"),
+        (100, "Go to India site"),
+        (600, "Stay on Global site"),
+    )
+    kind, spot = popup_on_screen(words)  # type: ignore[misc]
+    assert kind == "region" and spot and spot[0] > 600  # "Stay on ...", not "Go to India site"
+    words = _screen((100, "You are visiting our US website"), (600, "Stay here"))
+    assert popup_on_screen(words)[0] == "region"  # type: ignore[index]
+
+
+def test_ad_popup_is_refused_not_accepted():
+    from agent.gui.desktop import popup_on_screen
+
+    words = _screen((100, "Get 20% off your first order"), (100, "Claim offer"), (600, "No thanks"))
+    kind, spot = popup_on_screen(words)  # type: ignore[misc]
+    assert kind == "ad" and spot and spot[0] > 600
+    # an offer with only an "x" icon: OCR knows it is there but not where to click, the vision model looks
+    assert popup_on_screen(_screen((100, "Limited time offer: free shipping"))) == ("ad", None)
+    # a "Book a demo" button on a normal page is not a popup
+    assert popup_on_screen(_screen((100, "Rugged EV chargers"), (100, "Book a demo"))) is None
 
 
 def test_vision_points_to_pixels():
@@ -229,6 +258,93 @@ def test_popup_closed_by_ocr_without_calling_the_vision_model(monkeypatch):
     )  # clicked "Decline All"; the model was never asked
 
 
+def _fake_popup_desktop(monkeypatch, ocr, looks):
+    from agent.gui import desktop
+
+    calls: list = []
+
+    async def fake_ocr(self, mode):
+        return ocr(calls)
+
+    async def fake_see(self):
+        calls.append("see")
+        self.last_look = next(looks, None)
+        return self.last_look
+
+    async def fake_click(self, x, y):
+        calls.append((x, y))
+
+    async def fake_act(self, **body):
+        calls.append(body.get("key"))
+        return {}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(desktop.Desktop, "_ocr", fake_ocr)
+    monkeypatch.setattr(desktop.Desktop, "see", fake_see)
+    monkeypatch.setattr(desktop.Desktop, "click_at", fake_click)
+    monkeypatch.setattr(desktop.Desktop, "act", fake_act)
+    monkeypatch.setattr(desktop.Desktop, "_shot_size", lambda self: (1280, 800))
+    monkeypatch.setattr(desktop.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(desktop.asyncio, "sleep", no_sleep)
+    monkeypatch.delenv("DESKTOP_VISION_FIRST", raising=False)
+    return desktop.Desktop("t"), calls
+
+
+def _tsv(*lines: tuple[int, str]) -> str:
+    return "level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext\n" + "".join(
+        f"5\t1\t1\t1\t{ln}\t{i}\t{x + i * 70}\t{300 + ln * 40}\t60\t20\t90\t{t}\n"
+        for ln, (x, text) in enumerate(lines, start=1)
+        for i, t in enumerate(text.split())
+    )
+
+
+def test_region_popup_ocr_misses_goes_to_the_vision_model(monkeypatch):
+    """Region wording but no known button: the vision model picks the button."""
+    from agent.gui import vision
+
+    tsv = _tsv((100, "You are visiting our India website"))
+    looks = iter(
+        [vision.Look(popup=True, kind="region", label="Stay", x=500, y=500), vision.Look()]
+    )
+    d, calls = _fake_popup_desktop(
+        monkeypatch, lambda c: tsv if not any(isinstance(x, tuple) for x in c) else "", looks
+    )
+    assert asyncio.run(d.dismiss_popups()) == 1
+    assert calls == ["see", (640, 400)]
+
+
+def test_a_click_that_does_not_close_the_popup_is_not_repeated(monkeypatch):
+    """OCR's button stays on screen after the click: Escape, then the vision model chooses."""
+    from agent.gui import vision
+
+    tsv = _tsv((100, "Before you go"), (600, "Close"))
+    looks = iter([vision.Look(popup=True, kind="ad", label="x", x=900, y=200)])
+    d, calls = _fake_popup_desktop(monkeypatch, lambda c: "" if (1152, 160) in c else tsv, looks)
+    asyncio.run(d.dismiss_popups())
+    ocr_click = calls[0]
+    assert calls[1:] == ["Escape", "see", (1152, 160)]  # never the same OCR click twice
+    assert isinstance(ocr_click, tuple)
+
+
+def test_vision_look_checks_pages_without_popup_wording(monkeypatch):
+    """An ad that is one image (no text OCR can read): only DESKTOP_VISION_LOOK=1 asks the model."""
+    from agent.gui import vision
+
+    monkeypatch.setenv("DESKTOP_VISION_LOOK", "1")
+    looks = iter([vision.Look(popup=True, kind="ad", label="x", x=800, y=250), vision.Look()])
+    d, calls = _fake_popup_desktop(monkeypatch, lambda c: _tsv((100, "Rugged EV chargers")), looks)
+    assert asyncio.run(d.dismiss_popups()) == 1
+    assert (1024, 200) in calls
+
+    monkeypatch.setenv("DESKTOP_VISION_LOOK", "0")
+    d, calls = _fake_popup_desktop(
+        monkeypatch, lambda c: _tsv((100, "Rugged EV chargers")), iter([])
+    )
+    assert asyncio.run(d.dismiss_popups()) == 0 and "see" not in calls
+
+
 def test_reading_a_page_never_returns_just_the_address_bar(monkeypatch):
     """Ctrl+A with the focus in the address bar copies the URL, not the page: the page then looked empty."""
     from agent.gui import desktop
@@ -361,3 +477,60 @@ def test_lead_browser_closes_chrome_unless_asked_to_keep_it(monkeypatch):
     monkeypatch.setenv("DESKTOP_KEEP_CHROME", "1")
     asyncio.run(b.close())
     assert Desk.closed == 1
+
+
+def _keyboard_desktop(monkeypatch, active_after_activate: str):
+    from agent.gui import desktop
+
+    typed: list = []
+    state = {"active": "999"}  # the keyring prompt is in front
+
+    class FakeEx:
+        def handle(self, body):
+            typed.append(body)
+            return {}
+
+    async def fake_run(self, cmd, timeout=10):
+        if cmd[:2] == ["xdotool", "search"]:
+            return b"111\n"  # the agent's Chrome window
+        if cmd[1] == "getactivewindow":
+            return state["active"].encode()
+        if cmd[1] == "getwindowname":
+            return b"Unlock Login Keyring"
+        if cmd[1] == "windowactivate":
+            state["active"] = active_after_activate
+        return b""
+
+    monkeypatch.setattr(desktop.Desktop, "_run", fake_run)
+    d = desktop.Desktop("t")
+    d._ex = FakeEx()  # type: ignore[assignment]
+    return d, typed
+
+
+def test_keys_never_go_to_a_window_in_front_of_chrome(monkeypatch):
+    """An "Unlock keyring" prompt keeps the keyboard: nothing is typed into it."""
+    import pytest
+
+    from agent.gui.desktop import DesktopError
+
+    d, typed = _keyboard_desktop(monkeypatch, active_after_activate="999")
+    with pytest.raises(DesktopError, match="nothing typed"):
+        asyncio.run(d.act(action="type", text="android bsp partner"))
+    assert typed == []
+
+
+def test_chrome_brought_back_to_the_front_before_typing(monkeypatch):
+    d, typed = _keyboard_desktop(monkeypatch, active_after_activate="111")
+    asyncio.run(d.act(action="type", text="android bsp partner"))
+    assert typed == [{"action": "type", "text": "android bsp partner"}]
+
+
+def test_chrome_never_asks_the_system_keyring(monkeypatch, tmp_path):
+    from agent.gui import desktop
+
+    seen: list = []
+    monkeypatch.setenv("CHROME_BIN", "/usr/bin/true")
+    monkeypatch.setenv("DESKTOP_CHROME_PROFILE", str(tmp_path))
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda args, **kw: seen.append(args))
+    asyncio.run(desktop.Desktop("t")._launch())
+    assert "--password-store=basic" in seen[0]
