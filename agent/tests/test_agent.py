@@ -576,3 +576,36 @@ def test_custom_template_file(monkeypatch, tmp_path):
         mailer.build_message({"id": "abc", "subject": "S", "body": "Hi"}, "to@c.io"), "html"
     )
     assert html.startswith("<p>Acme Eng</p>") and "<p" in html and "u</a>" in html
+
+
+def test_signature_shows_only_what_is_set_and_the_letter_has_no_banner(monkeypatch):
+    _mail_env(monkeypatch)
+    monkeypatch.setenv("SENDER_TITLE", "Embedded Engineering")
+    monkeypatch.delenv("COMPANY_PHONE", raising=False)
+    msg = mailer.build_message(
+        {"id": "abc", "subject": "S", "body": "Hello,\n\nA line."}, "to@c.io"
+    )
+    html, text = _part(msg, "html"), _part(msg, "plain")
+    assert (
+        "Best regards," in html
+        and "<strong>Ana</strong>" in html
+        and "Embedded Engineering" in html
+    )
+    assert (
+        'href="https://acme.io"' in html and "border-bottom:3px" not in html
+    )  # no newsletter banner
+    assert "Best regards,\nAna\nEmbedded Engineering\nAcme Eng\nacme.io" in text
+    monkeypatch.delenv("COMPANY_WEBSITE")
+    monkeypatch.delenv("SENDER_TITLE")
+    bare = _part(
+        mailer.build_message({"id": "abc", "subject": "S", "body": "Hi"}, "to@c.io"), "plain"
+    )
+    assert "Best regards,\nAna\nAcme Eng\n\n--" in bare  # nothing empty is printed
+
+
+def test_identity_problems_name_placeholders_and_missing_fields(monkeypatch):
+    for k, v in {"SENDER_NAME": "", "COMPANY_WEBSITE": "", "COMPANY_ADDRESS": "address"}.items():
+        monkeypatch.setenv(k, v)
+    assert len(mailer.identity_problems()) == 3
+    _mail_env(monkeypatch)
+    assert mailer.identity_problems() == []

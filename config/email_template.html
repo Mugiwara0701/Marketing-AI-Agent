@@ -8,46 +8,25 @@
 <title>{{subject}}</title>
 </head>
 <!--
-  Outreach email template. Placeholders (all filled in by agent/mailer.py, HTML-escaped):
-    {{subject}} {{preheader}} {{body}} {{sender_name}} {{company_name}} {{company_address}}
-    {{company_website}} {{company_website_url}} {{unsubscribe_url}}
-  {{body}} is the approved draft as <p> paragraphs. Keep styles inline: most mail apps drop <style> blocks.
-  Point EMAIL_TEMPLATE at another file to change the design without touching code.
+  Outreach email template: a plain business letter (no banner, no card, no colours), so it reads as one person writing
+  to another. Placeholders (all filled in by agent/mailer.py, HTML-escaped):
+    {{subject}} {{preheader}} {{body}} {{signature}} {{sender_name}} {{sender_title}} {{company_name}}
+    {{company_address}} {{company_website}} {{company_website_url}} {{unsubscribe_url}}
+  {{body}} is the approved draft as <p> paragraphs. {{signature}} is the sender block with only the settings that are
+  filled in (SENDER_NAME, SENDER_TITLE, COMPANY_NAME, COMPANY_WEBSITE, COMPANY_PHONE).
+  Keep styles inline: most mail apps drop <style> blocks. Point EMAIL_TEMPLATE at another file to change the design.
 -->
-<body style="margin:0;padding:0;background:#f4f5f7;">
+<body style="margin:0;padding:0;">
 <span style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">{{preheader}}</span>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f5f7;">
-  <tr>
-    <td align="center" style="padding:24px 12px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-             style="max-width:600px;background:#ffffff;border-radius:8px;border:1px solid #e3e6ea;">
-        <tr>
-          <td style="padding:20px 28px;border-bottom:3px solid #1f6feb;">
-            <span style="font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:bold;color:#1b1f24;">{{company_name}}</span>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:24px 28px 8px 28px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:#1b1f24;">
-            {{body}}
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:8px 28px 24px 28px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1b1f24;">
-            <strong>{{sender_name}}</strong><br>
-            {{company_name}}<br>
-            <a href="{{company_website_url}}" style="color:#1f6feb;text-decoration:none;">{{company_website}}</a>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:16px 28px;border-top:1px solid #e3e6ea;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:#6a737d;">
-            {{company_name}} &middot; {{company_address}}<br>
-            You received this because your company's public contact details list this address.
-            <a href="{{unsubscribe_url}}" style="color:#6a737d;">Unsubscribe</a>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-</table>
+<div style="max-width:620px;padding:16px 8px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;">
+  {{body}}
+  <p style="margin:18px 0 4px 0;">Best regards,</p>
+  <p style="margin:0 0 24px 0;line-height:1.5;">{{signature}}</p>
+  <p style="margin:0;padding-top:12px;border-top:1px solid #d0d4d9;font-size:12px;line-height:1.5;color:#6a737d;">
+    {{company_name}} &middot; {{company_address}}<br>
+    You received this because your company's public contact details list this address.
+    <a href="{{unsubscribe_url}}" style="color:#6a737d;">Unsubscribe</a>
+  </p>
+</div>
 </body>
 </html>
