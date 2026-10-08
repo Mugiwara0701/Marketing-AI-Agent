@@ -595,7 +595,7 @@ class Desktop:
 
     async def dismiss_popups(self) -> int:
         """Close what covers the page (cookie banner, stay-on-this-region box, ad or newsletter box, chat prompt) by
-        clicking its button with the mouse, the way a person would. A click that leaves the popup there is not
+        clicking its button with the mouse, the way a person would (one Escape when nothing is recognised). A click that leaves the popup there is not
         repeated: Escape, and the vision model chooses the next click. Up to 4 rounds."""
         if (env("DESKTOP_DISMISS_POPUPS", "1") or "1") == "0":
             return 0
@@ -605,6 +605,13 @@ class Desktop:
         for _ in range(4):
             popup, spot = await self._popup_spot(ask_model)
             if not popup:
+                if not closed:
+                    # An ad that is one image (no wording for OCR, no vision on a CPU) usually still closes on Escape;
+                    # a page without a popup ignores it. Never click the dimmed area: it can be a link.
+                    # The first Escape can go to the address bar (a suggestion list), so press it twice.
+                    for _ in range(2):
+                        await self.act(action="key", key="Escape")
+                        await asyncio.sleep(0.7)
                 break
             if spot is not None and last is not None and _near(spot, last):
                 spot, ask_model = None, True  # the same click again would not close it
