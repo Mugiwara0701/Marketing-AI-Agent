@@ -43,6 +43,9 @@ class Services:
     assess: Assessor = assess_page
     draft: Callable[[Lead, Contact], Awaitable] = outreach.draft
     find_contacts: Callable[..., Awaitable[contacts.Discovery]] = contacts.discover
+    manual_notify: approval.ManualNotifier | None = (
+        None  # qualified lead, no contact: name + website to Slack
+    )
 
 
 @dataclass
@@ -479,6 +482,9 @@ class Pipeline:
             self.stats.add("contact_not_found")
             log.info("Contact not found", extra={"ctx": {"lead_id": lead.lead_id, "why": reason, "attempt": attempts,
                                                          "form": bool(found.form_url)}})  # fmt: skip
+            # The last attempt (a contact form is retried too): a person takes it from here, once.
+            if attempts == max_attempts:
+                await self._manual_check(lead, reason, found.form_url)
             if attempts >= max_attempts and not found.form_url:
                 note = f"no contact after {attempts} attempts: {reason}"
                 await self.repo.set_status(lead.lead_id, LeadStatus.REJECTED, note=note)
@@ -500,6 +506,18 @@ class Pipeline:
         log.info("Contact found", extra={"ctx": {"lead_id": lead.lead_id, "role": found.best.role,
                                                  "rank": found.best.rank, "named": bool(found.best.name)}})  # fmt: skip
         return True
+
+    async def _manual_check(self, lead: Lead, reason: str, form_url: str | None) -> None:
+        """Tell a person about a qualified company we found no contact for. Never fails the run."""
+        if self.svc.manual_notify is None:
+            return
+        try:
+            await self.svc.manual_notify(lead, reason, form_url)
+        except Exception as exc:
+            log.warning("manual-check post failed", extra={"ctx": {"lead_id": lead.lead_id, "error": str(exc)[:200]}})  # fmt: skip
+            return
+        self.stats.add("manual_check_posted")
+        log.info("Manual check requested", extra={"ctx": {"lead_id": lead.lead_id, "company": lead.company_name}})  # fmt: skip
 
     async def write_email(self, lead: Lead) -> bool:
         assert lead.lead_id  # noqa: S101

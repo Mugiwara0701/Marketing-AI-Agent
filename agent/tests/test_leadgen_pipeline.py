@@ -463,3 +463,55 @@ def test_a_stored_lead_of_a_company_excluded_later_is_dropped_not_reopened(tmp_p
     assert lead and lead.status == LeadStatus.REJECTED
     assert not any("voltgrid" in u for u in browser.opened)  # its site is not opened again
     assert repo.db.execute("select count(*) from emails").fetchone()[0] == 0
+
+
+def _manual_calls(repo, tmp_path, runs, form_url=None):
+    calls = []
+
+    async def notify(lead, reason, form):
+        calls.append((lead.company_name, lead.company_website, reason, form))
+
+    for _ in range(runs):
+        p = _no_contact_pipeline(repo, tmp_path, form_url=form_url)
+        p.svc.manual_notify = notify
+        _run(p)
+    return calls
+
+
+def test_qualified_lead_without_contact_goes_to_manual_check_once_when_final(tmp_path):
+    repo = SqliteRepository(":memory:")
+    _stored_qualified(repo, "dead.example.com")
+    assert _manual_calls(repo, tmp_path, 2) == []  # attempts 1 and 2 may still find a contact
+    calls = _manual_calls(repo, tmp_path, 3)  # the third attempt is the last
+    assert len(calls) == 1 and calls[0][:2] == ("Dead Co", "dead.example.com")
+
+
+def test_form_only_lead_goes_to_manual_check_once_with_its_form(tmp_path):
+    repo = SqliteRepository(":memory:")
+    _stored_qualified(repo, "formonly.com")
+    calls = _manual_calls(
+        repo, tmp_path, 4, form_url="https://formonly.com/contact"
+    )  # a 4th run adds nothing
+    assert len(calls) == 1 and calls[0][3] == "https://formonly.com/contact"
+
+
+def test_manual_check_failure_does_not_fail_the_run(tmp_path):
+    repo = SqliteRepository(":memory:")
+    _stored_qualified(repo, "x.example.com")
+
+    async def broken(lead, reason, form):
+        raise RuntimeError("slack down")
+
+    for _ in range(3):
+        p = _no_contact_pipeline(repo, tmp_path)
+        p.svc.manual_notify = broken
+        _run(p)  # no exception
+
+
+def test_manual_check_text_has_company_and_website():
+    from agent.leadgen.models import Lead
+
+    text = approval.manual_text(
+        Lead(company_name="A & B", company_website="ab.com", lead_score=70), "no contact", None
+    )
+    assert "A &amp; B" in text and "https://ab.com" in text and "70" in text

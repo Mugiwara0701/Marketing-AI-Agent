@@ -74,7 +74,8 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
     repo = await open_repository(rt)
     try:
         svc = Services(repo=repo, browser=make_browser(rt.browser, cfg),
-                       approver=approval.make_approver(rt.dry_run, rt.out_dir))  # fmt: skip
+                       approver=approval.make_approver(rt.dry_run, rt.out_dir),
+                       manual_notify=approval.make_manual_notifier(rt.dry_run, rt.out_dir))  # fmt: skip
         pipe = Pipeline(
             svc, cfg, deadline=deadline or time.monotonic() + 3600, kill_file=_kill_file()
         )
