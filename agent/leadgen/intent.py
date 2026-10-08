@@ -121,11 +121,43 @@ _FORM_BUTTON = re.compile(
 )
 
 
+# A page address that is a contact page: only there does a form made by a script count (a newsletter box in a footer
+# is the same script on every page).
+CONTACT_URL = re.compile(
+    r"/[\w-]*(contact|kontakt|get-in-touch|reach-us|enquir|inquir|request-a-)[\w-]*/?(\?|#|$)", re.I
+)
+
+
 def looks_like_contact_form(text: str) -> bool:
     """A contact form, read from the page's visible text (the desktop browser has no HTML): several field labels and a
     send / submit button."""
     labels = {m.group(1).lower().split()[-1] for m in _FORM_FIELDS.finditer(text or "")}
     return len(labels) >= 3 and bool(_FORM_BUTTON.search(text or ""))
+
+
+_FORM_PERSON = re.compile(
+    r"\b(first name|last name|full name|your name|your message|message)\b\s*\*?", re.I
+)
+CONTACT_TITLE = re.compile(
+    r"contact|kontakt|contacto|contatto|get in touch|reach us|enquir|inquir", re.I
+)
+_FORM_CONSENT = re.compile(
+    r"\b(agree to receive|recaptcha|privacy (policy|statement)|i consent|i accept)\b", re.I
+)
+
+
+def looks_like_screen_form(text: str) -> bool:
+    """The same, read from a screenshot (OCR) of a CONTACT page: only part of the form may be in view and the text is
+    noisy, so a send / submit button together with a message box or two field labels is enough."""
+    t = text or ""
+    labels = {m.group(1).lower().split()[-1] for m in _FORM_FIELDS.finditer(t)}
+    if _FORM_BUTTON.search(t) and (
+        len(labels) >= 2 or ("message" in labels and bool(_FORM_CONSENT.search(t)))
+    ):
+        return True
+    # no button in view (the top of a long form): three labels, one of them a person's name or a message
+    distinct = {" ".join(m.group(1).lower().split()) for m in _FORM_FIELDS.finditer(t)}
+    return len(distinct) >= 3 and bool(_FORM_PERSON.search(t))
 
 
 # A title of a list or directory of companies ("Top 66 EV charging startups"): it names many companies, it is none.

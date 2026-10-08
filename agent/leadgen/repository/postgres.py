@@ -186,12 +186,15 @@ class PostgresRepository:
         )
         return int(row["n"]) if row else 0
 
-    async def set_manual(self, lead_id: str, form_url: str | None, reason: str | None) -> None:
+    async def set_manual(self, lead_id: str, form_url: str | None, reason: str | None) -> bool:
+        row = await db.fetchrow("select contact_form_url from companies where id=$1::uuid", lead_id)
+        new_form = bool(form_url) and (row is None or row["contact_form_url"] != form_url)
         await db.execute(
             """update companies set contact_form_url=coalesce($2, contact_form_url),
                    manual_reason=coalesce($3, manual_reason), updated_at=now() where id=$1::uuid""",
             lead_id, form_url, reason,
         )  # fmt: skip
+        return new_form
 
     async def record_contact_attempt(self, lead_id: str) -> int:
         row = await db.fetchrow(

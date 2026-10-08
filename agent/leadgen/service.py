@@ -75,7 +75,8 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
     try:
         svc = Services(repo=repo, browser=make_browser(rt.browser, cfg),
                        approver=approval.make_approver(rt.dry_run, rt.out_dir),
-                       manual_notify=approval.make_manual_notifier(rt.dry_run, rt.out_dir))  # fmt: skip
+                       manual_notify=approval.make_manual_notifier(rt.dry_run, rt.out_dir),
+                       form_notify=approval.make_form_notifier(rt.dry_run, rt.out_dir))  # fmt: skip
         pipe = Pipeline(
             svc, cfg, deadline=deadline or time.monotonic() + 3600, kill_file=_kill_file()
         )
@@ -170,3 +171,39 @@ async def submit_lead(repo: Repository, lead: Lead, contact: Contact, *, source:
         email_id,
         "draft posted for approval" if posted else "draft saved; approve with `agent leads review`",
     )
+
+
+async def form_check(domains: list[str], *, post: bool = True, post_anyway: bool = False) -> int:
+    """Look for a contact form on each company site (the same contact search as a run) and, if one is found, post it
+    to the form channel for real. No database, no discovery, no email. `post_anyway` posts even without a form (tests
+    the Slack channel). Exit code 1 when a Slack post failed."""
+    from . import contacts  # noqa: PLC0415
+
+    cfg = config.load()
+    cpu_model_time_limits()
+    rt = config.runtime(dry_run=False)
+    notify = approval.make_form_notifier(False, rt.out_dir) if post else None
+    if post and notify is None:
+        print("SLACK_BOT_TOKEN is not set: nothing can be posted (use --no-slack to only look)")  # noqa: T201
+        return 1
+    browser = make_browser(rt.browser, cfg)
+    failed = False
+    try:
+        await browser.start()
+        for domain in domains:
+            found = await contacts.discover(browser, domain, cfg, company=domain)
+            form = found.form_url or (f"https://{domain}" if post_anyway else None)
+            print(  # noqa: T201
+                f"{domain}: form={found.form_url or '-'} emails={len(found.contacts)} "
+                f"blocked={found.blocked or '-'}"
+            )
+            if form and notify:
+                try:
+                    await notify(Lead(company_name=domain, company_website=domain), form)
+                    print(f"  posted to Slack: {form}")  # noqa: T201
+                except Exception as exc:
+                    failed = True
+                    print(f"  Slack post failed: {exc}")  # noqa: T201
+    finally:
+        await browser.close()
+    return 1 if failed else 0

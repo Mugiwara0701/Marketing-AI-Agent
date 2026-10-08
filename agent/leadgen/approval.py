@@ -178,6 +178,47 @@ def make_manual_notifier(dry_run: bool, out_dir: Path) -> ManualNotifier | None:
     return to_slack
 
 
+# A company whose site shows a contact form: name and the page with the form go to a person, who fills it by hand.
+FormNotifier = Callable[[Lead, str], Awaitable[None]]
+
+
+def form_text(lead: Lead, form_url: str) -> str:
+    site = lead.company_website or ""
+    url = site if site.startswith("http") else f"https://{site}"
+    lines = [
+        ":memo: *Contact form to fill*",
+        f"*Company:* {esc(lead.company_name)}",
+        f"*Website:* {esc(url)}",
+        f"*Form page:* {esc(form_url)}",
+    ]
+    if lead.lead_score is not None:
+        lines.append(f"*Score:* {lead.lead_score}")
+    return clip("\n".join(lines), _MAX)
+
+
+def make_form_notifier(dry_run: bool, out_dir: Path) -> FormNotifier | None:
+    """Slack channel SLACK_CHANNEL_FORM (default #form-fill). Dry-run: appended to out/.../form-fill.md.
+    None without Slack: the forms stay on `python -m agent manual`."""
+    if dry_run:
+
+        async def to_file(lead: Lead, form_url: str) -> None:
+            await asyncio.to_thread(_append, out_dir / "form-fill.md", form_text(lead, form_url))
+
+        return to_file
+    if not env("SLACK_BOT_TOKEN"):
+        return None
+    channel = env("SLACK_CHANNEL_FORM", "#form-fill") or "#form-fill"
+
+    async def to_slack(lead: Lead, form_url: str) -> None:
+        await slack.post_message(
+            channel,
+            f"Contact form: {lead.company_name}",
+            [{"type": "section", "text": {"type": "mrkdwn", "text": form_text(lead, form_url)}}],
+        )
+
+    return to_slack
+
+
 async def request(
     repo: Repository, approver: Approver | None, lead: Lead, contact: Contact, email: EmailDraft
 ) -> bool:

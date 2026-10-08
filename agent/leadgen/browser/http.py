@@ -104,7 +104,9 @@ class HttpBrowser:
             log.info("Page not readable", extra={"ctx": {"url": url, "status": got.status}})
             return None
         page = extract.page_from_html(got.url, got.html)
-        page.has_contact_form = web.has_contact_form(got.html)
+        page.has_contact_form = web.has_contact_form(got.html) or (
+            web.has_embedded_form(got.html) and bool(intent.CONTACT_URL.search(got.url))
+        )
         if (
             len(page.text) < 200
         ):  # a JavaScript-only page: try a real browser once, if Playwright is installed

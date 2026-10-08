@@ -97,7 +97,12 @@ class ChromeBrowser:
             for h, t in pairs
             if h.startswith(("http", "mailto:"))
         ]
-        form = await page.evaluate("() => !!document.querySelector('form textarea')")
+        form = False
+        for frame in page.frames:  # a form made by a script (HubSpot...) lives in an iframe
+            with contextlib.suppress(Exception):
+                if await frame.evaluate("() => !!document.querySelector('form textarea')"):
+                    form = True
+                    break
         return Page(
             url=page.url,
             title=await page.title(),

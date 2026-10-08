@@ -12,6 +12,7 @@ A CAPTCHA or bot check is never worked around: the engine rests, the site is ski
 """
 
 import asyncio
+import contextlib
 from urllib.parse import quote_plus, urlparse
 
 from agentkit.config import env
@@ -70,16 +71,34 @@ class DesktopBrowser:
         except (DesktopError, OSError):
             log.warning("could not close Chrome", exc_info=True)
 
+    async def _form_on_screen(self) -> bool:
+        """A form drawn on the screen. A long form shows its labels at the top and its button at the bottom, so the
+        top and the bottom of the page are both read and judged together."""
+        desk = self.desk
+        seen = [await desk.ocr_text()]
+        with contextlib.suppress(DesktopError):
+            for where in ("top", "bottom"):
+                await desk.scroll_to(where)
+                seen.append(await desk.ocr_text())
+            await desk.scroll_to("top")
+        return intent.looks_like_screen_form("\n".join(seen))
+
     async def _read(self, label: str) -> Page:
         desk = self.desk
+        title = await desk.title()
+        # Before the copy: Ctrl+A highlights the whole page and OCR then reads it badly.
+        on_screen = await self._form_on_screen() if intent.CONTACT_TITLE.search(title) else None
         text = await desk.read_page()
         if intent.is_consent_page(text) and await desk.dismiss_consent():
             text = await desk.read_page()
         await desk.shot(label)
-        title = await desk.title()
         page = Page(
             url=await desk.current_url(), title=title, text=text
         )  # read the page first, address second
+        if on_screen is None and intent.CONTACT_URL.search(page.url):
+            on_screen = await self._form_on_screen()
+        # a form in an iframe is not in the copied text: it is read from what is drawn on the screen
+        page.has_contact_form = bool(on_screen) and not intent.looks_like_contact_form(text)
         page.blocked = intent.block_reason(text, title)
         if not page.blocked and desk.last_look and desk.last_look.blocked:
             page.blocked = "the vision model sees a CAPTCHA, login wall or access-denied page"
@@ -180,7 +199,8 @@ class DesktopBrowser:
             return None
         try:
             await self.desk.navigate(url)
-        except DesktopError:
+        except DesktopError as exc:
+            log.warning("could not open page", extra={"ctx": {"url": url, "error": str(exc)[:200]}})
             await self.desk.recover()
             return None
         return await self._opened(

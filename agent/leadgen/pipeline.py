@@ -46,6 +46,9 @@ class Services:
     manual_notify: approval.ManualNotifier | None = (
         None  # qualified lead, no contact: name + website to Slack
     )
+    form_notify: approval.FormNotifier | None = (
+        None  # a contact form was found: name + form page to Slack
+    )
 
 
 @dataclass
@@ -467,9 +470,11 @@ class Pipeline:
             self.stats.add("rejected_competitor")
             log.info("Lead rejected", extra={"ctx": {"lead_id": lead.lead_id, "why": note}})
             return False
+        new_form = await self.repo.set_manual(lead.lead_id, found.form_url, found.blocked)
+        if new_form and found.form_url:
+            await self._form_fill(lead, found.form_url)
         if not found.best:
             reason = found.blocked or "no public business contact on the company's site"
-            await self.repo.set_manual(lead.lead_id, found.form_url, found.blocked)
             attempts = await self.repo.record_contact_attempt(lead.lead_id)
             max_attempts = int(self.cfg.contacts.get("max_attempts", 3))
             lead.score = (
@@ -483,7 +488,7 @@ class Pipeline:
             log.info("Contact not found", extra={"ctx": {"lead_id": lead.lead_id, "why": reason, "attempt": attempts,
                                                          "form": bool(found.form_url)}})  # fmt: skip
             # The last attempt (a contact form is retried too): a person takes it from here, once.
-            if attempts == max_attempts:
+            if attempts == max_attempts and not found.form_url:  # a form goes to #form-fill instead
                 await self._manual_check(lead, reason, found.form_url)
             if attempts >= max_attempts and not found.form_url:
                 note = f"no contact after {attempts} attempts: {reason}"
@@ -506,6 +511,18 @@ class Pipeline:
         log.info("Contact found", extra={"ctx": {"lead_id": lead.lead_id, "role": found.best.role,
                                                  "rank": found.best.rank, "named": bool(found.best.name)}})  # fmt: skip
         return True
+
+    async def _form_fill(self, lead: Lead, form_url: str) -> None:
+        """Tell a person where a company's contact form is, so they fill it by hand. Never fails the run."""
+        if self.svc.form_notify is None:
+            return
+        try:
+            await self.svc.form_notify(lead, form_url)
+        except Exception as exc:
+            log.warning("form-fill post failed", extra={"ctx": {"lead_id": lead.lead_id, "error": str(exc)[:200]}})  # fmt: skip
+            return
+        self.stats.add("form_fill_posted")
+        log.info("Contact form posted", extra={"ctx": {"lead_id": lead.lead_id, "company": lead.company_name}})  # fmt: skip
 
     async def _manual_check(self, lead: Lead, reason: str, form_url: str | None) -> None:
         """Tell a person about a qualified company we found no contact for. Never fails the run."""
