@@ -138,6 +138,8 @@ class Pipeline:
                     return
                 if await self.drop_if_excluded(lead):
                     continue
+                if lead.contact and lead.contact.manual:
+                    continue  # resume_manual() takes these, so one lead is never worked on by two loops
                 self.stats.add("resumed")
                 try:
                     await self.advance(lead)
@@ -146,6 +148,25 @@ class Pipeline:
                 except Exception:
                     self.stats.add("errors")
                     log.exception("Resuming lead failed", extra={"ctx": {"lead_id": lead.lead_id}})
+
+    async def resume_manual(self) -> int:
+        """Leads whose email a person added on the dashboard: draft the email and ask for approval in Slack, the same
+        way as for a contact the agent found. Needs no browser. Returns how many leads were moved on."""
+        moved = 0
+        found = await self.repo.leads_with_status(
+            [LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED], 200
+        )
+        for lead in found:
+            if not (lead.contact and lead.contact.manual):
+                continue
+            try:
+                await self.advance(lead)
+            except Exception:
+                self.stats.add("errors")
+                log.exception("Manual contact failed", extra={"ctx": {"lead_id": lead.lead_id}})
+                continue
+            moved += 1
+        return moved
 
     async def drop_if_excluded(self, lead: Lead) -> bool:
         """A company added to exclude_companies after it was stored: reject it instead of working on it again."""
@@ -225,8 +246,10 @@ class Pipeline:
         )  # fmt: skip
         log.info(
             "Search executed",
-            extra={"ctx": {"query": q.text, "family": q.family, "results": len(results)}},
-        )
+            extra={
+                "ctx": {"query": q.text, "typed": text, "family": q.family, "results": len(results)}
+            },
+        )  # "typed" is what went into the search box: the strategy's query plus the campaign's suffix
         opened = 0
         per_query = int(self.cfg.search.get("pages_per_query", 4))
         for r in rank(results):
@@ -438,7 +461,14 @@ class Pipeline:
         if lead.status == LeadStatus.QUALIFIED and not await self.contact(lead):
             return
         if lead.status == LeadStatus.CONTACT_FOUND:
-            if lead.lead_score < min_d:
+            manual = bool(lead.contact and lead.contact.manual)
+            if (
+                manual and lead.score and lead.contact
+            ):  # the score was lowered while no contact was known
+                lead.score = scoring.with_contact(lead.score, lead.contact)
+                lead.lead_score = lead.score.total
+                await self.repo.save_lead(lead)
+            if lead.lead_score < min_d and not manual:  # a person chose this company: no score gate
                 await self.repo.set_status(lead.lead_id, LeadStatus.REJECTED,
                                            note=f"score {lead.lead_score} below draft threshold {min_d}")  # fmt: skip
                 lead.status = LeadStatus.REJECTED
@@ -490,12 +520,16 @@ class Pipeline:
             # The last attempt (a contact form is retried too): a person takes it from here, once.
             if attempts == max_attempts and not found.form_url:  # a form goes to #form-fill instead
                 await self._manual_check(lead, reason, found.form_url)
-            if attempts >= max_attempts and not found.form_url:
+            if (
+                attempts >= max_attempts
+            ):  # kept, not rejected: the dashboard lists it so a person can add an email
                 note = f"no contact after {attempts} attempts: {reason}"
-                await self.repo.set_status(lead.lead_id, LeadStatus.REJECTED, note=note)
-                lead.status = LeadStatus.REJECTED
-                self.stats.add("rejected_no_contact")
-                log.info("Lead rejected", extra={"ctx": {"lead_id": lead.lead_id, "why": note}})
+                await self.repo.set_status(lead.lead_id, LeadStatus.NEEDS_CONTACT, note=note)
+                lead.status = LeadStatus.NEEDS_CONTACT
+                self.stats.add("needs_contact")
+                log.info(
+                    "Lead needs a contact", extra={"ctx": {"lead_id": lead.lead_id, "why": note}}
+                )
             return False
         for c in found.contacts[:3]:
             c.id = await self.repo.save_contact(lead.lead_id, c)

@@ -232,13 +232,15 @@ def _no_contact_pipeline(repo, tmp_path, form_url=None):
     return p
 
 
-def test_dead_site_is_retried_a_few_times_then_rejected(tmp_path):
+def test_dead_site_is_retried_a_few_times_then_waits_for_a_contact(tmp_path):
     repo = SqliteRepository(":memory:")
     lid = _stored_qualified(repo)
     for run in range(1, 4):
         _run(_no_contact_pipeline(repo, tmp_path))
         lead = asyncio.run(repo.get_lead(lid))
-        assert lead and lead.status == (LeadStatus.REJECTED if run == 3 else LeadStatus.QUALIFIED)
+        assert lead and lead.status == (
+            LeadStatus.NEEDS_CONTACT if run == 3 else LeadStatus.QUALIFIED
+        )
     assert (
         "no contact after 3 attempts"
         in repo.db.execute("select status_note from companies").fetchone()[0]
@@ -247,13 +249,54 @@ def test_dead_site_is_retried_a_few_times_then_rejected(tmp_path):
     assert out.get("resumed", 0) == 0
 
 
-def test_form_only_lead_stops_being_retried_but_stays_for_manual_contact(tmp_path):
+def test_form_only_lead_stops_being_retried_and_waits_for_a_contact(tmp_path):
     repo = SqliteRepository(":memory:")
     lid = _stored_qualified(repo, "formonly.com")
     for _ in range(3):
         _run(_no_contact_pipeline(repo, tmp_path, form_url="https://formonly.com/contact"))
-    assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.QUALIFIED  # type: ignore[union-attr]
+    assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.NEEDS_CONTACT  # type: ignore[union-attr]
     assert asyncio.run(repo.leads_needing_contact(3, 10)) == []
+
+
+def _add_manual_contact(repo, lid, email="owner@deadsite.com"):
+    """What the SQL function submit_manual_contact() does for the dashboard."""
+    from agent.leadgen.models import MANUAL_SOURCE, Contact
+
+    asyncio.run(
+        repo.save_contact(lid, Contact(email=email, source=MANUAL_SOURCE, confidence=1.0, rank=0))
+    )
+    assert asyncio.run(repo.set_status(lid, LeadStatus.CONTACT_FOUND))
+
+
+def test_a_contact_added_on_the_dashboard_gets_a_draft_and_a_slack_request(tmp_path):
+    repo = SqliteRepository(":memory:")
+    lid = _stored_qualified(repo)
+    for _ in range(3):
+        _run(_no_contact_pipeline(repo, tmp_path))
+    assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.NEEDS_CONTACT  # type: ignore[union-attr]
+    _add_manual_contact(repo, lid)
+    # a low score does not stop it: a person chose this company
+    repo.db.execute("update companies set lead_score=10")
+
+    p = _no_contact_pipeline(repo, tmp_path)
+    assert asyncio.run(p.resume_manual()) == 1
+    lead = asyncio.run(repo.get_lead(lid))
+    assert lead and lead.status == LeadStatus.PENDING_APPROVAL
+    email = asyncio.run(repo.email_for_lead(lid))
+    assert email and email.to == "owner@deadsite.com" and email.status == "drafted"
+    assert (tmp_path / "approvals" / f"{email.email_id}.md").exists()
+    assert asyncio.run(p.resume_manual()) == 0  # nothing left to move; no second request
+
+
+def test_a_normal_pass_leaves_manual_contacts_to_their_own_loop(tmp_path):
+    repo = SqliteRepository(":memory:")
+    lid = _stored_qualified(repo)
+    for _ in range(3):
+        _run(_no_contact_pipeline(repo, tmp_path))
+    _add_manual_contact(repo, lid)
+    out = _run(_no_contact_pipeline(repo, tmp_path))  # resume() skips it
+    assert out.get("resumed", 0) == 0
+    assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.CONTACT_FOUND  # type: ignore[union-attr]
 
 
 def test_an_unexpected_search_error_costs_one_query_not_the_run(tmp_path):

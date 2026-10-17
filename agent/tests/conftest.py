@@ -14,5 +14,7 @@ def _no_real_services(monkeypatch):
         "EMAIL_SENDING_ENABLED",
         "SLACK_BOT_TOKEN",
         "SLACK_ALERTS_WEBHOOK",
+        "MA_LINK_URL",
+        "MA_LINK_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)

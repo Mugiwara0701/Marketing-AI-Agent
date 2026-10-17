@@ -10,6 +10,7 @@ import yaml
 from agentkit.config import env
 from agentkit.log import get_logger
 
+from .. import campaign_link
 from . import approval, config, outreach, report, sender
 from .browser import make_browser
 from .models import Contact, Lead, LeadStatus
@@ -22,8 +23,10 @@ log = get_logger("agent.leadgen")
 def cpu_model_time_limits() -> None:
     """No NVIDIA GPU: the models run on the CPU and one call can take minutes. Raise every call's time limit
     (LLM_MIN_TIMEOUT, unless already set) so slow answers are waited for instead of failing."""
-    if not shutil.which("nvidia-smi"):
-        os.environ.setdefault("LLM_MIN_TIMEOUT", "420")
+    if (
+        not shutil.which("nvidia-smi") and "LLM_MIN_TIMEOUT" not in os.environ
+    ):  # once: also called every 30 s
+        os.environ["LLM_MIN_TIMEOUT"] = "420"
         log.info(
             "No NVIDIA GPU: model time limits raised",
             extra={"ctx": {"seconds": env("LLM_MIN_TIMEOUT")}},
@@ -63,6 +66,20 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
     """One discovery run. Never sends email. In a dry-run: own SQLite file, Slack written to files."""
     rt = config.runtime(dry_run=dry_run, browser=browser)
     cfg = config.load()
+    # The campaign the Campaign Agent published (agent/campaign_link.py), used for this whole pass. No link, or any
+    # problem: the base config or the last good campaign, never a half-applied one.
+    effective = await campaign_link.apply_campaign(cfg.raw)
+    if effective is not cfg.raw:
+        cfg = config.from_raw(effective)
+    if (
+        running := campaign_link.describe_pass()
+    ) is not None:  # which campaign this pass runs, in the log and to the CA
+        log.info("Pass campaign", extra={"ctx": running})
+        campaign_link.emit(
+            "info", "info", "MA_PASS_CAMPAIGN", running["message"],
+            campaign_id=running["campaign_id"], version=running["version"],
+            details={"sha256": running["sha256"], "query_suffix": str(cfg.search.get("query_suffix") or "")[:80]},
+        )  # fmt: skip
     cpu_model_time_limits()
     if max_leads is not None:
         cfg.limits["max_new_leads_per_run"] = max_leads
@@ -87,6 +104,23 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
             extra={"ctx": {"path": str(path), "dry_run": rt.dry_run, "store": repo.name}},
         )
         return {**stats, "report": str(path), "dry_run": rt.dry_run, "store": repo.name}
+    finally:
+        await repo.close()
+
+
+async def manual_contacts(*, dry_run: bool | None = None) -> dict:
+    """Leads whose email a person added on the dashboard: draft the email and post it to Slack for approval. Runs
+    in seconds, between passes, and needs no browser and no search. Never sends email."""
+    rt = config.runtime(dry_run=dry_run)
+    repo = await open_repository(rt)
+    try:
+        cfg = config.load()
+        cpu_model_time_limits()
+        svc = Services(repo=repo, browser=make_browser(rt.browser, cfg),  # never started: nothing is opened
+                       approver=approval.make_approver(rt.dry_run, rt.out_dir))  # fmt: skip
+        pipe = Pipeline(svc, cfg)
+        moved = await pipe.resume_manual()
+        return {**pipe.stats.counts, "moved": moved} if moved else {}
     finally:
         await repo.close()
 

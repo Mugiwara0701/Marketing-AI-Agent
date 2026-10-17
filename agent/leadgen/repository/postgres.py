@@ -22,7 +22,8 @@ from .sqlite import _problem
 
 # Legacy companies.status kept in step for the dashboard, replies and follow-ups.
 _LEGACY = {
-    LeadStatus.DISCOVERED: "candidate", LeadStatus.QUALIFIED: "qualified", LeadStatus.CONTACT_FOUND: "contact_found",
+    LeadStatus.DISCOVERED: "candidate", LeadStatus.QUALIFIED: "qualified", LeadStatus.NEEDS_CONTACT: "qualified",
+    LeadStatus.CONTACT_FOUND: "contact_found",
     LeadStatus.EMAIL_DRAFTED: "contact_found", LeadStatus.PENDING_APPROVAL: "contact_found",
     LeadStatus.APPROVED: "contact_found", LeadStatus.REJECTED: "rejected", LeadStatus.SENT: "contact_found",
     LeadStatus.FAILED: "contact_found",

@@ -25,7 +25,7 @@ from agentkit import db
 from agentkit.config import env
 from agentkit.log import get_logger
 
-from . import mailer
+from . import campaign_link, mailer
 
 log = get_logger("agent.control")
 
@@ -52,6 +52,9 @@ class Pipeline:
         self.next_at: datetime | None = None
         self.last: dict | None = None  # {"started_at", "finished_at", "outcome", "result"|"error"}
         self._task: asyncio.Task | None = None
+        self._closing = (
+            False  # the service is shutting down: a pass cut off now will start again by itself
+        )
         self._wake = asyncio.Event()
         self._lock = asyncio.Lock()
 
@@ -82,6 +85,7 @@ class Pipeline:
 
     async def close(self) -> None:
         """Service shutdown: cancel the pass in progress; `running` stays as it was."""
+        self._closing = True
         if self._task:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError, TimeoutError):
@@ -93,6 +97,9 @@ class Pipeline:
         while self.running:
             self.next_at, self.step, self.pass_started = None, None, _now()
             outcome: dict[str, Any] = {"started_at": _iso(self.pass_started)}
+            campaign_link.emit(
+                "info", "info", "MA_PASS_STARTED", "A pass started", pass_id=outcome["started_at"]
+            )
             try:
                 result = await run.daily_run(force=True, leads_first=True, on_step=self._on_step)
                 outcome |= {
@@ -100,7 +107,7 @@ class Pipeline:
                     "result": result,
                 }
             except asyncio.CancelledError:
-                self._finish(outcome | {"outcome": "stopped"})
+                self._finish(outcome | {"outcome": "stopped"}, interrupted=self._closing)
                 raise
             except Exception as exc:
                 log.exception("Pipeline pass failed")
@@ -113,10 +120,71 @@ class Pipeline:
 
     def _on_step(self, name: str) -> None:
         self.step = name
+        campaign_link.emit(
+            "info", "info", "MA_STEP", f"Step: {name}"[:300], pass_id=_iso(self.pass_started)
+        )
 
-    def _finish(self, outcome: dict) -> None:
+    def _finish(self, outcome: dict, *, interrupted: bool = False) -> None:
         self.pass_started, self.step = None, None
-        self.last = outcome | {"finished_at": _iso(_now())}
+        self.last = outcome | {"finished_at": _iso(_now())}  # the dashboard still sees "stopped"
+        self._tell_campaign_agent(outcome, interrupted=interrupted)
+
+    @staticmethod
+    def _tell_campaign_agent(outcome: dict, *, interrupted: bool = False) -> None:
+        """A failed pass is a blocker for the Campaign Agent (and so for the dashboard); the next good pass closes it.
+        Progress (started, finished, stopped) goes as info events. Never raises: reporting must not hurt the pipeline."""
+        try:
+            if outcome.get("outcome") == "failed":
+                step = next(
+                    (
+                        k
+                        for k, v in (outcome.get("result") or {}).items()
+                        if isinstance(v, dict) and "error" in v
+                    ),
+                    None,
+                )
+                why = outcome.get("error") or (
+                    f"the {step} step failed" if step else "a step failed"
+                )
+                campaign_link.emit(
+                    "info",
+                    "info",
+                    "MA_PASS_FINISHED",
+                    "The pass ended with a failure",
+                    pass_id=outcome.get("started_at"),
+                )
+                campaign_link.emit(
+                    "blocker",
+                    "error",
+                    "MA_PASS_FAILED",
+                    f"A pass failed: {why}",
+                    pass_id=outcome.get("started_at"),
+                    dedupe_key="pass-failed",
+                )
+            elif outcome.get("outcome") == "succeeded":
+                campaign_link.emit(
+                    "info",
+                    "info",
+                    "MA_PASS_FINISHED",
+                    "The pass finished",
+                    pass_id=outcome.get("started_at"),
+                )
+                campaign_link.emit(
+                    "resolved",
+                    "info",
+                    "MA_PASS_FAILED",
+                    "The last pass succeeded",
+                    pass_id=outcome.get("started_at"),
+                    dedupe_key="pass-failed",
+                )
+            elif outcome.get("outcome") == "stopped":
+                campaign_link.emit(
+                    "info", "info", "MA_PASS_FINISHED",
+                    "The pass was interrupted because the service is restarting; it starts again by itself" if interrupted else "The pass was stopped",
+                    pass_id=outcome.get("started_at"),
+                )  # fmt: skip
+        except Exception:
+            log.exception("Could not report the pass to the Campaign Agent")
 
     def status(self) -> dict:
         return {

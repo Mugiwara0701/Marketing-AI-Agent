@@ -180,7 +180,16 @@ class DesktopBrowser:
             log.info("Page skipped", extra={"ctx": {"url": url, "why": why}})
             return None
         self.guard.opened(url)
-        page = await self._read(label)
+        try:
+            page = await self._read(label)
+        except (
+            DesktopError
+        ) as exc:  # the window went away while reading: open a new one and go on with the next page
+            log.warning(
+                "could not read page", extra={"ctx": {"url": url[:120], "error": str(exc)[:200]}}
+            )
+            await self.desk.recover()
+            return None
         if (
             intent.registrable_domain(page.url) in SEARCH_ENGINES
         ):  # the window was not on the page we meant
@@ -208,6 +217,16 @@ class DesktopBrowser:
         )  # the page is read first; its final address after
 
     async def follow(self, labels: list[str]) -> Page | None:
+        try:
+            return await self._follow(labels)
+        except (
+            DesktopError
+        ) as exc:  # same as for reading: one lost window must not end the whole lead search
+            log.warning("could not follow link", extra={"ctx": {"error": str(exc)[:200]}})
+            await self.desk.recover()
+            return None
+
+    async def _follow(self, labels: list[str]) -> Page | None:
         # Only the mouse wheel and mouse clicks, like a person: the menu bar at the top first, then the footer. No
         # keyboard focus is needed, so nothing clicks the scrollbar (which would scroll the menu out of view).
         before = await self.desk.current_url(refocus=False)
