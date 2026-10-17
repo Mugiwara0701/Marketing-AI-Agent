@@ -143,6 +143,11 @@ export async function handle(req: Request, deps: Deps): Promise<Response> {
     if (result === "expired") {
       return ephemeral("This request expired. The agent posts the draft again; decide on the new message.");
     }
+    if (result === "changed") {
+      return ephemeral(
+        "This draft changed after this message was posted. Nothing was decided; decide on the new message.",
+      );
+    }
   } else {
     // Exactly once: the update only matches while the row is still undecided.
     const { data: changed, error } = await deps.db.from(spec.table).update({ status: spec.to })

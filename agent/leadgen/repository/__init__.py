@@ -14,7 +14,8 @@ from typing import Protocol
 from ..config import Runtime
 from ..models import Approval, Contact, EmailDraft, Lead, LeadStatus
 
-DECISIONS = ("approved", "rejected", "already_decided", "expired", "unknown")
+# changed: the draft is not what its Slack card showed (a new card is posted; nothing was decided)
+DECISIONS = ("approved", "rejected", "already_decided", "expired", "changed", "unknown")
 
 # What a claim gates on, besides the approval: the live campaign's id, NO_LIVE_CAMPAIGN when the Campaign Agent says
 # nothing is live, or None when the link is not configured (then campaigns are not checked at all).
@@ -70,7 +71,9 @@ class Repository(Protocol):
     async def drafts(self, limit: int = 100) -> list[EmailDraft]: ...
 
     # approval
-    async def open_approval(self, email_id: str, channel: str) -> None: ...
+    async def open_approval(
+        self, email_id: str, channel: str, shown_sha256: str | None = None
+    ) -> None: ...
     async def set_approval_message(self, email_id: str, channel: str, message_id: str) -> None: ...
     async def get_approval(self, email_id: str) -> Approval | None: ...
     async def decide_email(

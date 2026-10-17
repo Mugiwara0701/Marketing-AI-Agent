@@ -25,6 +25,7 @@ class FakeDb {
   emails: Record<string, string> = { [EMAIL]: "drafted" };
   replies: Record<string, string> = { [REPLY]: "classified" };
   expired = new Set<string>();
+  changed = new Set<string>();
   rpcCalls: Row[] = [];
   inserts: Row[] = [];
 
@@ -34,6 +35,8 @@ class FakeDb {
     let data = "unknown";
     if (this.expired.has(id)) {
       data = "expired";
+    } else if (this.changed.has(id)) {
+      data = "changed";
     } else if (this.emails[id] === "drafted") {
       this.emails[id] = args.p_approve ? "approved" : "skipped";
       data = args.p_approve ? "approved" : "rejected";
@@ -177,6 +180,14 @@ Deno.test("an expired request says so and decides nothing", async () => {
   db.expired.add(EMAIL);
   const r = await call(db, body("approve_email", `email:${EMAIL}`));
   assertEquals((await r.json()).text.startsWith("This request expired"), true);
+  assertEquals(db.emails[EMAIL], "drafted");
+});
+
+Deno.test("a draft that changed after its card was posted is not decided", async () => {
+  const db = new FakeDb();
+  db.changed.add(EMAIL);
+  const r = await call(db, body("approve_email", `email:${EMAIL}`));
+  assertEquals((await r.json()).text.startsWith("This draft changed"), true);
   assertEquals(db.emails[EMAIL], "drafted");
 });
 

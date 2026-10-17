@@ -56,19 +56,22 @@ def message_text(lead: Lead, contact: Contact, email: EmailDraft) -> str:
     if email.review_note:
         lines.append(f":warning: *Checks flagged:* {esc(email.review_note)}")
     # near the top: a long card is cut at the end, never here
-    lines.insert(1, draft_identity(contact, email))
+    lines.insert(1, draft_identity(email))
     return clip("\n".join(lines), _MAX)
 
 
-def draft_identity(contact: Contact, email: EmailDraft) -> str:
+def draft_identity(email: EmailDraft) -> str:
     """Which campaign and which exact draft the decision is about. The fingerprint is the start of the hash the approval
     is bound to (recipient, subject and body): a changed draft has another one and needs a new decision."""
     if email.source_campaign_id:
         campaign = f"{email.source_campaign_id} (version {email.source_campaign_version})"
     else:
         campaign = "none recorded"
-    digest = content_sha256(contact.email, email.subject, email.body)[:12]
-    return f"*Campaign:* {esc(campaign)}\n*Draft:* {esc(email.email_id)}  ·  fingerprint {digest}"
+    digest = content_sha256(email.to, email.subject, email.body)[:12]
+    return (
+        f"*Campaign:* {esc(campaign)}\n*Recipient:* {esc(email.to)}\n"
+        f"*Draft:* {esc(email.email_id)}  ·  fingerprint {digest}"
+    )
 
 
 def draft_sections(email: EmailDraft) -> list[dict]:
@@ -243,7 +246,9 @@ async def request(
             extra={"ctx": {"email_id": email.email_id}},
         )
         return False
-    await repo.open_approval(email.email_id, approver.channel)
+    # The fingerprint of exactly what the card shows: a decision on another text or recipient is refused.
+    shown = content_sha256(email.to, email.subject, email.body)
+    await repo.open_approval(email.email_id, approver.channel, shown)
     try:
         message_id = await approver.post(lead, contact, email)
     except Exception as exc:

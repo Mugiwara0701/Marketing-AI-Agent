@@ -44,7 +44,7 @@ create table if not exists emails (
 create table if not exists approvals (
   id text primary key, kind text not null, ref_id text not null, status text not null default 'pending',
   slack_channel text, slack_ts text, decided_by text, decided_at text, decision_note text, content_sha256 text,
-  expires_at text, created_at text not null
+  shown_sha256 text, expires_at text, created_at text not null
 );
 create unique index if not exists approvals_one_pending on approvals (kind, ref_id) where status = 'pending';
 create table if not exists lead_signals (
@@ -88,7 +88,7 @@ class SqliteRepository:
                            ("customer_tier", "text"), ("source_campaign_id", "text"),
                            ("source_campaign_version", "integer"))),
             ("emails", (("source_campaign_id", "text"), ("source_campaign_version", "integer"))),
-            ("approvals", (("content_sha256", "text"), ("expires_at", "text"))),
+            ("approvals", (("content_sha256", "text"), ("expires_at", "text"), ("shown_sha256", "text"))),
         ):  # fmt: skip
             cols = {r["name"] for r in self.db.execute(f"pragma table_info({table})")}
             for col, kind in columns:
@@ -328,12 +328,19 @@ class SqliteRepository:
 
     # --- approval ----------------------------------------------------------------------------------------------
 
-    async def open_approval(self, email_id: str, channel: str) -> None:
+    async def open_approval(
+        self, email_id: str, channel: str, shown_sha256: str | None = None
+    ) -> None:
         self.db.execute(
             "insert or ignore into approvals (id, kind, ref_id, status, slack_channel, created_at, expires_at) "
             "values (?, 'email', ?, 'pending', ?, ?, ?)",
             (str(uuid.uuid4()), email_id, channel, _now(), _later(days=30)),
         )
+        if shown_sha256:  # what the card shows now (a re-post shows the draft as it is now)
+            self.db.execute(
+                "update approvals set shown_sha256=? where kind='email' and ref_id=? and status='pending'",
+                (shown_sha256, email_id),
+            )
 
     async def set_approval_message(self, email_id: str, channel: str, message_id: str) -> None:
         self.db.execute(
@@ -381,6 +388,19 @@ class SqliteRepository:
                 await self.expire_approvals()
                 return "expired"
             digest = content_sha256(e["email"], e["subject"], e["body"])
+            if self._shown_differs(email_id, digest):
+                # The person saw another text or recipient: nothing is decided, the agent posts the draft again.
+                self.db.execute(
+                    "update approvals set status='expired' where kind='email' and ref_id=? and status='pending'",
+                    (email_id,),
+                )
+                self.db.execute(
+                    "update companies set lead_status='EMAIL_DRAFTED', updated_at=? where id=? "
+                    "and lead_status='PENDING_APPROVAL'",
+                    (now, e["company_id"]),
+                )
+                self.db.execute("commit")
+                return "changed"
             self.db.execute(
                 "update emails set status=?, updated_at=? where id=?",
                 ("approved" if approve else "skipped", now, email_id),
@@ -409,6 +429,14 @@ class SqliteRepository:
         except BaseException:
             self.db.execute("rollback")
             raise
+
+    def _shown_differs(self, email_id: str, digest: str) -> bool:
+        """The pending request recorded what its card showed, and the draft is not that any more."""
+        r = self._one(
+            "select shown_sha256 from approvals where kind='email' and ref_id=? and status='pending'",
+            email_id,
+        )
+        return bool(r and r["shown_sha256"] and r["shown_sha256"] != digest)
 
     def _approval_expired(self, email_id: str, now: str) -> bool:
         """A pending request past its expiry, or an expired one with no newer pending request (Postgres: decide_email)."""
