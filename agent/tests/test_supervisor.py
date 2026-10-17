@@ -40,6 +40,11 @@ def _fakes(monkeypatch, calls, desired: str):
     monkeypatch.setattr(control, "PostgresControl", lambda: row)
     monkeypatch.setattr(supervisor, "send_once", sender)
     monkeypatch.setattr(supervisor, "inbox_once", broken_inbox)
+
+    async def housekeeping():
+        return None
+
+    monkeypatch.setattr(supervisor, "housekeeping_once", housekeeping)
     monkeypatch.setattr(run, "daily_run", daily)
     monkeypatch.setenv("SEND_EVERY_SECONDS", "0.01")
     monkeypatch.setenv("INBOX_EVERY_MINUTES", "0.0002")

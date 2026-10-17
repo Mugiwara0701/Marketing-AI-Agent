@@ -477,3 +477,70 @@ def country_excluded(host: str, location: str, countries: list[str], tlds: list[
     if c := next((c for c in countries if has_word(location or "", c)), None):
         return f"based in {c}"
     return ""
+
+
+# --- the campaign's countries (include_countries) ---------------------------------------------------------------------
+
+# Country -> (other names, country-code domain endings). Only domains a company would use for its own country: endings
+# sold for generic use (.io, .ai, .co, .tv, .me, .app ...) say nothing about where a company is, so they are not here.
+_COUNTRIES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "united states": (("usa", "us", "u.s.", "u.s.a.", "america"), (".us",)),
+    "united kingdom": (("uk", "u.k.", "great britain", "britain", "england", "scotland", "wales"), (".uk",)),
+    "germany": (("deutschland",), (".de",)), "france": ((), (".fr",)), "italy": (("italia",), (".it",)),
+    "spain": (("espana", "españa"), (".es",)), "netherlands": (("holland", "the netherlands"), (".nl",)),
+    "belgium": ((), (".be",)), "switzerland": (("schweiz", "suisse"), (".ch",)), "austria": (("österreich",), (".at",)),
+    "sweden": ((), (".se",)), "norway": ((), (".no",)), "denmark": ((), (".dk",)), "finland": ((), (".fi",)),
+    "poland": ((), (".pl",)), "czech republic": (("czechia",), (".cz",)), "ireland": ((), (".ie",)),
+    "portugal": ((), (".pt",)), "hungary": ((), (".hu",)), "romania": ((), (".ro",)), "ukraine": ((), (".ua",)),
+    "russia": ((), (".ru",)), "turkey": (("türkiye", "turkiye"), (".tr",)), "israel": ((), (".il",)),
+    "united arab emirates": (("uae",), (".ae",)), "saudi arabia": ((), (".sa",)), "south africa": ((), (".za",)),
+    "india": ((), (".in",)), "china": ((), (".cn",)), "japan": ((), (".jp",)), "south korea": (("korea",), (".kr",)),
+    "taiwan": ((), (".tw",)), "singapore": ((), (".sg",)), "malaysia": ((), (".my",)), "indonesia": ((), (".id",)),
+    "thailand": ((), (".th",)), "vietnam": (("viet nam",), (".vn",)), "philippines": ((), (".ph",)),
+    "australia": ((), (".au",)), "new zealand": ((), (".nz",)), "canada": ((), (".ca",)), "mexico": ((), (".mx",)),
+    "brazil": (("brasil",), (".br",)),
+}  # fmt: skip
+
+
+def country_of_name(name: str) -> str | None:
+    """'US', 'U.S.A.', 'United States' -> 'united states'. None for a name that is not in the table."""
+    n = " ".join((name or "").casefold().split())
+    for country, (aliases, _tlds) in _COUNTRIES.items():
+        if n == country or n in aliases:
+            return country
+    return None
+
+
+def place(host: str, location: str) -> tuple[str | None, str]:
+    """Where a company is, as far as its page and its site tell: (country, how) or (None, "")."""
+    loc = location or ""
+    for country, (aliases, _tlds) in _COUNTRIES.items():
+        if has_word(loc, country) or any(has_word(loc, a) for a in aliases if len(a) > 2):
+            return country, f"its page says {loc.strip()[:60]!r}"
+    h = (host or "").lower().strip(".")
+    for country, (_aliases, tlds) in _COUNTRIES.items():
+        if t := next((t for t in tlds if h.endswith(t)), None):
+            return country, f"its site ends in {t}"
+    return None, ""
+
+
+def country_outside(host: str, location: str, include: list[str]) -> str:
+    """Why a company is outside the campaign's countries; "" when it is inside, when the campaign sets no countries, or
+    when its country cannot be told (it is then kept: see `country_unknown`)."""
+    if not include:
+        return ""
+    wanted = {country_of_name(c) or " ".join(c.casefold().split()) for c in include}
+    if any(has_word(location or "", w) for w in wanted):
+        return ""
+    country, how = place(host, location)
+    if country is None or country in wanted:
+        return ""
+    return f"outside the campaign's countries ({', '.join(include)}): {how}"
+
+
+def country_unknown(host: str, location: str, include: list[str]) -> bool:
+    """The campaign sets countries but this company's country cannot be told from its page or its site."""
+    if not include:
+        return False
+    wanted = {country_of_name(c) or " ".join(c.casefold().split()) for c in include}
+    return not any(has_word(location or "", w) for w in wanted) and place(host, location)[0] is None

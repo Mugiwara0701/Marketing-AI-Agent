@@ -179,8 +179,9 @@ def test_suppressed_and_dev_allowlist(repo, monkeypatch):
 
 
 def test_test_recipient_redirects(repo, monkeypatch):
-    _lid, eid = _lead_with_draft(repo)
+    lid, eid = _lead_with_draft(repo)
     asyncio.run(approval.decide(repo, eid, True, "x"))
+    monkeypatch.setenv("APP_ENV", "dev")
     monkeypatch.setenv("TEST_RECIPIENT", "me@test.io")
     seen = []
 
@@ -191,6 +192,95 @@ def test_test_recipient_redirects(repo, monkeypatch):
 
     assert _send(repo, T())["sent"] == 1
     assert seen == [("me@test.io", "[TEST for ana@voltgrid.com] Hello")]
+    # The real contact never got it: recorded as a test send, and the lead is not SENT.
+    assert asyncio.run(repo.get_email(eid)).status == "test_sent"
+    assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.APPROVED
+
+
+def test_test_recipient_is_refused_in_production(repo, monkeypatch):
+    _lid, eid = _lead_with_draft(repo)
+    asyncio.run(approval.decide(repo, eid, True, "x"))
+    monkeypatch.setenv("TEST_RECIPIENT", "me@test.io")  # the fixture sets APP_ENV=prod
+    t = RecordingTransport()
+    with pytest.raises(sender.TestRedirectInProductionError):
+        _send(repo, t)
+    assert t.sent == [] and asyncio.run(repo.get_email(eid)).status == "approved"
+
+
+def test_a_changed_body_after_approval_is_not_sent(repo):
+    _lid, eid = _lead_with_draft(repo)
+    asyncio.run(approval.decide(repo, eid, True, "x"))
+    repo.db.execute("update emails set body='something else' where id=?", (eid,))
+    t = RecordingTransport()
+    assert _send(repo, t)["sent"] == 0 and t.sent == []
+    assert "differs from what was approved" in (asyncio.run(repo.sendable_problem(eid)) or "")
+
+
+def test_a_changed_recipient_after_approval_is_not_sent(repo):
+    _lid, eid = _lead_with_draft(repo)
+    asyncio.run(approval.decide(repo, eid, True, "x"))
+    repo.db.execute(
+        "update contacts set email='other@elsewhere.io' where id=(select contact_id from emails where id=?)",
+        (eid,),
+    )
+    t = RecordingTransport()
+    assert _send(repo, t)["sent"] == 0 and t.sent == []
+
+
+def test_an_expired_approval_request_cannot_be_decided(repo):
+    lid, eid = _lead_with_draft(repo)
+    asyncio.run(repo.open_approval(eid, "#c"))
+    repo.db.execute("update approvals set expires_at='2000-01-01T00:00:00+00:00' where ref_id=?", (eid,))
+    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "expired"
+    assert asyncio.run(repo.get_email(eid)).status == "drafted"
+    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "expired"  # still, until posted again
+    asyncio.run(repo.open_approval(eid, "#c"))  # the agent posts a new request
+    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "approved"
+
+
+def test_emails_of_a_campaign_that_is_not_live_wait(repo):
+    async def go():
+        lead = Lead(company_name="Camp Co", company_website="campco.io", name_key="campco", lead_score=80)
+        lid = await repo.insert_lead(lead, source="t", campaign=("c-a", 1))
+        for s in (LeadStatus.QUALIFIED, LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED):
+            await repo.set_status(lid, s)
+        cid = await repo.save_contact(lid, Contact(email="x@campco.io", source="u"))
+        eid = await repo.save_email_draft(lid, cid, "Hi", "Body", None)
+        await approval.decide(repo, eid, True, "x")
+        return eid
+
+    eid = asyncio.run(go())
+    t = RecordingTransport()
+
+    def send(live):
+        return asyncio.run(sender.send_approved(repo, t, gap_seconds=0, live_campaign=live))
+
+    assert send("c-b")["sent"] == 0 and send("none")["sent"] == 0  # another campaign, or none, is live
+    assert asyncio.run(repo.get_email(eid)).status == "approved"  # waiting, not failed
+    assert send("c-a")["sent"] == 1 and t.sent == [eid]
+
+
+def test_an_error_mid_batch_releases_every_claim(repo, monkeypatch):
+    _lid, eid = _lead_with_draft(repo)
+    asyncio.run(approval.decide(repo, eid, True, "x"))
+
+    async def boom(_addr):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(repo, "is_suppressed", boom)
+    with pytest.raises(RuntimeError):
+        _send(repo)
+    assert asyncio.run(repo.get_email(eid)).status == "approved"  # back in the queue, not stuck in 'sending'
+
+
+def test_an_address_without_at_sign_is_refused_not_a_crash(monkeypatch):
+    from agent import mailer
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("ALLOWED_RECIPIENT_DOMAINS", "x.io")
+    assert not mailer.allowed_in_env("not-an-address")
+    assert not mailer.allowed_in_env("a@x.io, b@evil.io")
+    assert mailer.allowed_in_env("a@x.io")
 
 
 def test_send_cap_releases_the_rest(repo, monkeypatch):

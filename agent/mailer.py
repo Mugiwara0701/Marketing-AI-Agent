@@ -189,13 +189,19 @@ def build_message(row, to_addr: str) -> EmailMessage:
     return msg
 
 
+def is_production() -> bool:
+    return (env("APP_ENV", "dev") or "dev") == "prod"
+
+
 def allowed_in_env(addr: str) -> bool:
-    """In dev, only addresses on ALLOWED_RECIPIENT_DOMAINS may be emailed."""
-    if (env("APP_ENV", "dev") or "dev") == "prod":
+    """In dev, only addresses on ALLOWED_RECIPIENT_DOMAINS may be emailed. Anything that is not one address is refused."""
+    if "@" not in addr or "," in addr:
+        return False
+    if is_production():
         return True
     allowed = [
         d.strip().lower()
         for d in (env("ALLOWED_RECIPIENT_DOMAINS", "") or "").split(",")
         if d.strip()
     ]
-    return addr.split("@", 1)[1].lower() in allowed
+    return addr.rsplit("@", 1)[1].strip().lower() in allowed

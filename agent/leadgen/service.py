@@ -66,20 +66,41 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
     """One discovery run. Never sends email. In a dry-run: own SQLite file, Slack written to files."""
     rt = config.runtime(dry_run=dry_run, browser=browser)
     cfg = config.load()
-    # The campaign the Campaign Agent published (agent/campaign_link.py), used for this whole pass. No link, or any
-    # problem: the base config or the last good campaign, never a half-applied one.
+    # The campaign the Campaign Agent published (agent/campaign_link.py), used for this whole pass. Any problem: the
+    # last good campaign, never a half-applied one.
     effective = await campaign_link.apply_campaign(cfg.raw)
     if effective is not cfg.raw:
         cfg = config.from_raw(effective)
-    if (
-        running := campaign_link.describe_pass()
-    ) is not None:  # which campaign this pass runs, in the log and to the CA
+    running = campaign_link.describe_pass()
+    campaign = (
+        (str(running["campaign_id"]), int(running["version"]))
+        if running and running["campaign_id"] and running["version"] is not None
+        else None
+    )
+    if running is not None:  # which campaign this pass runs, in the log and to the CA
         log.info("Pass campaign", extra={"ctx": running})
         campaign_link.emit(
             "info", "info", "MA_PASS_CAMPAIGN", running["message"],
             campaign_id=running["campaign_id"], version=running["version"],
             details={"sha256": running["sha256"], "query_suffix": str(cfg.search.get("query_suffix") or "")[:80]},
         )  # fmt: skip
+    if campaign is None and not rt.dry_run and not project and campaign_link.require_campaign():
+        # Nothing approved is live (or the link is not configured): no search, no drafts on the base config alone.
+        why = (
+            "no approved campaign is live"
+            if campaign_link.link_config() is not None
+            else "the link to the Campaign Agent is not configured (MA_LINK_URL, MA_LINK_TOKEN)"
+        )
+        log.warning("Lead discovery skipped", extra={"ctx": {"why": why}})
+        campaign_link.emit(
+            "blocker", "warning", "MA_NO_CAMPAIGN",
+            f"Lead discovery skipped: {why}. Approve a campaign on the dashboard.", dedupe_key="no-campaign",
+        )  # fmt: skip
+        return {"skipped": why, "dry_run": False}
+    if campaign is not None:
+        campaign_link.emit(
+            "resolved", "info", "MA_NO_CAMPAIGN", "A campaign is live", dedupe_key="no-campaign"
+        )
     cpu_model_time_limits()
     if max_leads is not None:
         cfg.limits["max_new_leads_per_run"] = max_leads
@@ -95,8 +116,9 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
                        manual_notify=approval.make_manual_notifier(rt.dry_run, rt.out_dir),
                        form_notify=approval.make_form_notifier(rt.dry_run, rt.out_dir))  # fmt: skip
         pipe = Pipeline(
-            svc, cfg, deadline=deadline or time.monotonic() + 3600, kill_file=_kill_file()
-        )
+            svc, cfg, deadline=deadline or time.monotonic() + 3600, kill_file=_kill_file(),
+            campaign=campaign,
+        )  # fmt: skip
         stats = await pipe.run()
         path = await report.write(repo, pipe.touched, stats, rt.out_dir, dry_run=rt.dry_run)
         log.info(
@@ -136,8 +158,9 @@ async def send(*, dry_run: bool = False, limit: int | None = None) -> dict:
     try:
         transport = sender.make_transport(rt.dry_run, rt.out_dir)
         return await sender.send_approved(
-            repo, transport, limit=limit, gap_seconds=0 if rt.dry_run else None
-        )
+            repo, transport, limit=limit, gap_seconds=0 if rt.dry_run else None,
+            live_campaign=None if rt.dry_run else campaign_link.live_campaign_id(),
+        )  # fmt: skip
     finally:
         await repo.close()
 

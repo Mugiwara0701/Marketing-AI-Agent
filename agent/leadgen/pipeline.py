@@ -61,8 +61,9 @@ class Stats:
 
 class Pipeline:
     def __init__(self, svc: Services, cfg: LeadgenConfig, *, deadline: float | None = None,
-                 kill_file: Path | None = None) -> None:  # fmt: skip
+                 kill_file: Path | None = None, campaign: tuple[str, int] | None = None) -> None:  # fmt: skip
         self.svc, self.repo, self.cfg = svc, svc.repo, cfg
+        self.campaign = campaign  # (Campaign Agent campaign id, version) the new leads of this pass are found for
         self.deadline = deadline or time.monotonic() + 3600
         self.kill_file = kill_file
         self.stats = Stats()
@@ -281,7 +282,13 @@ class Pipeline:
             if page is None:
                 self.stats.add("pages_failed")
                 continue
-            await self.observe(Observation(q.text, page, r))
+            try:
+                await self.observe(Observation(q.text, page, r))
+            except (BudgetExhaustedError, SearchBlockedError):
+                raise
+            except Exception:
+                self.stats.add("errors")
+                log.exception("Working on a page failed", extra={"ctx": {"url": page.url}})
         await self.repo.record_query(
             q.text, q.family, results[0].engine if results else "", len(results), opened
         )
@@ -366,7 +373,8 @@ class Pipeline:
                                                            "company": lead.company_name}})  # fmt: skip
                 return
             if why := intent.country_excluded(lead.company_website, lead.location, self.cfg.exclude_countries,
-                                              self.cfg.exclude_tlds):  # fmt: skip
+                                              self.cfg.exclude_tlds) or intent.country_outside(
+                lead.company_website, lead.location, self.cfg.include_countries):  # fmt: skip
                 self.stats.add("rejected")
                 await self.repo.record_page(
                     key, page.url, "rejected", {**verdict.record(), "why": why}
@@ -378,7 +386,9 @@ class Pipeline:
                     key, page.url, "duplicate", verdict.record(), existing.lead_id
                 )
                 return
-        lead_id = await self.repo.insert_lead(lead, source=f"leadgen:{origin}")
+        lead_id = await self.repo.insert_lead(
+            lead, source=f"leadgen:{origin}", campaign=self.campaign
+        )
         await self.repo.record_page(key, page.url, "lead", verdict.record(), lead_id)
         self.touched.append(lead_id)
         self.stats.add("leads_discovered")
@@ -500,6 +510,15 @@ class Pipeline:
             self.stats.add("rejected_competitor")
             log.info("Lead rejected", extra={"ctx": {"lead_id": lead.lead_id, "why": note}})
             return False
+        kept = []
+        for c in found.contacts:
+            if await contacts.mail_domain_ok(c.email) is False:
+                self.stats.add("contacts_undeliverable")
+                log.info("Contact dropped: its domain cannot receive mail",
+                         extra={"ctx": {"lead_id": lead.lead_id, "domain": c.email.rsplit("@", 1)[-1]}})  # fmt: skip
+                continue
+            kept.append(c)
+        found.contacts = kept
         new_form = await self.repo.set_manual(lead.lead_id, found.form_url, found.blocked)
         if new_form and found.form_url:
             await self._form_fill(lead, found.form_url)

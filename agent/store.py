@@ -116,8 +116,10 @@ async def ensure_followup_step() -> None:
     await db.execute("update campaigns set steps=2 where name='daily-outreach' and steps < 2")
 
 
-async def followup_candidates(delay_days: int, limit: int) -> list:
-    """Intros sent at least `delay_days` ago with no reply, no bounce and no follow-up yet (Gmail has no open data)."""
+async def followup_candidates(delay_days: int, limit: int, live_campaign: str | None = None) -> list:
+    """Intros sent at least `delay_days` ago with no reply, no bounce and no follow-up yet (Gmail has no open data).
+    `live_campaign` (see agent.campaign_link.live_campaign_id): an intro of another campaign gets no follow-up while
+    that campaign is not live; None = campaigns are not checked."""
     cid = await campaign_id()
     return await db.fetch(
         """select e.id, e.contact_id, e.subject, e.body, e.message_id, c.name, c.role,
@@ -131,8 +133,9 @@ async def followup_candidates(delay_days: int, limit: int) -> list:
               and not exists (select 1 from replies r where r.contact_id=e.contact_id)
               and not exists (select 1 from emails f where f.contact_id=e.contact_id
                                  and f.campaign_id=e.campaign_id and f.step=2)
+              and ($4::text is null or e.source_campaign_id is null or e.source_campaign_id::text = $4::text)
             order by e.sent_at limit $3""",
-        cid, delay_days, limit,
+        cid, delay_days, limit, live_campaign,
     )  # fmt: skip
 
 
@@ -142,8 +145,10 @@ async def save_followup_draft(
     cid = await campaign_id()
     row = await db.fetchrow(
         """insert into emails (contact_id, campaign_id, step, status, subject, body, review_note,
-                               in_reply_to, idempotency_key)
-           values ($1,$2,2,'drafted',$3,$4,$5,$6,$7)
+                               in_reply_to, idempotency_key, source_campaign_id, source_campaign_version)
+           select $1,$2,2,'drafted',$3,$4,$5,$6,$7, i.source_campaign_id, i.source_campaign_version
+             from (select 1) as one
+             left join emails as i on i.contact_id = $1 and i.campaign_id = $2 and i.step = 1
            on conflict (contact_id, campaign_id, step) do nothing returning id""",
         contact_id, cid, subject, body, note, in_reply_to, f"followup-{contact_id}",
     )  # fmt: skip

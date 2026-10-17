@@ -191,6 +191,39 @@ async def _open_home(browser: Browser, domain: str) -> Page | None:
     return home
 
 
+_MAIL_DOMAINS: dict[str, bool | None] = {}
+
+
+async def mail_domain_ok(address: str) -> bool | None:
+    """Can this address receive mail at all? True: its domain has an MX record (or, as mail servers fall back to, an
+    A / AAAA record). False: the domain does not exist or has neither. None: DNS did not answer (not held against it).
+    It does not prove the mailbox exists; it stops drafts to addresses that can only bounce."""
+    domain = address.rsplit("@", 1)[-1].strip().lower().rstrip(".")
+    if not domain or "@" not in address:
+        return False
+    if domain in _MAIL_DOMAINS:
+        return _MAIL_DOMAINS[domain]
+    import dns.asyncresolver  # noqa: PLC0415
+    import dns.exception  # noqa: PLC0415
+    import dns.resolver  # noqa: PLC0415
+
+    answer: bool | None = None
+    try:
+        for kind in ("MX", "A", "AAAA"):
+            try:
+                await dns.asyncresolver.resolve(domain, kind, lifetime=8)
+                answer = True
+                break
+            except dns.resolver.NoAnswer:
+                answer = False
+    except dns.resolver.NXDOMAIN:
+        answer = False
+    except dns.exception.DNSException:
+        answer = None  # timeout or no nameserver: unknown
+    _MAIL_DOMAINS[domain] = answer
+    return answer
+
+
 async def discover(
     browser: Browser,
     domain: str,

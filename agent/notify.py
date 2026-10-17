@@ -46,6 +46,13 @@ def chunks(text: str, size: int = _THREAD_CHUNK) -> list[str]:
     return out
 
 
+def full_text_sections(title: str, text: str) -> list[dict]:
+    """Every word of `text` as Slack sections (each under the section limit): what a person approves is what is sent,
+    so a draft is never shortened on the card."""
+    parts = chunks(f"{title}\n{esc(text or '')}", _SECTION_MAX) or [title]
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": part}} for part in parts]
+
+
 def email_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
     follow = row.get("step", 1) > 1
     head = (
@@ -63,10 +70,9 @@ def email_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
     ]
     if row["review_note"]:
         facts.append(f":warning: *Checks flagged:* {esc(row['review_note'])}")
-    draft = f"*Subject:* {esc(row['subject'])}\n\n{esc(clip(row['body'], 1800))}"
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": clip(head + "\n" + "\n".join(facts), _SECTION_MAX)}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": clip(draft, _SECTION_MAX)}},
+        *full_text_sections(f"*Subject:* {esc(row['subject'] or '')}\n", row["body"]),
         *slack.approval_blocks("Approve this email for sending?", approval_id, [("Approve", "approve_email"), ("Skip", "skip_email")])[1:],
     ]  # fmt: skip
     return f"{'Follow-up' if follow else 'New lead'}: {row['company']}", blocks
@@ -99,10 +105,7 @@ def reply_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
     ]
     if row["status"] == "classified":  # still undecided: offer buttons
         if row["draft_response"]:
-            draft = f"*Draft answer:*\n{esc(clip(row['draft_response'], 1800))}"
-            blocks.append(
-                {"type": "section", "text": {"type": "mrkdwn", "text": clip(draft, _SECTION_MAX)}}
-            )
+            blocks += full_text_sections("*Draft answer (sent exactly as written):*", row["draft_response"])
             buttons = [("Approve", "approve_reply"), ("Skip", "skip_reply")]
         else:
             buttons = [("Dismiss", "skip_reply")]

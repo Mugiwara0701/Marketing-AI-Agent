@@ -3,7 +3,7 @@
 import json
 import sqlite3
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..models import (
@@ -16,6 +16,7 @@ from ..models import (
     ScoreCard,
     sources_of,
 )
+from . import NO_LIVE_CAMPAIGN, content_sha256
 
 _SCHEMA = """
 create table if not exists companies (
@@ -24,7 +25,7 @@ create table if not exists companies (
   opportunity text, technologies text, project_signal text, page_type text, location text,
   lead_score integer default 0, score text, evidence text, source_urls text, notes text,
   source text, contact_form_url text, manual_reason text, status_note text, contact_attempts integer default 0,
-  result_type text, customer_tier text,
+  result_type text, customer_tier text, source_campaign_id text, source_campaign_version integer,
   created_at text not null, updated_at text not null
 );
 create index if not exists companies_name_key on companies (name_key);
@@ -37,11 +38,13 @@ create table if not exists emails (
   id text primary key, contact_id text not null references contacts (id), step integer not null default 1,
   status text not null default 'drafted', subject text, body text, review_note text,
   message_id text, provider_id text, mailbox text, attempts integer not null default 0, last_error text,
-  sent_at text, created_at text not null, updated_at text not null, unique (contact_id, step)
+  sent_at text, source_campaign_id text, source_campaign_version integer,
+  created_at text not null, updated_at text not null, unique (contact_id, step)
 );
 create table if not exists approvals (
   id text primary key, kind text not null, ref_id text not null, status text not null default 'pending',
-  slack_channel text, slack_ts text, decided_by text, decided_at text, decision_note text, created_at text not null
+  slack_channel text, slack_ts text, decided_by text, decided_at text, decision_note text, content_sha256 text,
+  expires_at text, created_at text not null
 );
 create unique index if not exists approvals_one_pending on approvals (kind, ref_id) where status = 'pending';
 create table if not exists lead_signals (
@@ -80,14 +83,17 @@ class SqliteRepository:
         self.db.row_factory = sqlite3.Row
         self.db.execute("pragma foreign_keys = on")
         self.db.executescript(_SCHEMA)
-        cols = {r["name"] for r in self.db.execute("pragma table_info(companies)")}
-        for col, kind in (
-            ("contact_attempts", "integer default 0"),
-            ("result_type", "text"),
-            ("customer_tier", "text"),
-        ):
-            if col not in cols:  # a dry-run database made before this column existed
-                self.db.execute(f"alter table companies add column {col} {kind}")
+        for table, columns in (
+            ("companies", (("contact_attempts", "integer default 0"), ("result_type", "text"),
+                           ("customer_tier", "text"), ("source_campaign_id", "text"),
+                           ("source_campaign_version", "integer"))),
+            ("emails", (("source_campaign_id", "text"), ("source_campaign_version", "integer"))),
+            ("approvals", (("content_sha256", "text"), ("expires_at", "text"))),
+        ):  # fmt: skip
+            cols = {r["name"] for r in self.db.execute(f"pragma table_info({table})")}
+            for col, kind in columns:
+                if col not in cols:  # a dry-run database made before this column existed
+                    self.db.execute(f"alter table {table} add column {col} {kind}")
 
     async def close(self) -> None:
         self.db.close()
@@ -174,14 +180,17 @@ class SqliteRepository:
             lead.result_type, lead.customer_tier,
         )  # fmt: skip
 
-    async def insert_lead(self, lead: Lead, *, source: str) -> str:
+    async def insert_lead(
+        self, lead: Lead, *, source: str, campaign: tuple[str, int] | None = None
+    ) -> str:
         lead_id = str(uuid.uuid4())
         now = _now()
         self.db.execute(
             "insert into companies (id, domain, source, lead_status, created_at, updated_at, name, name_key, industry,"
             " product, project_summary, opportunity, technologies, project_signal, page_type, location, lead_score,"
-            " score, evidence, source_urls, notes, result_type, customer_tier)"
-            " values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " score, evidence, source_urls, notes, result_type, customer_tier, source_campaign_id,"
+            " source_campaign_version)"
+            " values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 lead_id,
                 lead.company_website,
@@ -190,6 +199,8 @@ class SqliteRepository:
                 now,
                 now,
                 *self._lead_values(lead),
+                campaign[0] if campaign else None,
+                campaign[1] if campaign else None,
             ),
         )
         lead.lead_id, lead.status = lead_id, LeadStatus.DISCOVERED
@@ -293,8 +304,10 @@ class SqliteRepository:
         now = _now()
         cur = self.db.execute(
             "insert or ignore into emails (id, contact_id, step, status, subject, body, review_note, created_at,"
-            " updated_at) values (?,?,1,'drafted',?,?,?,?,?)",
-            (eid, contact_id, subject, body, note, now, now),
+            " updated_at, source_campaign_id, source_campaign_version)"
+            " select ?,?,1,'drafted',?,?,?,?,?, source_campaign_id, source_campaign_version from companies"
+            " where id=?",
+            (eid, contact_id, subject, body, note, now, now, lead_id),
         )
         return eid if cur.rowcount == 1 else None
 
@@ -316,9 +329,9 @@ class SqliteRepository:
 
     async def open_approval(self, email_id: str, channel: str) -> None:
         self.db.execute(
-            "insert or ignore into approvals (id, kind, ref_id, status, slack_channel, created_at) "
-            "values (?, 'email', ?, 'pending', ?, ?)",
-            (str(uuid.uuid4()), email_id, channel, _now()),
+            "insert or ignore into approvals (id, kind, ref_id, status, slack_channel, created_at, expires_at) "
+            "values (?, 'email', ?, 'pending', ?, ?, ?)",
+            (str(uuid.uuid4()), email_id, channel, _now(), _later(days=30)),
         )
 
     async def set_approval_message(self, email_id: str, channel: str, message_id: str) -> None:
@@ -351,8 +364,8 @@ class SqliteRepository:
         self.db.execute("begin immediate")
         try:
             e = self._one(
-                "select e.status, e.step, c.company_id from emails e join contacts c on c.id=e.contact_id "
-                "where e.id=?",
+                "select e.status, e.step, e.subject, e.body, c.company_id, c.email from emails e "
+                "join contacts c on c.id=e.contact_id where e.id=?",
                 email_id,
             )
             if e is None:
@@ -362,21 +375,26 @@ class SqliteRepository:
                 self.db.execute("rollback")
                 return "already_decided"
             now = _now()
+            if self._approval_expired(email_id, now):
+                self.db.execute("commit")
+                await self.expire_approvals()
+                return "expired"
+            digest = content_sha256(e["email"], e["subject"], e["body"])
             self.db.execute(
                 "update emails set status=?, updated_at=? where id=?",
                 ("approved" if approve else "skipped", now, email_id),
             )
             decision = "approved" if approve else "rejected"
             cur = self.db.execute(
-                "update approvals set status=?, decided_by=?, decided_at=?, decision_note=? "
+                "update approvals set status=?, decided_by=?, decided_at=?, decision_note=?, content_sha256=? "
                 "where kind='email' and ref_id=? and status='pending'",
-                (decision, by, now, note, email_id),
+                (decision, by, now, note, digest, email_id),
             )
             if cur.rowcount == 0:
                 self.db.execute(
-                    "insert into approvals (id, kind, ref_id, status, decided_by, decided_at, decision_note, created_at)"
-                    " values (?, 'email', ?, ?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), email_id, decision, by, now, note, now),
+                    "insert into approvals (id, kind, ref_id, status, decided_by, decided_at, decision_note,"
+                    " content_sha256, created_at) values (?, 'email', ?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), email_id, decision, by, now, note, digest, now),
                 )
             if e["step"] == 1:
                 new = LeadStatus.APPROVED if approve else LeadStatus.REJECTED
@@ -391,23 +409,68 @@ class SqliteRepository:
             self.db.execute("rollback")
             raise
 
+    def _approval_expired(self, email_id: str, now: str) -> bool:
+        """A pending request past its expiry, or an expired one with no newer pending request (Postgres: decide_email)."""
+        rows = self.db.execute(
+            "select status, expires_at from approvals where kind='email' and ref_id=?", (email_id,)
+        ).fetchall()
+        pending = [r for r in rows if r["status"] == "pending"]
+        if any(r["expires_at"] and r["expires_at"] <= now for r in pending):
+            return True
+        return not pending and any(r["status"] == "expired" for r in rows)
+
+    async def expire_approvals(self) -> int:
+        now = _now()
+        gone = self.db.execute(
+            "select ref_id from approvals where status='pending' and expires_at is not null and expires_at <= ?",
+            (now,),
+        ).fetchall()
+        for r in gone:
+            self.db.execute(
+                "update approvals set status='expired' where kind='email' and ref_id=? and status='pending'",
+                (r["ref_id"],),
+            )
+            self.db.execute(
+                "update companies set lead_status='EMAIL_DRAFTED', updated_at=? where lead_status='PENDING_APPROVAL'"
+                " and id=(select c.company_id from emails e join contacts c on c.id=e.contact_id"
+                " where e.id=? and e.status='drafted')",
+                (now, r["ref_id"]),
+            )
+        return len(gone)
+
     # --- sending -------------------------------------------------------------------------------------------------
 
     _GATE = """e.status = ? and c.email is not null
         and exists (select 1 from approvals a where a.kind='email' and a.ref_id=e.id and a.status='approved')
-        and (e.step <> 1 or co.lead_status = 'APPROVED')"""
+        and (e.step <> 1 or co.lead_status = 'APPROVED')
+        and (? is null or e.source_campaign_id is null or e.source_campaign_id = ?)"""
 
-    async def claim_sendable(self, limit: int) -> list[EmailDraft]:
+    def _hash_ok(self, email_id: str) -> bool:
+        """The approval covers exactly this recipient, subject and body."""
+        r = self._one(
+            "select e.subject, e.body, c.email, (select a.content_sha256 from approvals a where a.kind='email'"
+            " and a.ref_id=e.id and a.status='approved' order by a.decided_at desc) h"
+            " from emails e join contacts c on c.id=e.contact_id where e.id=?",
+            email_id,
+        )
+        return bool(r and r["h"] and r["h"] == content_sha256(r["email"], r["subject"], r["body"]))
+
+    async def claim_sendable(
+        self, limit: int, *, live_campaign: str | None = None
+    ) -> list[EmailDraft]:
+        match = None if live_campaign in (None, NO_LIVE_CAMPAIGN) else live_campaign
+        gate = (live_campaign, match)
         self.db.execute("begin immediate")
         try:
             ids = [
                 r["id"]
                 for r in self.db.execute(
                     "select e.id from emails e join contacts c on c.id=e.contact_id "
-                    f"join companies co on co.id=c.company_id where {self._GATE} order by e.created_at limit ?",
-                    ("approved", limit),
+                    f"join companies co on co.id=c.company_id where {self._GATE} order by e.created_at",
+                    ("approved", *gate),
                 ).fetchall()
-            ]
+                if self._hash_ok(r["id"])
+            ][:limit]
             for i in ids:
                 self.db.execute(
                     "update emails set status='sending', updated_at=? where id=?", (_now(), i)
@@ -425,7 +488,16 @@ class SqliteRepository:
             "from emails e join contacts c on c.id=e.contact_id join companies co on co.id=c.company_id where e.id=?",
             email_id,
         )
-        return _problem(row)
+        if row is None:
+            return _problem(None)
+        return _problem({**dict(row), "hash_ok": self._hash_ok(email_id)})
+
+    async def stale_sending(self, minutes: int) -> int:
+        row = self._one(
+            "select count(*) n from emails where status='sending' and updated_at < ?",
+            _ago(minutes=minutes),
+        )
+        return int(row["n"]) if row else 0
 
     async def release_claim(self, email_id: str) -> None:
         self.db.execute(
@@ -436,13 +508,17 @@ class SqliteRepository:
     async def thread_id_for(self, email_id: str) -> str | None:
         return None  # dry-run / tests: there is no Gmail conversation to continue
 
-    async def mark_sent(self, email_id, message_id, provider_id, mailbox, thread_id=None) -> None:
+    async def mark_sent(
+        self, email_id, message_id, provider_id, mailbox, thread_id=None, *, test_redirect=False
+    ) -> None:
         now = _now()
         self.db.execute(
-            "update emails set status='sent', sent_at=?, message_id=?, provider_id=?, mailbox=?, updated_at=? "
+            "update emails set status=?, sent_at=?, message_id=?, provider_id=?, mailbox=?, updated_at=? "
             "where id=? and status='sending'",
-            (now, message_id, provider_id, mailbox, now, email_id),
+            ("test_sent" if test_redirect else "sent", now, message_id, provider_id, mailbox, now, email_id),
         )
+        if test_redirect:  # the real contact never got it: the lead stays APPROVED
+            return
         self.db.execute(
             "update companies set lead_status='SENT', updated_at=? where lead_status='APPROVED' and id="
             "(select c.company_id from emails e join contacts c on c.id=e.contact_id where e.id=? and e.step=1)",
@@ -478,6 +554,14 @@ class SqliteRepository:
         return cur.rowcount == 1
 
 
+def _later(**delta: float) -> str:
+    return (datetime.now(UTC) + timedelta(**delta)).isoformat(timespec="seconds")
+
+
+def _ago(**delta: float) -> str:
+    return (datetime.now(UTC) - timedelta(**delta)).isoformat(timespec="seconds")
+
+
 def _problem(row) -> str | None:
     """Why an email must not be sent (None = it may). Shared by both repositories."""
     if row is None:
@@ -486,6 +570,8 @@ def _problem(row) -> str | None:
         return f"email status is {row['status']}, not approved"
     if not row["ok"]:
         return "no recorded human approval"
+    if not row["hash_ok"]:
+        return "the recipient, subject or body differs from what was approved"
     if row["step"] == 1 and row["lead_status"] != "APPROVED":
         return f"lead status is {row['lead_status']}, not APPROVED"
     if not row["email"]:

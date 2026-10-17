@@ -19,6 +19,7 @@ from agentkit.config import env
 from agentkit.llm import LLMError
 from agentkit.log import get_logger
 
+from ... import web
 from ...gui.desktop import Desktop, DesktopError
 from ...tasks import search as serp
 from .. import intent
@@ -176,7 +177,8 @@ class DesktopBrowser:
                 extra={"ctx": {"url": url[:120]}},
             )
             return None
-        if why := self.guard.refuse(url):
+        if why := self.guard.refuse(url) or await web.may_visit(url):
+            # A page reached by a click is only known after it opened: it is then left unread.
             log.info("Page skipped", extra={"ctx": {"url": url, "why": why}})
             return None
         self.guard.opened(url)
@@ -203,7 +205,7 @@ class DesktopBrowser:
         return page
 
     async def open_url(self, url: str) -> Page | None:
-        if why := self.guard.refuse(url):
+        if why := self.guard.refuse(url) or await web.may_visit(url):
             log.info("Page skipped", extra={"ctx": {"url": url, "why": why}})
             return None
         try:

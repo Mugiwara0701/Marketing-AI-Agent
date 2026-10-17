@@ -196,7 +196,7 @@ def check_overlay(overlay: dict[str, Any], base: dict[str, Any]) -> None:  # noq
         raise OverlayError(
             f"config_version {version!r} is not supported (this agent loads {', '.join(SUPPORTED_CONFIG_VERSIONS)})"
         )
-    allowed_top = {"config_version", *OVERLAY_SECTIONS, *EXCLUDE_KEYS}
+    allowed_top = {"config_version", *OVERLAY_SECTIONS, *EXCLUDE_KEYS, "include_countries"}
     for key in overlay:
         if key not in allowed_top:
             raise OverlayError(f"{key}: a campaign may not set this key")
@@ -218,7 +218,7 @@ def check_overlay(overlay: dict[str, Any], base: dict[str, Any]) -> None:  # noq
                 ok = _type_ok(known[key], value)
             if not ok:
                 raise OverlayError(f"{section}.{key}: wrong type")
-    for key in EXCLUDE_KEYS:
+    for key in (*EXCLUDE_KEYS, "include_countries"):
         value = overlay.get(key)
         if value is not None and not _type_ok([], value):
             raise OverlayError(f"{key}: must be a list of text")
@@ -244,6 +244,9 @@ def merge_overlay(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, An
                 seen.add(_norm(item))
                 merged.append(item)
         effective[key] = merged
+    # Replaces, and is present only when the campaign sets it (the CA's compiler/complete.py does the same).
+    if overlay.get("include_countries"):
+        effective["include_countries"] = list(overlay["include_countries"])
     return effective
 
 
@@ -681,6 +684,22 @@ def describe_pass(cfg: LinkConfig | None = None) -> dict[str, Any] | None:
         "version": current.version,
         "sha256": current.sha256[:12],
     }
+
+
+def live_campaign_id(cfg: LinkConfig | None = None) -> str | None:
+    """The campaign whose emails may be sent now: its id, "none" when nothing is live (as far as this agent knows), or
+    None when no link is configured (then campaigns are not checked). Read from the last good campaign on disk."""
+    cfg = cfg or link_config()
+    if cfg is None:
+        return None
+    current = load_cache(cfg)
+    return current.campaign_id if current is not None else NO_CAMPAIGN
+
+
+def require_campaign() -> bool:
+    """MA_REQUIRE_CAMPAIGN (default true): a discovery pass runs only for a live, approved campaign, never on the base
+    config alone. false keeps the old behaviour (the base config runs when nothing is live)."""
+    return (env("MA_REQUIRE_CAMPAIGN", "true") or "true").strip().lower() != "false"
 
 
 WATCH = "watch"  # pass_id of a pickup made by the watcher, not by a pass

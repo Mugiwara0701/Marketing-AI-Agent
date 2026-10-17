@@ -57,7 +57,7 @@ rssh() { ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"; }
 remote_run() {
   local cmd
   cmd=$(printf '%q ' "$@")
-  rssh -t "cd ~/$REMOTE_DIR && set -a && [ -f .env ] && . ./.env; set +a; export DISPLAY=\${DISPLAY:-:0}; export PATH=\$HOME/.local/bin:\$PATH; $cmd"
+  rssh -t "cd ~/$REMOTE_DIR && set -a && [ -f .env ] && . ./.env; set +a; export DISPLAY=\${DISPLAY:-:0}; export MA_ON_OFFICE_MACHINE=1; export PATH=\$HOME/.local/bin:\$PATH; $cmd"
 }
 
 do_sync() {
@@ -112,7 +112,9 @@ case "$cmd" in
     ;;
   up)
     do_sync
-    rssh "systemctl --user restart marketing-agent.service && sleep 3 && systemctl --user --no-pager status marketing-agent.service | head -5"
+    # The unit is refreshed from the repository each time, so a change to it (e.g. MA_ON_OFFICE_MACHINE) is never missed.
+    # shellcheck disable=SC2016  # expanded on the office machine, on purpose
+    rssh "sed 's#%h/Marketing-AI-Agent#'\$HOME/$REMOTE_DIR'#g' ~/$REMOTE_DIR/deploy/marketing-agent.service > ~/.config/systemd/user/marketing-agent.service && systemctl --user daemon-reload && systemctl --user restart marketing-agent.service && sleep 3 && systemctl --user --no-pager status marketing-agent.service | head -5"
     ;;
   pipeline)
     need_remote

@@ -10,6 +10,8 @@ WorkingDirectory=%h/Marketing-AI-Agent
 # Lead research drives the visible Chrome on the logged-in Xubuntu (Xorg) session: auto-login on, screen lock off.
 Environment=DISPLAY=:0
 Environment=BROWSER_BACKEND=desktop
+# Tells the agent this really is the Marketing Agent machine (see _wrong_machine in agent/__main__.py).
+Environment=MA_ON_OFFICE_MACHINE=1
 ExecStart=%h/Marketing-AI-Agent/deploy/start-agent.sh
 Restart=on-failure
 RestartSec=60

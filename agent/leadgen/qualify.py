@@ -198,6 +198,13 @@ async def qualify_page(  # noqa: PLR0911 - one rule per branch, each with its ow
     if why := intent.country_excluded(website, a.location, cfg.exclude_countries, cfg.exclude_tlds):
         v.reason = why
         return v
+    if why := intent.country_outside(website, a.location, cfg.include_countries):
+        v.reason = why
+        return v
+    if intent.country_unknown(website, a.location, cfg.include_countries):
+        v.notes.append(
+            f"country not known from the page or the site; kept (the campaign wants {', '.join(cfg.include_countries)})"
+        )
 
     verified = [q for q in a.evidence if quote_on_page(q.quote, page.text)]
     if len(verified) < len(a.evidence):

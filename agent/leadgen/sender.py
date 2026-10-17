@@ -12,6 +12,7 @@ Unapproved, rejected, unknown, suppressed or (in dev) off-allowlist addresses ar
 """
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from email.utils import make_msgid
 from pathlib import Path
@@ -27,6 +28,9 @@ from .repository import Repository
 
 log = get_logger("agent.leadgen.sender")
 MAX_ATTEMPTS = 3
+STALE_SENDING_MINUTES = 30  # longer than any one send: a crash between Gmail and the database
+STALE_ALERT_EVERY_S = 3600.0
+_last_stale_alert = float("-inf")
 _GATE = object()  # only this module can make a Cleared
 
 
@@ -132,44 +136,105 @@ def make_transport(dry_run: bool, out_dir: Path) -> Transport | None:
     return None
 
 
+class TestRedirectInProductionError(RuntimeError):
+    """TEST_RECIPIENT is set while APP_ENV=prod: real approved mail would be redirected and never reach the contact."""
+
+
+async def _check_stale(repo: Repository) -> None:
+    """Emails left in 'sending' (the process died between Gmail and the database) are never retried automatically:
+    they may have gone out. A person must look; the Campaign Agent and Slack are told."""
+    global _last_stale_alert  # noqa: PLW0603 - one timestamp for the process
+    stale = await repo.stale_sending(STALE_SENDING_MINUTES)
+    if not stale or time.monotonic() - _last_stale_alert < STALE_ALERT_EVERY_S:
+        return
+    _last_stale_alert = time.monotonic()
+    log.error("Emails stuck in 'sending'", extra={"ctx": {"count": stale}})
+    from .. import campaign_link  # noqa: PLC0415 - avoids an import cycle
+
+    campaign_link.emit(
+        "blocker", "critical", "MA_SEND_STUCK",
+        f"{stale} email(s) have been 'sending' for over {STALE_SENDING_MINUTES} minutes: check the Gmail sent folder,"
+        " then set each to 'sent' or back to 'approved'",
+        dedupe_key="send-stuck",
+    )  # fmt: skip
+
+
 async def send_approved(
     repo: Repository,
     transport: Transport | None,
     *,
     limit: int | None = None,
     gap_seconds: float | None = None,
+    live_campaign: str | None = None,
 ) -> dict:
+    """`live_campaign`: see Repository.claim_sendable (None = campaigns are not checked)."""
     stats = {"sent": 0, "skipped": 0, "failed": 0, "blocked": 0}
     if transport is None:
         log.info("Email sending is disabled (EMAIL_SENDING_ENABLED is not true); nothing sent")
         return {**stats, "disabled": 1}
+    override = mailer.test_recipient()
+    if override and transport.name != "outbox" and mailer.is_production():
+        raise TestRedirectInProductionError(
+            "TEST_RECIPIENT is set while APP_ENV=prod: remove one of them; nothing was sent"
+        )
+    await repo.expire_approvals()
+    await _check_stale(repo)
     cap = int(env("DAILY_SEND_CAP_PER_MAILBOX", "10") or 10)
     gap = float(env("SEND_GAP_SECONDS", "20") or 20) if gap_seconds is None else gap_seconds
     mailbox = env("MAIL_FROM", "dry-run@example.invalid") or "dry-run@example.invalid"
-    claimed = await repo.claim_sendable(limit or cap)
+    claimed = await repo.claim_sendable(limit or cap, live_campaign=live_campaign)
+    done: set[str] = set()
+    try:
+        await _send_claimed(repo, transport, claimed, stats, done, cap=cap, gap=gap, mailbox=mailbox,
+                            override=override)  # fmt: skip
+    finally:
+        # Anything claimed but not finished (an error, a cancel) goes back to the queue untouched.
+        for email in claimed:
+            if email.email_id not in done:
+                try:
+                    await repo.release_claim(email.email_id)
+                except Exception:  # never hide the original error
+                    log.exception("Could not release a claim", extra={"ctx": {"email_id": email.email_id}})
+    if claimed:  # the long-running service calls this every few seconds: log only when there was something to do
+        log.info("Send done", extra={"ctx": stats})
+    return stats
+
+
+async def _send_claimed(
+    repo: Repository,
+    transport: Transport,
+    claimed: list[EmailDraft],
+    stats: dict,
+    done: set[str],
+    *,
+    cap: int,
+    gap: float,
+    mailbox: str,
+    override: str | None,
+) -> None:
+    """`done` collects the emails that reached a final state for this call (sent, failed, blocked, skipped)."""
     for n, email in enumerate(claimed):
         if problem := await repo.sendable_problem(email.email_id):
             stats["blocked"] += 1
             await repo.mark_send_failed(email.email_id, f"gate: {problem}", final=True)
+            done.add(email.email_id)
             log.error(
                 "Send blocked by the approval gate",
                 extra={"ctx": {"email_id": email.email_id, "why": problem}},
             )
             continue
-        override = mailer.test_recipient()
         if await repo.is_suppressed(email.to) or (
             not override and not _allowed(email.to, transport)
         ):
             await repo.mark_send_failed(
                 email.email_id, "suppressed or not allowed in this environment", final=True
             )
+            done.add(email.email_id)
             stats["skipped"] += 1
             continue
         if not await repo.try_increment_send(mailbox, cap):
             log.info("Daily send cap reached", extra={"ctx": {"cap": cap}})
-            for rest in claimed[n:]:
-                await repo.release_claim(rest.email_id)
-            break
+            break  # the rest are released by the caller
         subject = f"[TEST for {email.to}] {email.subject}" if override else email.subject
         thread = await repo.thread_id_for(email.email_id)
         try:
@@ -185,28 +250,27 @@ async def send_approved(
             log.warning(
                 "Gmail login problem, nothing more sent", extra={"ctx": {"error": str(exc)[:200]}}
             )
-            for rest in claimed[n:]:
-                await repo.release_claim(rest.email_id)
-            break
+            break  # this one and the rest are released by the caller
         except Exception as exc:
             final = email.attempts + 1 >= MAX_ATTEMPTS
             await repo.mark_send_failed(email.email_id, f"{type(exc).__name__}: {exc}", final=final)
+            done.add(email.email_id)
             stats["failed"] += 1
             log.exception(
                 "Send failed", extra={"ctx": {"email_id": email.email_id, "final": final}}
             )
             continue
+        # From here on the mail is out: never released for another attempt, even if recording it fails.
+        done.add(email.email_id)
         await repo.mark_sent(
-            email.email_id, sent.message_id, sent.provider_id, mailbox, sent.thread_id
-        )
+            email.email_id, sent.message_id, sent.provider_id, mailbox, sent.thread_id,
+            test_redirect=bool(override) and transport.name != "outbox",
+        )  # fmt: skip
         stats["sent"] += 1
         log.info("Email sent", extra={"ctx": {"email_id": email.email_id, "transport": transport.name,
                                               "test_redirect": bool(override)}})  # fmt: skip
         if gap and n < len(claimed) - 1:
             await asyncio.sleep(gap)
-    if claimed:  # the long-running service calls this every few seconds: log only when there was something to do
-        log.info("Send done", extra={"ctx": stats})
-    return stats
 
 
 def _allowed(addr: str, transport: Transport) -> bool:
