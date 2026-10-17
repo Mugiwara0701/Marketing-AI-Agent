@@ -39,7 +39,7 @@ def test_leads_queries_campaign_rejects_an_unsupported_version(tmp_path, capsys)
 
 def test_a_long_followup_is_shown_whole_in_slack():
     body = "\n\n".join(f"Paragraph {i}: " + "word " * 120 for i in range(12))  # about 7,000 characters
-    row = {"company": "Acme", "domain": "acme.io", "project_summary": "p", "technologies": [],
+    row: dict[str, object] = {"company": "Acme", "domain": "acme.io", "project_summary": "p", "technologies": [],
            "email": "hi@acme.io", "name": "", "role": "", "source_url": "", "review_note": None,
            "subject": "Re: Hello", "body": body, "step": 2}  # fmt: skip
     _text, blocks = notify.email_blocks(row, "email:ID-2")
