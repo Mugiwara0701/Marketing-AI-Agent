@@ -5,7 +5,7 @@ name: lint
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "fix/**", "feature/**"]
 permissions:
   contents: read
 concurrency:
