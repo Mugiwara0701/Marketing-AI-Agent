@@ -179,4 +179,5 @@ def test_preferred_roles_come_first_and_the_rank_is_kept():
     assert [x.email for x in best([])][:2] == ["ana.ruiz@voltgrid.com", "raj.mehta@voltgrid.com"]
     first = best(["procurement"])
     assert first[0].email == "raj.mehta@voltgrid.com"
-    assert first[0].rank == 8  # still a procurement rank: lead scoring is not changed by the campaign's order
+    # still a procurement rank: lead scoring is not changed by the campaign's order
+    assert first[0].rank == 8
