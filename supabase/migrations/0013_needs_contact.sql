@@ -26,7 +26,7 @@ create or replace function submit_manual_contact(
 ) returns text
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp  -- extensions: pgcrypto's digest(), used by is_suppressed()
 as $$
 declare
   v_email text := lower(btrim(coalesce(p_email, '')));
