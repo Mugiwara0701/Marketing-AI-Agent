@@ -158,7 +158,7 @@ def test_a_good_overlay_passes_and_merges_like_the_campaign_agent_does() -> None
     assert merged["exclude_terms"] == ["Manufacturer", "price"]
     assert merged["exclude_tlds"] == [".de"] and merged["contacts"] == BASE["contacts"]
     assert (
-        BASE["search"]["queries_per_run"] == 16 and BASE["project_context"] == {}
+        BASE["search"]["queries_per_run"] == 16 and BASE["project_context"] == {}  # type: ignore[index]
     )  # the base is not changed
 
 
@@ -589,7 +589,7 @@ def test_the_watcher_picks_up_an_approved_campaign_by_itself_and_says_so_once(
     assert (
         len(applied) == 1 and "next pass will use it" in applied[0]["message"]
     )  # received, not "running"
-    assert cl.load_cache(cfg).version == 1
+    assert cl.load_cache(cfg).version == 1  # type: ignore[union-attr]
 
 
 def test_the_watcher_reports_an_outage_once_not_every_check(cfg, monkeypatch) -> None:
@@ -607,15 +607,15 @@ def test_the_watcher_does_nothing_without_a_link(monkeypatch) -> None:
 
 def test_a_pass_can_say_which_campaign_it_runs(cfg) -> None:
     assert (
-        cl.describe_pass(cfg)["campaign_id"] is None
-        and "base config" in cl.describe_pass(cfg)["message"]
+        cl.describe_pass(cfg)["campaign_id"] is None  # type: ignore[index]
+        and "base config" in cl.describe_pass(cfg)["message"]  # type: ignore[index]
     )
     ca = FakeCA()
     ca.live = campaign()
     pick_up(ca, cfg)
     said = cl.describe_pass(cfg)
-    assert said["version"] == 1 and said["campaign_id"] == CID
-    assert said["sha256"] == cl.load_cache(cfg).sha256[:12] and CID[:8] in said["message"]
+    assert said["version"] == 1 and said["campaign_id"] == CID  # type: ignore[index]
+    assert said["sha256"] == cl.load_cache(cfg).sha256[:12] and CID[:8] in said["message"]  # type: ignore[index, union-attr]
 
 
 def test_with_no_link_a_pass_says_nothing(monkeypatch) -> None:
@@ -670,7 +670,7 @@ def test_a_complete_file_that_equals_the_local_base_plus_the_campaign_is_the_one
     applied = [e for e in queued(cfg) if e["code"] == "MA_CAMPAIGN_APPLIED"]
     assert "complete file" in applied[0]["message"]
     assert not [e for e in queued(cfg) if e["code"] == "MA_BASE_DRIFT"]
-    assert "from the CA's complete leadgen file" in cl.describe_pass(cfg)["message"]
+    assert "from the CA's complete leadgen file" in cl.describe_pass(cfg)["message"]  # type: ignore[index]
 
 
 def test_a_complete_file_built_on_a_different_base_is_not_run_and_the_ca_is_told_once(cfg) -> None:
@@ -694,7 +694,7 @@ def test_a_complete_file_built_on_a_different_base_is_not_run_and_the_ca_is_told
         and "exclude_companies" in drift[0]["message"]
     )
     assert "(the CA's complete file was not used" in (cfg.cache_dir / "leadgen.yaml").read_text()
-    assert "did not match" in cl.describe_pass(cfg)["message"]
+    assert "did not match" in cl.describe_pass(cfg)["message"]  # type: ignore[index]
 
 
 def test_the_drift_blocker_closes_when_the_base_matches_again(cfg) -> None:
@@ -733,7 +733,7 @@ def test_an_older_ca_without_a_complete_file_still_works_and_raises_no_alarm(cfg
     ca.live = campaign()
     assert pick_up(ca, cfg) == cl.merge_overlay(BASE, cl.parse_overlay(OVERLAY))
     assert not [e for e in queued(cfg) if e["code"] == "MA_BASE_DRIFT"]
-    assert "on this machine's base file" in cl.describe_pass(cfg)["message"]
+    assert "on this machine's base file" in cl.describe_pass(cfg)["message"]  # type: ignore[index]
 
 
 def test_the_fingerprint_ignores_order_and_the_first_difference_names_the_key() -> None:
@@ -766,4 +766,4 @@ def test_a_pass_cut_off_by_a_restart_is_not_reported_as_stopped_by_someone(
     ]
     assert said[0] == "The pass was stopped"
     assert "restarting" in said[1] and "starts again by itself" in said[1]
-    assert pipeline.last["outcome"] == "stopped"  # what the dashboard reads is unchanged
+    assert pipeline.last["outcome"] == "stopped"  # type: ignore[index]  # what the dashboard reads is unchanged

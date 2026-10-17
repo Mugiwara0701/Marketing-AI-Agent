@@ -56,7 +56,7 @@ def _report_failure(name: str, exc: BaseException) -> None:
         if type(exc).__name__ == "GmailAuthError"
         else _BLOCKERS.get(name, (None, None, None))
     )
-    if code:
+    if code and message:
         campaign_link.emit("blocker", "error", code, message, dedupe_key=key)
 
 
