@@ -3,11 +3,13 @@ import base64
 import email
 import email.policy
 import json
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 import pytest
 from google.auth.exceptions import RefreshError
 
+from agent import mailer
 from agent.leadgen import sender
 from agent.leadgen.models import Contact, EmailDraft, Lead, LeadStatus
 from agent.leadgen.repository.sqlite import SqliteRepository
@@ -284,31 +286,168 @@ def test_sending_disabled_sends_nothing(monkeypatch, tmp_path):
     assert not called
 
 
-def test_transient_failure_returns_the_email_to_the_queue(monkeypatch):
+def _row(repo, eid):
+    r = repo.db.execute("select status, attempts, provider_id from emails where id=?", (eid,)).fetchone()
+    return tuple(r)
+
+
+def _age(repo, eid, minutes=20):
+    """As if the unclear send happened `minutes` ago (the sender waits before it looks in the Sent folder)."""
+    when = (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    repo.db.execute("update emails set updated_at=? where id=?", (when, eid))
+
+
+def _unclear(service, msg, thread_id=None):
+    raise OSError("503 backend error")  # Gmail may have accepted it
+
+
+def test_an_unclear_send_is_never_retried_blindly(monkeypatch):
     _env(monkeypatch)
     repo = ThreadedRepo(None)
     eid = _approved(repo)
+    assert _send(monkeypatch, repo, _unclear)["unknown"] == 1
+    assert _row(repo, eid) == ("sending", 0, None)  # held, not back in the queue
+    calls = []
 
     def send(service, msg, thread_id=None):
-        raise OSError("503 backend error")
+        calls.append(1)
+        return {"message_id": "<g@x>", "gmail_message_id": "gm1", "gmail_thread_id": "th1"}
 
-    assert _send(monkeypatch, repo, send)["failed"] == 1
-    row = repo.db.execute("select status, attempts from emails where id=?", (eid,)).fetchone()
-    assert tuple(row) == ("approved", 1)
+    monkeypatch.setattr(gmail, "find_sent", lambda *a, **k: pytest.fail("looked too early"))
+    _send(monkeypatch, repo, send)  # minutes later: still held, and Gmail is not asked yet
+    assert calls == [] and _row(repo, eid)[0] == "sending"
+
+
+def test_an_unclear_send_found_in_gmail_is_recorded_as_sent_not_sent_again(monkeypatch):
+    _env(monkeypatch)
+    repo = ThreadedRepo(None)
+    eid = _approved(repo)
+    _send(monkeypatch, repo, _unclear)
+    _age(repo, eid)
+    asked = []
+
+    def found(service, message_id, to, subject, newer_than_days=3):
+        asked.append((message_id, to, subject))
+        return {"message_id": message_id, "gmail_message_id": "gm-found", "gmail_thread_id": "th-found"}
+
+    monkeypatch.setattr(gmail, "find_sent", found)
+    stats = _send(monkeypatch, repo, lambda *a, **k: pytest.fail("sent twice"))
+    assert stats["sent"] == 1 and _row(repo, eid) == ("sent", 0, "gm-found")
+    assert asked == [(mailer.message_id_for(eid, "real@company.io"), "real@company.io", "Hi")]
+
+
+def test_an_unclear_send_not_in_gmail_is_queued_again_with_one_attempt_used(monkeypatch):
+    _env(monkeypatch)
+    repo = ThreadedRepo(None)
+    eid = _approved(repo)
+    _send(monkeypatch, repo, _unclear)
+    _age(repo, eid)
+    monkeypatch.setattr(gmail, "find_sent", lambda *a, **k: None)
+    sent = []
+
+    def send(service, msg, thread_id=None):
+        sent.append(msg["Message-ID"])
+        return {"message_id": msg["Message-ID"], "gmail_message_id": "gm2", "gmail_thread_id": "th2"}
+
+    assert _send(monkeypatch, repo, send)["sent"] == 1  # settled, then sent in the same round
+    assert _row(repo, eid) == ("sent", 1, "gm2")
+    assert sent == [mailer.message_id_for(eid, "real@company.io")]  # the same Message-ID as the first try
+
+
+def test_gmail_unreachable_for_the_check_keeps_the_email_held(monkeypatch):
+    _env(monkeypatch)
+    repo = ThreadedRepo(None)
+    eid = _approved(repo)
+    _send(monkeypatch, repo, _unclear)
+    _age(repo, eid)
+
+    def down(*_a, **_k):
+        raise OSError("Gmail unreachable")
+
+    monkeypatch.setattr(gmail, "find_sent", down)
+    _send(monkeypatch, repo, lambda *a, **k: pytest.fail("sent while unclear"))
+    assert _row(repo, eid)[0] == "sending"  # MA_SEND_STUCK tells a person after 30 minutes
 
 
 def test_last_attempt_expires_the_email(monkeypatch):
     _env(monkeypatch)
     repo = ThreadedRepo(None)
     eid = _approved(repo, attempts=2)
+    _send(monkeypatch, repo, _unclear)
+    _age(repo, eid)
+    monkeypatch.setattr(gmail, "find_sent", lambda *a, **k: None)
+    _send(monkeypatch, repo, lambda *a, **k: pytest.fail("no attempt left"))
+    assert _row(repo, eid)[0] == "expired"
+
+
+def _http_error(status):
+    import httplib2
+    from googleapiclient.errors import HttpError
 
     def send(service, msg, thread_id=None):
-        raise OSError("boom")
+        raise HttpError(httplib2.Response({"status": str(status)}), b"{}")
 
-    _send(monkeypatch, repo, send)
-    assert (
-        repo.db.execute("select status from emails where id=?", (eid,)).fetchone()[0] == "expired"
-    )
+    return send
+
+
+def test_a_refused_send_4xx_is_a_clear_failure_and_queued_again(monkeypatch):
+    _env(monkeypatch)
+    repo = ThreadedRepo(None)
+    eid = _approved(repo)
+    assert _send(monkeypatch, repo, _http_error(400))["failed"] == 1
+    assert _row(repo, eid)[:2] == ("approved", 1)
+
+
+def test_a_5xx_is_unclear(monkeypatch):
+    _env(monkeypatch)
+    repo = ThreadedRepo(None)
+    eid = _approved(repo)
+    assert _send(monkeypatch, repo, _http_error(503))["unknown"] == 1
+    assert _row(repo, eid)[:2] == ("sending", 0)
+
+
+def test_a_rate_limit_sends_nothing_and_uses_no_attempt(monkeypatch):
+    _env(monkeypatch)
+    repo = ThreadedRepo(None)
+    eid = _approved(repo)
+    _send(monkeypatch, repo, _http_error(429))
+    assert _row(repo, eid)[:2] == ("approved", 0)
+
+
+def test_the_send_call_is_never_retried_by_the_client_library():
+    seen = []
+
+    class Exec(_Exec):
+        def execute(self, num_retries=0):
+            seen.append(num_retries)
+            return self.value
+
+    svc = FakeService()
+    svc.send = lambda userId, body: Exec({"id": "g1", "threadId": "t1"})  # type: ignore[method-assign]
+    gmail.send_message(svc, _msg())
+    assert seen == [0]
+
+
+def test_the_message_id_is_fixed_per_email_and_recipient(monkeypatch):
+    _env(monkeypatch)
+    a = mailer.message_id_for("e1", "Ana@X.io")
+    assert a == mailer.message_id_for("e1", " ana@x.io ") and a.endswith("@x.io>")
+    assert a != mailer.message_id_for("e1", "bob@x.io") and a != mailer.message_id_for("e2", "ana@x.io")
+    msg = mailer.build_message({"id": "e1", "subject": "S", "body": "B"}, "ana@x.io")
+    assert msg["Message-ID"] == a
+
+
+def test_find_sent_looks_by_message_id_then_by_recipient_and_subject(monkeypatch):
+    queries = []
+
+    def listing(service, query, max_results=50):
+        queries.append(query)
+        return [{"id": "g9", "threadId": "t9"}] if "subject:" in query else []
+
+    monkeypatch.setattr(gmail, "list_recent_messages", listing)
+    got = gmail.find_sent(object(), "<ma-1@x.io>", "a@b.io", 'Hi "there"')
+    assert got == {"message_id": "<ma-1@x.io>", "gmail_message_id": "g9", "gmail_thread_id": "t9"}
+    assert queries == ["in:sent rfc822msgid:ma-1@x.io", 'in:sent to:a@b.io subject:"Hi  there" newer_than:3d']
 
 
 def test_auth_failure_requeues_without_using_an_attempt(monkeypatch):

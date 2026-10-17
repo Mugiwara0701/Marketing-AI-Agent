@@ -362,6 +362,20 @@ class PostgresRepository:
         )
         return int(row["n"]) if row else 0
 
+    async def stuck_sending(self, minutes: int, limit: int) -> list[EmailDraft]:
+        rows = await db.fetch(
+            f"""{self._EMAIL_Q} where e.status='sending' and e.updated_at < now() - make_interval(mins => $1)
+                 order by e.updated_at limit $2""",
+            minutes, limit,
+        )  # fmt: skip
+        return [self._email(r) for r in rows]
+
+    async def mark_send_unknown(self, email_id: str, error: str) -> None:
+        await db.execute(
+            "update emails set last_error=$2, updated_at=now() where id=$1::uuid and status='sending'",
+            email_id, f"unclear send result: {error}"[:500],
+        )  # fmt: skip
+
     async def expire_approvals(self) -> int:
         row = await db.fetchrow("select expire_approvals() as n")
         return int(row["n"]) if row else 0

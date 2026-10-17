@@ -499,6 +499,19 @@ class SqliteRepository:
         )
         return int(row["n"]) if row else 0
 
+    async def stuck_sending(self, minutes: int, limit: int) -> list[EmailDraft]:
+        rows = self.db.execute(
+            f"{self._EMAIL_Q} where e.status='sending' and e.updated_at < ? order by e.updated_at limit ?",
+            (_ago(minutes=minutes), limit),
+        ).fetchall()
+        return [self._email(r) for r in rows]
+
+    async def mark_send_unknown(self, email_id: str, error: str) -> None:
+        self.db.execute(
+            "update emails set last_error=?, updated_at=? where id=? and status='sending'",
+            (f"unclear send result: {error}"[:500], _now(), email_id),
+        )
+
     async def release_claim(self, email_id: str) -> None:
         self.db.execute(
             "update emails set status='approved', updated_at=? where id=? and status='sending'",

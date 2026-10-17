@@ -99,7 +99,10 @@ def get_service(interactive: bool = False):
 
 # ---------- sending ----------
 
-_RETRIES = 3  # googleapiclient retries 429 / 5xx with exponential backoff
+_RETRIES = 3  # googleapiclient retries 429 / 5xx with exponential backoff: for reads only
+# The send itself is never retried by the client library: a timeout or a 5xx can come after Gmail accepted the mail, and a
+# retry would send it twice. The caller decides, after looking in the Sent folder (find_sent).
+_SEND_RETRIES = 0
 
 
 def encode_message(msg: EmailMessage) -> str:
@@ -118,7 +121,7 @@ def send_message(service, msg: EmailMessage, thread_id: str | None = None) -> di
     body: dict = {"raw": encode_message(msg)}
     if thread_id:
         body["threadId"] = thread_id
-    sent = service.users().messages().send(userId="me", body=body).execute(num_retries=_RETRIES)
+    sent = service.users().messages().send(userId="me", body=body).execute(num_retries=_SEND_RETRIES)
     gmail_id = sent.get("id")
     if not gmail_id:
         raise RuntimeError("gmail send returned no message id")
@@ -136,6 +139,28 @@ def send_message(service, msg: EmailMessage, thread_id: str | None = None) -> di
         "gmail_message_id": gmail_id,
         "gmail_thread_id": sent.get("threadId") or thread_id,
     }
+
+
+def find_sent(
+    service, message_id: str | None, to: str, subject: str, newer_than_days: int = 3
+) -> dict | None:
+    """Is a mail this account may have sent in its Sent folder? First by our own Message-ID (exact), then by recipient and
+    subject in the last few days (Gmail can replace the Message-ID). Returns the three ids as send_message does, or None.
+    Errors are raised: "could not look" must never be read as "not sent"."""
+    queries = []
+    if message_id:
+        queries.append(f"in:sent rfc822msgid:{message_id.strip().strip('<>')}")
+    words = re.sub(r'["\\]', " ", subject or "")[:80].strip()
+    queries.append(f'in:sent to:{to.strip()} subject:"{words}" newer_than:{newer_than_days}d')
+    for q in queries:
+        hits = list_recent_messages(service, q, max_results=1)
+        if hits:
+            return {
+                "message_id": message_id or "",
+                "gmail_message_id": hits[0]["id"],
+                "gmail_thread_id": hits[0].get("threadId"),
+            }
+    return None
 
 
 def profile_address(service) -> str:

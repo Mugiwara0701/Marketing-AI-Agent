@@ -8,7 +8,7 @@ import hmac
 import os
 import re
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, parseaddr
 from html import escape
 from pathlib import Path
 
@@ -163,6 +163,14 @@ def render_html(subject: str, body: str, unsubscribe: str) -> str:
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), ""), _template())
 
 
+def message_id_for(email_id: str, to_addr: str) -> str:
+    """The Message-ID of the mail for one email row and one recipient: always the same, so after an unclear send result
+    the agent can look for exactly this mail in Gmail's Sent folder before it ever sends again (sender._reconcile)."""
+    domain = parseaddr(env("MAIL_FROM", "") or "")[1].rpartition("@")[2].strip().lower() or "localhost"
+    tag = hashlib.sha256(to_addr.strip().lower().encode("utf-8")).hexdigest()[:12]
+    return f"<ma-{email_id}-{tag}@{domain}>"
+
+
 def build_message(row, to_addr: str) -> EmailMessage:
     """multipart/alternative: a clean plain-text part and the HTML template, with the identity footer and the one-click
     unsubscribe link and headers in both."""
@@ -177,7 +185,7 @@ def build_message(row, to_addr: str) -> EmailMessage:
     )
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = sender, to_addr, row["subject"]
-    msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid()
+    msg["Date"], msg["Message-ID"] = formatdate(localtime=True), message_id_for(str(row["id"]), to_addr)
     msg["List-Unsubscribe"] = f"<{url}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     if row.get("in_reply_to"):  # follow-ups and replies thread under the mail they answer
