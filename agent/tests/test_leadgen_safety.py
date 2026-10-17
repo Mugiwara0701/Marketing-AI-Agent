@@ -216,6 +216,27 @@ def test_a_changed_body_after_approval_is_not_sent(repo):
     assert "differs from what was approved" in (asyncio.run(repo.sendable_problem(eid)) or "")
 
 
+def test_an_approval_for_one_draft_cannot_authorize_another(repo):
+    _la, a = _lead_with_draft(repo, "voltgrid.com")
+    lb, b = _lead_with_draft(repo, "gridvolt.io")  # same subject and body, another recipient
+    assert asyncio.run(approval.decide(repo, a, True, "slack:U1")) == "approved"
+    # A's approval copied onto B, and B forced to "approved", bypassing the decision.
+    digest = repo.db.execute(
+        "select content_sha256 from approvals where ref_id=? and status='approved'", (a,)
+    ).fetchone()[0]
+    repo.db.execute(
+        "insert into approvals (id, kind, ref_id, status, decided_by, decided_at, content_sha256,"
+        " created_at) values ('forged', 'email', ?, 'approved', 'x', '2026-01-01', ?, '2026-01-01')",
+        (b, digest),
+    )
+    repo.db.execute("update emails set status='approved' where id=?", (b,))
+    repo.db.execute("update companies set lead_status='APPROVED' where id=?", (lb,))
+    t = RecordingTransport()
+    assert _send(repo, t)["sent"] == 1 and t.sent == [a]
+    assert "differs from what was approved" in (asyncio.run(repo.sendable_problem(b)) or "")
+    assert asyncio.run(repo.get_email(b)).status == "approved"  # never claimed
+
+
 def test_a_changed_recipient_after_approval_is_not_sent(repo):
     _lid, eid = _lead_with_draft(repo)
     asyncio.run(approval.decide(repo, eid, True, "x"))
@@ -374,3 +395,17 @@ def test_slack_text_is_escaped(repo):
     e = EmailDraft(email_id="1", lead_id="l", contact_id="c", to="a@x.io", subject="<b>", body="x")
     text = approval.message_text(lead, c, e)
     assert "<!channel>" not in text and "&lt;!channel&gt; &amp; Co" in text
+
+
+def test_the_card_names_the_campaign_and_the_exact_draft():
+    from agent.leadgen.repository import content_sha256
+
+    lead = Lead(company_name="Acme", company_website="acme.io")
+    c = Contact(email="ana@acme.io")
+    e = EmailDraft(email_id="E1", lead_id="l", contact_id="c", to="ana@acme.io", subject="Hi",
+                   body="Body", source_campaign_id="camp-1", source_campaign_version=3)  # fmt: skip
+    text = approval.message_text(lead, c, e)
+    assert "*Campaign:* camp-1 (version 3)" in text and "*Draft:* E1" in text
+    assert content_sha256("ana@acme.io", "Hi", "Body")[:12] in text
+    changed = approval.message_text(lead, c, e.model_copy(update={"body": "Other body"}))
+    assert content_sha256("ana@acme.io", "Hi", "Body")[:12] not in changed

@@ -187,6 +187,9 @@ class EmailDraft(BaseModel):
     step: int = 1
     attempts: int = 0
     in_reply_to: str | None = None  # follow-ups and replies thread under the mail they answer
+    # The Campaign Agent campaign and version this draft was written for (None: before campaigns were tracked)
+    source_campaign_id: str | None = None
+    source_campaign_version: int | None = None
 
 
 # --- what the browser layer hands to the rest of the pipeline ------------------------------------------

@@ -259,7 +259,9 @@ class PostgresRepository:
         return EmailDraft(email_id=str(r["id"]), lead_id=str(r["company_id"]), contact_id=str(r["contact_id"]),
                           to=r["to_addr"] or "", subject=r["subject"] or "", body=r["body"] or "",
                           review_note=r["review_note"], status=r["status"], step=r["step"],
-                          attempts=r["attempts"], in_reply_to=r["in_reply_to"])  # fmt: skip
+                          attempts=r["attempts"], in_reply_to=r["in_reply_to"],
+                          source_campaign_id=str(r["source_campaign_id"]) if r["source_campaign_id"] else None,
+                          source_campaign_version=r["source_campaign_version"])  # fmt: skip
 
     async def save_email_draft(self, lead_id, contact_id, subject, body, note) -> str | None:
         row = await db.fetchrow(

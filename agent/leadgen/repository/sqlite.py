@@ -297,7 +297,8 @@ class SqliteRepository:
         return EmailDraft(email_id=r["id"], lead_id=r["company_id"], contact_id=r["contact_id"],
                           to=r["to_addr"] or "", subject=r["subject"] or "", body=r["body"] or "",
                           review_note=r["review_note"], status=r["status"], step=r["step"],
-                          attempts=r["attempts"])  # fmt: skip
+                          attempts=r["attempts"], source_campaign_id=r["source_campaign_id"],
+                          source_campaign_version=r["source_campaign_version"])  # fmt: skip
 
     async def save_email_draft(self, lead_id, contact_id, subject, body, note) -> str | None:
         eid = str(uuid.uuid4())

@@ -17,7 +17,7 @@ from agentkit.config import env
 from agentkit.log import get_logger
 
 from .models import Contact, EmailDraft, Lead, LeadStatus
-from .repository import Repository
+from .repository import Repository, content_sha256
 
 log = get_logger("agent.leadgen.approval")
 _MAX = 2900  # Slack section text limit is 3000
@@ -55,7 +55,19 @@ def message_text(lead: Lead, contact: Contact, email: EmailDraft) -> str:
     ]
     if email.review_note:
         lines.append(f":warning: *Checks flagged:* {esc(email.review_note)}")
+    lines.insert(1, draft_identity(contact, email))  # near the top: a long card is cut at the end, never here
     return clip("\n".join(lines), _MAX)
+
+
+def draft_identity(contact: Contact, email: EmailDraft) -> str:
+    """Which campaign and which exact draft the decision is about. The fingerprint is the start of the hash the approval
+    is bound to (recipient, subject and body): a changed draft has another one and needs a new decision."""
+    if email.source_campaign_id:
+        campaign = f"{email.source_campaign_id} (version {email.source_campaign_version})"
+    else:
+        campaign = "none recorded"
+    digest = content_sha256(contact.email, email.subject, email.body)[:12]
+    return f"*Campaign:* {esc(campaign)}\n*Draft:* {esc(email.email_id)}  ·  fingerprint {digest}"
 
 
 def draft_sections(email: EmailDraft) -> list[dict]:
