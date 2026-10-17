@@ -23,7 +23,22 @@ jobs:
         with: {python-version: "3.12", cache: pip}
       - run: pip install ruff
       - run: ruff check . --output-format=github
+      # On a failure, each file the formatter would change is reported as an annotation with its diff.
       - run: ruff format --check .
+      - name: Report formatting differences
+        if: failure()
+        run: |
+          ruff format --diff . > format.diff 2>&1 || true
+          python - <<'PY'
+          import re
+          text = open("format.diff").read()
+          for part in re.split(r"(?m)^(?=--- )", text):
+              m = re.match(r"--- (\S+)", part)
+              if m:
+                  line = re.search(r"(?m)^@@ -(\d+)", part)
+                  body = part[-3000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+                  print(f"::error file={m.group(1)},line={line.group(1) if line else 1},title=ruff format::{body}")
+          PY
 
   typecheck:
     name: python (mypy)

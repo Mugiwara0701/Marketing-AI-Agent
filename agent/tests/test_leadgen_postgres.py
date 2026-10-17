@@ -365,7 +365,7 @@ def test_emails_wait_while_their_campaign_is_not_live_in_postgres(pg, monkeypatc
         assert await pg.claim_sendable(10, live_campaign="none") == []
         got = await pg.claim_sendable(10, live_campaign=camp_a)
         assert [e.email_id for e in got] == [eid]
-        await pg.mark_sent(eid, "<m@x>", "pid", "from@x.io", test_redirect=True)
+        await pg.mark_sent(eid, "<m@x>", f"pid-{eid}", "from@x.io", test_redirect=True)
         status = await db.fetchrow("select status from emails where id=$1::uuid", eid)
         assert status and status["status"] == "test_sent"
 
