@@ -153,7 +153,7 @@ def company_problem(
     return intent.exclusion_reason("", "", name, [], cfg.exclude_companies) or None
 
 
-async def qualify_page(  # noqa: PLR0911 - one rule per branch, each with its own reason
+async def qualify_page(  # noqa: PLR0911, PLR0912 - one rule per branch, each with its own reason
     page: Page, cfg: LeadgenConfig, assess: Assessor = assess_page
 ) -> Verdict:
     pi = intent.analyze(page.url, page.title, page.text)

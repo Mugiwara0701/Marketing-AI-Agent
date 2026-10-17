@@ -228,7 +228,7 @@ def test_a_changed_recipient_after_approval_is_not_sent(repo):
 
 
 def test_an_expired_approval_request_cannot_be_decided(repo):
-    lid, eid = _lead_with_draft(repo)
+    _lid, eid = _lead_with_draft(repo)
     asyncio.run(repo.open_approval(eid, "#c"))
     repo.db.execute("update approvals set expires_at='2000-01-01T00:00:00+00:00' where ref_id=?", (eid,))
     assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "expired"

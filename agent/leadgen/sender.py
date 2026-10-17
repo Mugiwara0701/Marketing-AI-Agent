@@ -24,10 +24,11 @@ from email.utils import make_msgid
 from pathlib import Path
 from typing import Protocol
 
+from googleapiclient.errors import HttpError
+
 from agentkit import gmail
 from agentkit.config import env
 from agentkit.log import get_logger
-from googleapiclient.errors import HttpError
 
 from .. import mailer
 from .models import EmailDraft
@@ -329,7 +330,7 @@ async def _send_claimed(
             done.add(email.email_id)
             await repo.mark_send_unknown(email.email_id, str(exc))
             stats["unknown"] += 1
-            log.error("Send result unclear; checked against Gmail before any new attempt",
+            log.exception("Send result unclear; checked against Gmail before any new attempt",
                       extra={"ctx": {"email_id": email.email_id, "error": str(exc)[:120]}})  # fmt: skip
             break  # Gmail is in trouble: the rest wait for the next round
         except Exception as exc:

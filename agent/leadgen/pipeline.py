@@ -212,7 +212,7 @@ class Pipeline:
         return intent.exclusion_reason(f"{r.title} {r.snippet}", host, "", self.cfg.exclude_terms,
                                        self.cfg.exclude_companies) or None  # fmt: skip
 
-    async def search(self, q: strategy.Query) -> None:
+    async def search(self, q: strategy.Query) -> None:  # noqa: PLR0912, PLR0915 - one loop, each refusal on its own
         suffix = str(self.cfg.search.get("query_suffix") or "").strip()
         text = f"{q.text} {suffix}".strip()
         try:

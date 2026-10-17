@@ -8,7 +8,7 @@ hooks:
 	pre-commit install --install-hooks
 
 test:
-	pytest libs/agentkit agent sandbox api
+	pytest libs/agentkit agent sandbox api $(PYTEST_ARGS)
 
 lint:
 	ruff check .

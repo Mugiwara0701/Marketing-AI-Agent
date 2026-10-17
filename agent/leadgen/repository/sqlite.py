@@ -575,7 +575,7 @@ def _ago(**delta: float) -> str:
     return (datetime.now(UTC) - timedelta(**delta)).isoformat(timespec="seconds")
 
 
-def _problem(row) -> str | None:
+def _problem(row) -> str | None:  # noqa: PLR0911 - one return per reason
     """Why an email must not be sent (None = it may). Shared by both repositories."""
     if row is None:
         return "unknown email"

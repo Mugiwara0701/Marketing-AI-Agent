@@ -471,7 +471,8 @@ async def _campaign_queries(path: str, count: int) -> int:
 
     base = config.load().raw
     try:
-        overlay = campaign_link.parse_overlay(Path(path).read_text(encoding="utf-8"))
+        text = await asyncio.to_thread(Path(path).read_text, encoding="utf-8")
+        overlay = campaign_link.parse_overlay(text)
         campaign_link.check_overlay(overlay, base)
     except (OSError, campaign_link.OverlayError) as exc:
         print(f"campaign file rejected: {exc}", file=sys.stderr)  # noqa: T201
