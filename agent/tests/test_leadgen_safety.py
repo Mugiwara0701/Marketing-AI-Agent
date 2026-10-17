@@ -230,17 +230,22 @@ def test_a_changed_recipient_after_approval_is_not_sent(repo):
 def test_an_expired_approval_request_cannot_be_decided(repo):
     _lid, eid = _lead_with_draft(repo)
     asyncio.run(repo.open_approval(eid, "#c"))
-    repo.db.execute("update approvals set expires_at='2000-01-01T00:00:00+00:00' where ref_id=?", (eid,))
+    repo.db.execute(
+        "update approvals set expires_at='2000-01-01T00:00:00+00:00' where ref_id=?", (eid,)
+    )
     assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "expired"
     assert asyncio.run(repo.get_email(eid)).status == "drafted"
-    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "expired"  # still, until posted again
+    # still, until posted again
+    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "expired"
     asyncio.run(repo.open_approval(eid, "#c"))  # the agent posts a new request
     assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "approved"
 
 
 def test_emails_of_a_campaign_that_is_not_live_wait(repo):
     async def go():
-        lead = Lead(company_name="Camp Co", company_website="campco.io", name_key="campco", lead_score=80)
+        lead = Lead(
+            company_name="Camp Co", company_website="campco.io", name_key="campco", lead_score=80
+        )
         lid = await repo.insert_lead(lead, source="t", campaign=("c-a", 1))
         for s in (LeadStatus.QUALIFIED, LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED):
             await repo.set_status(lid, s)
@@ -255,7 +260,8 @@ def test_emails_of_a_campaign_that_is_not_live_wait(repo):
     def send(live):
         return asyncio.run(sender.send_approved(repo, t, gap_seconds=0, live_campaign=live))
 
-    assert send("c-b")["sent"] == 0 and send("none")["sent"] == 0  # another campaign, or none, is live
+    # another campaign, or none, is live
+    assert send("c-b")["sent"] == 0 and send("none")["sent"] == 0
     assert asyncio.run(repo.get_email(eid)).status == "approved"  # waiting, not failed
     assert send("c-a")["sent"] == 1 and t.sent == [eid]
 
@@ -270,7 +276,8 @@ def test_an_error_mid_batch_releases_every_claim(repo, monkeypatch):
     monkeypatch.setattr(repo, "is_suppressed", boom)
     with pytest.raises(RuntimeError):
         _send(repo)
-    assert asyncio.run(repo.get_email(eid)).status == "approved"  # back in the queue, not stuck in 'sending'
+    # back in the queue, not stuck in 'sending'
+    assert asyncio.run(repo.get_email(eid)).status == "approved"
 
 
 def test_an_address_without_at_sign_is_refused_not_a_crash(monkeypatch):

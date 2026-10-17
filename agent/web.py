@@ -168,7 +168,9 @@ async def may_visit(url: str) -> str | None:
         return "portal whose terms forbid scraping"
     if not await asyncio.to_thread(_public_host, u.hostname):
         return "not a public address"
-    async with httpx.AsyncClient(headers={"User-Agent": settings.load().user_agent}, timeout=10) as c:
+    async with httpx.AsyncClient(
+        headers={"User-Agent": settings.load().user_agent}, timeout=10
+    ) as c:
         if not await _allowed(c, url):
             return "robots.txt disallows it"
     return None
@@ -216,9 +218,13 @@ async def fetch_page(  # noqa: PLR0911, PLR0912 - every refusal returns early
                         if tu.scheme not in ("http", "https") or not tu.hostname:
                             return None
                         if blocked(target):
-                            return Fetched(target, r.status_code, "", "redirected to a blocked portal")
+                            return Fetched(
+                                target, r.status_code, "", "redirected to a blocked portal"
+                            )
                         if not await asyncio.to_thread(_public_host, tu.hostname):
-                            return Fetched(target, r.status_code, "", "redirected to a non-public address")
+                            return Fetched(
+                                target, r.status_code, "", "redirected to a non-public address"
+                            )
                         current = target
                         continue
                     status, text = r.status_code, await _read_capped(r)

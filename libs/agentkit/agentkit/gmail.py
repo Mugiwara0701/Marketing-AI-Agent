@@ -121,7 +121,9 @@ def send_message(service, msg: EmailMessage, thread_id: str | None = None) -> di
     body: dict = {"raw": encode_message(msg)}
     if thread_id:
         body["threadId"] = thread_id
-    sent = service.users().messages().send(userId="me", body=body).execute(num_retries=_SEND_RETRIES)
+    sent = (
+        service.users().messages().send(userId="me", body=body).execute(num_retries=_SEND_RETRIES)
+    )
     gmail_id = sent.get("id")
     if not gmail_id:
         raise RuntimeError("gmail send returned no message id")

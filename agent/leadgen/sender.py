@@ -274,7 +274,9 @@ async def send_approved(
                 try:
                     await repo.release_claim(email.email_id)
                 except Exception:  # never hide the original error
-                    log.exception("Could not release a claim", extra={"ctx": {"email_id": email.email_id}})
+                    log.exception(
+                        "Could not release a claim", extra={"ctx": {"email_id": email.email_id}}
+                    )
     if claimed:  # the long-running service calls this every few seconds: log only when there was something to do
         log.info("Send done", extra={"ctx": stats})
     return stats

@@ -287,7 +287,9 @@ def test_sending_disabled_sends_nothing(monkeypatch, tmp_path):
 
 
 def _row(repo, eid):
-    r = repo.db.execute("select status, attempts, provider_id from emails where id=?", (eid,)).fetchone()
+    r = repo.db.execute(
+        "select status, attempts, provider_id from emails where id=?", (eid,)
+    ).fetchone()
     return tuple(r)
 
 
@@ -328,7 +330,11 @@ def test_an_unclear_send_found_in_gmail_is_recorded_as_sent_not_sent_again(monke
 
     def found(service, message_id, to, subject, newer_than_days=3):
         asked.append((message_id, to, subject))
-        return {"message_id": message_id, "gmail_message_id": "gm-found", "gmail_thread_id": "th-found"}
+        return {
+            "message_id": message_id,
+            "gmail_message_id": "gm-found",
+            "gmail_thread_id": "th-found",
+        }
 
     monkeypatch.setattr(gmail, "find_sent", found)
     stats = _send(monkeypatch, repo, lambda *a, **k: pytest.fail("sent twice"))
@@ -347,11 +353,16 @@ def test_an_unclear_send_not_in_gmail_is_queued_again_with_one_attempt_used(monk
 
     def send(service, msg, thread_id=None):
         sent.append(msg["Message-ID"])
-        return {"message_id": msg["Message-ID"], "gmail_message_id": "gm2", "gmail_thread_id": "th2"}
+        return {
+            "message_id": msg["Message-ID"],
+            "gmail_message_id": "gm2",
+            "gmail_thread_id": "th2",
+        }
 
     assert _send(monkeypatch, repo, send)["sent"] == 1  # settled, then sent in the same round
     assert _row(repo, eid) == ("sent", 1, "gm2")
-    assert sent == [mailer.message_id_for(eid, "real@company.io")]  # the same Message-ID as the first try
+    # the same Message-ID as the first try
+    assert sent == [mailer.message_id_for(eid, "real@company.io")]
 
 
 def test_gmail_unreachable_for_the_check_keeps_the_email_held(monkeypatch):
@@ -432,7 +443,8 @@ def test_the_message_id_is_fixed_per_email_and_recipient(monkeypatch):
     _env(monkeypatch)
     a = mailer.message_id_for("e1", "Ana@X.io")
     assert a == mailer.message_id_for("e1", " ana@x.io ") and a.endswith("@x.io>")
-    assert a != mailer.message_id_for("e1", "bob@x.io") and a != mailer.message_id_for("e2", "ana@x.io")
+    assert a != mailer.message_id_for("e1", "bob@x.io")
+    assert a != mailer.message_id_for("e2", "ana@x.io")
     msg = mailer.build_message({"id": "e1", "subject": "S", "body": "B"}, "ana@x.io")
     assert msg["Message-ID"] == a
 
@@ -447,7 +459,10 @@ def test_find_sent_looks_by_message_id_then_by_recipient_and_subject(monkeypatch
     monkeypatch.setattr(gmail, "list_recent_messages", listing)
     got = gmail.find_sent(object(), "<ma-1@x.io>", "a@b.io", 'Hi "there"')
     assert got == {"message_id": "<ma-1@x.io>", "gmail_message_id": "g9", "gmail_thread_id": "t9"}
-    assert queries == ["in:sent rfc822msgid:ma-1@x.io", 'in:sent to:a@b.io subject:"Hi  there" newer_than:3d']
+    assert queries == [
+        "in:sent rfc822msgid:ma-1@x.io",
+        'in:sent to:a@b.io subject:"Hi  there" newer_than:3d',
+    ]
 
 
 def test_auth_failure_requeues_without_using_an_attempt(monkeypatch):
