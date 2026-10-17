@@ -138,3 +138,45 @@ def test_the_link_accepts_and_merges_include_countries():
 
     with pytest.raises(campaign_link.OverlayError):
         campaign_link.check_overlay({"config_version": "1.0", "include_countries": "Germany"}, base)
+
+
+# --- the campaign's preferred contact roles (preferred_roles) ---------------------------------------------------------
+
+
+def test_the_link_accepts_known_preferred_roles_and_refuses_others():
+    import pytest
+
+    base = {"config_version": "1.0", "search": {"query_suffix": ""}}
+    overlay = {"config_version": "1.0", "preferred_roles": ["procurement", "cto"]}
+    campaign_link.check_overlay(overlay, base)
+    assert campaign_link.merge_overlay(base, overlay)["preferred_roles"] == ["procurement", "cto"]
+    assert "preferred_roles" not in campaign_link.merge_overlay(base, {"config_version": "1.0"})
+    for bad in (["head of marketing"], ["(a+)+$"], "cto"):
+        with pytest.raises(campaign_link.OverlayError):
+            campaign_link.check_overlay({"config_version": "1.0", "preferred_roles": bad}, base)
+
+
+def test_preferred_roles_come_first_and_the_rank_is_kept():
+    from agent.leadgen import contacts
+    from agent.tests.leadgen_fakes import FakeBrowser, cfg, html
+    from agent.tests.test_leadgen_pipeline import fake_people
+
+    home = "https://voltgrid.com"
+    team = "Ana Ruiz, CTO, ana.ruiz@voltgrid.com. Raj Mehta, Procurement Manager, raj.mehta@voltgrid.com."
+    web = {
+        home: html("VoltGrid", "Chargers", [("Team", f"{home}/team")]),
+        f"{home}/team": html("Team", team),
+    }
+
+    def best(preferred):
+        c = cfg()
+        c.preferred_roles = preferred
+        found = asyncio.run(
+            contacts.discover(FakeBrowser(web, []), "voltgrid.com", c, extract=fake_people)
+        )
+        return found.contacts
+
+    assert [x.email for x in best([])][:2] == ["ana.ruiz@voltgrid.com", "raj.mehta@voltgrid.com"]
+    first = best(["procurement"])
+    assert first[0].email == "raj.mehta@voltgrid.com"
+    assert first[0].rank == 8  # still a procurement rank: lead scoring is not changed by the campaign's order

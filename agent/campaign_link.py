@@ -37,6 +37,8 @@ from agentkit import db, slack
 from agentkit.config import env
 from agentkit.log import get_logger
 
+from .leadgen.roles import PREFERRED_ROLES
+
 log = get_logger("agent.campaign_link")
 
 # The config_version values this loader accepts. The CA checks this against what the status row reports.
@@ -44,6 +46,8 @@ SUPPORTED_CONFIG_VERSIONS = ("1.0",)
 # The only sections of leadgen.yaml a campaign may fill (the CA's contract), and the lists it may add to.
 OVERLAY_SECTIONS = ("project_context", "search", "qualification", "limits")
 EXCLUDE_KEYS = ("exclude_terms", "exclude_companies", "exclude_countries", "exclude_tlds")
+# Top-level lists only a campaign sets; each replaces (the base has none).
+CAMPAIGN_LISTS = ("include_countries", "preferred_roles")
 PROJECT_KEYS = {
     "name",
     "industries",
@@ -196,7 +200,7 @@ def check_overlay(overlay: dict[str, Any], base: dict[str, Any]) -> None:  # noq
         raise OverlayError(
             f"config_version {version!r} is not supported (this agent loads {', '.join(SUPPORTED_CONFIG_VERSIONS)})"
         )
-    allowed_top = {"config_version", *OVERLAY_SECTIONS, *EXCLUDE_KEYS, "include_countries"}
+    allowed_top = {"config_version", *OVERLAY_SECTIONS, *EXCLUDE_KEYS, *CAMPAIGN_LISTS}
     for key in overlay:
         if key not in allowed_top:
             raise OverlayError(f"{key}: a campaign may not set this key")
@@ -218,10 +222,13 @@ def check_overlay(overlay: dict[str, Any], base: dict[str, Any]) -> None:  # noq
                 ok = _type_ok(known[key], value)
             if not ok:
                 raise OverlayError(f"{section}.{key}: wrong type")
-    for key in (*EXCLUDE_KEYS, "include_countries"):
+    for key in (*EXCLUDE_KEYS, *CAMPAIGN_LISTS):
         value = overlay.get(key)
         if value is not None and not _type_ok([], value):
             raise OverlayError(f"{key}: must be a list of text")
+    unknown = [r for r in overlay.get("preferred_roles") or [] if r not in PREFERRED_ROLES]
+    if unknown:
+        raise OverlayError(f"preferred_roles: unknown role(s) {unknown}; known: {sorted(PREFERRED_ROLES)}")
 
 
 def merge_overlay(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -244,9 +251,10 @@ def merge_overlay(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, An
                 seen.add(_norm(item))
                 merged.append(item)
         effective[key] = merged
-    # Replaces, and is present only when the campaign sets it (the CA's compiler/complete.py does the same).
-    if overlay.get("include_countries"):
-        effective["include_countries"] = list(overlay["include_countries"])
+    # Replace, and are present only when the campaign sets them (the CA's compiler/complete.py does the same).
+    for key in CAMPAIGN_LISTS:
+        if overlay.get(key):
+            effective[key] = list(overlay[key])
     return effective
 
 

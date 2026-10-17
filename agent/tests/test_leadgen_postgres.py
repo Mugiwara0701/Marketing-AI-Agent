@@ -390,7 +390,9 @@ def test_a_draft_changed_after_its_card_was_posted_is_not_decided_in_postgres(pg
     from agent.leadgen.repository import content_sha256
 
     async def go():
-        lid = await pg.insert_lead(Lead(company_name="Shown", company_website="shown.io"), source="t")
+        lid = await pg.insert_lead(
+            Lead(company_name="Shown", company_website="shown.io"), source="t"
+        )
         for s in (LeadStatus.QUALIFIED, LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED):
             await pg.set_status(lid, s)
         cid = await pg.save_contact(lid, Contact(email="a@shown.io", source="u"))
