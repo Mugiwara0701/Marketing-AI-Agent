@@ -228,7 +228,9 @@ def check_overlay(overlay: dict[str, Any], base: dict[str, Any]) -> None:  # noq
             raise OverlayError(f"{key}: must be a list of text")
     unknown = [r for r in overlay.get("preferred_roles") or [] if r not in PREFERRED_ROLES]
     if unknown:
-        raise OverlayError(f"preferred_roles: unknown role(s) {unknown}; known: {sorted(PREFERRED_ROLES)}")
+        raise OverlayError(
+            f"preferred_roles: unknown role(s) {unknown}; known: {sorted(PREFERRED_ROLES)}"
+        )
 
 
 def merge_overlay(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

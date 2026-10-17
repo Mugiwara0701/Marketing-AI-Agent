@@ -169,8 +169,9 @@ def test_preferred_roles_come_first_and_the_rank_is_kept():
     }
 
     def best(preferred):
-        c = cfg()
-        c.preferred_roles = preferred
+        import dataclasses
+
+        c = dataclasses.replace(cfg(), preferred_roles=preferred)
         found = asyncio.run(
             contacts.discover(FakeBrowser(web, []), "voltgrid.com", c, extract=fake_people)
         )
