@@ -55,7 +55,8 @@ def message_text(lead: Lead, contact: Contact, email: EmailDraft) -> str:
     ]
     if email.review_note:
         lines.append(f":warning: *Checks flagged:* {esc(email.review_note)}")
-    lines.insert(1, draft_identity(contact, email))  # near the top: a long card is cut at the end, never here
+    # near the top: a long card is cut at the end, never here
+    lines.insert(1, draft_identity(contact, email))
     return clip("\n".join(lines), _MAX)
 
 
