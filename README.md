@@ -104,6 +104,11 @@ redone. A company that gives no contact after 3 attempts (`contacts.max_attempts
   `ALLOWED_RECIPIENT_DOMAINS`; `TEST_RECIPIENT` redirects all mail and records it as `test_sent` (the lead stays
   `APPROVED`: the real contact never got it); with `APP_ENV=prod` it is refused. Suppression list, send cap, unsubscribe
   footer. A contact whose domain cannot receive mail (no MX, A or AAAA record) is dropped before a draft is written.
+- **Never sent twice.** Gmail has no idempotency key, so the send call is never retried by the client library. A clear
+  refusal (4xx) is retried later; a rate limit (429) stops the round; an unclear result (timeout, 5xx, lost connection)
+  keeps the email in `sending`. After 15 minutes the sender looks for it in Gmail's Sent folder by its fixed Message-ID
+  (then by recipient and subject): found means `sent`, not found means queued again with one attempt used. The same check
+  settles an email left in `sending` by a crash; if Gmail cannot be asked, `MA_SEND_STUCK` tells a person.
 - Commands that act on the production database (`start`, `run`, `send`, `leads run`, `approve` ...) run only where
   `MA_ON_OFFICE_MACHINE=1` (the systemd service and `deploy/remote.sh` set it), so a laptop whose `.env` points at
   production cannot become a second agent. `--dry-run` works anywhere.
