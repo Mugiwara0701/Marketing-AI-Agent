@@ -7,13 +7,24 @@ Status changes are conditional updates ("... where status in (allowed sources)")
 both move a lead, and the sending gate is checked inside the database query that claims an email.
 """
 
+import hashlib
 from datetime import datetime
 from typing import Protocol
 
 from ..config import Runtime
 from ..models import Approval, Contact, EmailDraft, Lead, LeadStatus
 
-DECISIONS = ("approved", "rejected", "already_decided", "unknown")
+DECISIONS = ("approved", "rejected", "already_decided", "expired", "unknown")
+
+# What a claim gates on, besides the approval: the live campaign's id, NO_LIVE_CAMPAIGN when the Campaign Agent says
+# nothing is live, or None when the link is not configured (then campaigns are not checked at all).
+NO_LIVE_CAMPAIGN = "none"
+
+
+def content_sha256(to: str | None, subject: str | None, body: str | None) -> str:
+    """What an approval covers: recipient, subject and body. Same as the SQL function email_content_sha256()."""
+    text = f"{(to or '').strip(' ').lower()}\n{subject or ''}\n{body or ''}"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class Repository(Protocol):
@@ -32,7 +43,9 @@ class Repository(Protocol):
     # leads
     async def find_lead(self, *, domain: str = "", name_key: str = "") -> Lead | None: ...
     async def get_lead(self, lead_id: str) -> Lead | None: ...
-    async def insert_lead(self, lead: Lead, *, source: str) -> str: ...
+    async def insert_lead(
+        self, lead: Lead, *, source: str, campaign: tuple[str, int] | None = None
+    ) -> str: ...
     async def save_lead(self, lead: Lead) -> None: ...
     async def set_status(self, lead_id: str, new: LeadStatus, *, note: str = "") -> bool: ...
     async def leads_with_status(
@@ -65,7 +78,22 @@ class Repository(Protocol):
     ) -> str: ...
 
     # sending (the gate)
-    async def claim_sendable(self, limit: int) -> list[EmailDraft]: ...
+    async def claim_sendable(
+        self, limit: int, *, live_campaign: str | None = None
+    ) -> list[EmailDraft]: ...
+    async def stale_sending(self, minutes: int) -> int:
+        """How many emails have been 'sending' for longer than `minutes` (a crash between Gmail and the database)."""
+        ...
+
+    async def stuck_sending(self, minutes: int, limit: int) -> list[EmailDraft]:
+        """Emails 'sending' for longer than `minutes`: an unclear Gmail result or a crash. The sender settles them."""
+        ...
+
+    async def mark_send_unknown(self, email_id: str, error: str) -> None:
+        """Gmail may have accepted it: the email stays 'sending' (never released), with the reason recorded."""
+        ...
+
+    async def expire_approvals(self) -> int: ...
     async def sendable_problem(self, email_id: str) -> str | None: ...
     async def release_claim(self, email_id: str) -> None: ...
     async def mark_sent(
@@ -75,6 +103,8 @@ class Repository(Protocol):
         provider_id: str,
         mailbox: str,
         thread_id: str | None = None,
+        *,
+        test_redirect: bool = False,
     ) -> None: ...
     async def thread_id_for(self, email_id: str) -> str | None: ...
     async def mark_send_failed(self, email_id: str, error: str, *, final: bool) -> None: ...

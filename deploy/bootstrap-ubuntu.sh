@@ -79,7 +79,7 @@ else
   [ ! -f .env ] || chmod 600 .env
 fi
 
-echo "==> 7/8 web search (SearXNG) and daily timer"
+echo "==> 7/8 web search (SearXNG) and the agent service"
 if [ -z "${SKIP_SEARXNG:-}" ]; then
   # the docker group is not active in this shell yet, so use sudo
   sudo docker compose -f deploy/searxng/docker-compose.yml up -d
@@ -87,11 +87,13 @@ fi
 if [ -z "${SKIP_TIMER:-}" ]; then
   mkdir -p "$HOME/.config/systemd/user"
   # the unit assumes ~/Marketing-AI-Agent; point it at wherever this clone lives
-  sed "s|%h/Marketing-AI-Agent|$REPO|g" deploy/aosp-agent.service > "$HOME/.config/systemd/user/aosp-agent.service"
-  cp deploy/aosp-agent.timer "$HOME/.config/systemd/user/"
-  # enable only (no --now): the first run must wait until .env is filled in
-  systemctl --user daemon-reload || echo "no user systemd session: run the three 'systemctl --user' lines from deploy/README.md after logging in" >&2
-  systemctl --user enable aosp-agent.timer || true
+  # The long-running service (the dashboard / Campaign Agent start and stop the pipeline). The old daily timer is
+  # retired: running both would start two lead passes and two Chrome sessions at once.
+  sed "s|%h/Marketing-AI-Agent|$REPO|g" deploy/marketing-agent.service > "$HOME/.config/systemd/user/marketing-agent.service"
+  # enable only (no --now): the first start must wait until .env is filled in
+  systemctl --user daemon-reload || echo "no user systemd session: run the 'systemctl --user' lines from deploy/README.md after logging in" >&2
+  systemctl --user disable --now aosp-agent.timer 2>/dev/null || true
+  systemctl --user enable marketing-agent.service || true
   sudo loginctl enable-linger "$USER"
 fi
 # Keep the desktop awake for unattended runs (Xfce only; harmless elsewhere)
@@ -116,7 +118,7 @@ Done. Remaining by hand:
   2. Fill in .env (secrets: never commit). MODEL_GUI_STEP=$VISION_MODEL, BROWSER_BACKEND=desktop, SEARXNG_URL=http://127.0.0.1:8888
      Token for EXECUTOR_TOKEN:  python3 -c "import secrets; print(secrets.token_urlsafe(32))"
   3. .venv/bin/python -m agent migrate && .venv/bin/python -m agent check && .venv/bin/python -m agent desktop-check
-  4. Try one run:  .venv/bin/python -m agent run --desktop --force
-  5. Start the daily timer:  systemctl --user start aosp-agent.timer
+  4. Try one run:  MA_ON_OFFICE_MACHINE=1 .venv/bin/python -m agent run --desktop --force
+  5. Start the service:  systemctl --user start marketing-agent.service
   6. Sandbox (only for the vision fallback): see step 8 of deploy/new-machine-steps.md
 EOF

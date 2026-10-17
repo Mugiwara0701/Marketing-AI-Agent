@@ -5,7 +5,7 @@ name: lint
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "fix/**", "feature/**"]
 permissions:
   contents: read
 concurrency:
@@ -23,7 +23,22 @@ jobs:
         with: {python-version: "3.12", cache: pip}
       - run: pip install ruff
       - run: ruff check . --output-format=github
+      # On a failure, each file the formatter would change is reported as an annotation with its diff.
       - run: ruff format --check .
+      - name: Report formatting differences
+        if: failure()
+        run: |
+          ruff format --diff . > format.diff 2>&1 || true
+          python - <<'PY'
+          import re
+          # GitHub shows at most 10 error annotations per step: the whole diff goes into at most 10, split per file.
+          parts = [p for p in re.split(r"(?m)^(?=--- )", open("format.diff").read()) if p.startswith("--- ")]
+          groups = [parts[i::10] for i in range(min(10, len(parts)))]
+          for group in groups:
+              first = re.match(r"--- (\S+)", group[0]).group(1)
+              body = "".join(group)[:60000].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error file={first},line=1,title=ruff format ({len(group)} file(s))::{body}")
+          PY
 
   typecheck:
     name: python (mypy)
@@ -34,7 +49,12 @@ jobs:
       - uses: actions/setup-python@v6
         with: {python-version: "3.12", cache: pip}
       - run: pip install -e "libs/agentkit[dev]" mypy types-PyYAML
-      - run: mypy libs/agentkit/agentkit eval/runner agent api
+      # mypy's findings are also reported as annotations, so a failure can be read without the log.
+      - run: set -o pipefail; mypy libs/agentkit/agentkit eval/runner agent api --show-column-numbers --no-error-summary | tee mypy.txt
+      - name: Report mypy errors
+        if: failure()
+        run: >-
+          sed -nE 's/^([^:]+):([0-9]+):([0-9]+): error: (.*)$/::error file=\1,line=\2,col=\3::\4/p' mypy.txt
 
   sql:
     name: sql (sqlfluff)

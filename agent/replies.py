@@ -89,23 +89,33 @@ async def queue_approved(limit: int = _BATCH) -> int:
             thread = (
                 r["message_id"] if (r["message_id"] or "").startswith("<") else r["sent_message_id"]
             )
-            row = await db.fetchrow(
-                """insert into emails (contact_id, campaign_id, step, status, subject, body, reply_id,
-                                       in_reply_to, idempotency_key)
-                   select $1, $2, coalesce(max(step), 0) + 1, 'approved', $3, $4, $5, $6, $7
-                     from emails where contact_id=$1 and campaign_id=$2
-                   on conflict do nothing returning id""",
-                r["contact_id"], cid, subject[:120], r["draft_response"], r["id"], thread, f"reply-{r['id']}",
-            )  # fmt: skip
-            if row:  # the person approved this exact text in Slack: record it, the sending gate requires it
-                await db.execute(
-                    """insert into approvals (kind, ref_id, status, decided_by, decided_at, decision_note)
-                       values ('email', $1, 'approved', 'slack:reply-approval', now(), $2)""",
-                    row["id"], f"approved as the answer to reply {r['id']}",
+            # One transaction: the email, its approval (who approved the answer in Slack, and the hash of exactly what
+            # is sent) and the reply's new status are stored together, or not at all.
+            async with db.transaction() as conn:
+                row = await conn.fetchrow(
+                    """insert into emails (contact_id, campaign_id, step, status, subject, body, reply_id,
+                                           in_reply_to, idempotency_key)
+                       select $1, $2, coalesce(max(step), 0) + 1, 'approved', $3, $4, $5, $6, $7
+                         from emails where contact_id=$1 and campaign_id=$2
+                       on conflict do nothing returning id""",
+                    r["contact_id"], cid, subject[:120], r["draft_response"], r["id"], thread, f"reply-{r['id']}",
                 )  # fmt: skip
-            await db.execute(
-                "update replies set status='handled', updated_at=now() where id=$1", r["id"]
-            )
+                if row:  # the person approved this exact text in Slack: record it, the sending gate requires it
+                    await conn.execute(
+                        """insert into approvals (kind, ref_id, status, decided_by, decided_at, decision_note,
+                                                  content_sha256)
+                           select 'email', e.id, 'approved',
+                                  coalesce((select a.decided_by from approvals a where a.kind = 'reply'
+                                              and a.ref_id = $2 and a.status = 'approved'
+                                            order by a.decided_at desc limit 1),
+                                           'slack (approver not recorded)'),
+                                  now(), $3, email_content_sha256(c.email, e.subject, e.body)
+                             from emails e join contacts c on c.id = e.contact_id where e.id = $1""",
+                        row["id"], r["id"], f"approved as the answer to reply {r['id']}",
+                    )  # fmt: skip
+                await conn.execute(
+                    "update replies set status='handled', updated_at=now() where id=$1", r["id"]
+                )
             queued += 1
         except Exception:
             log.exception("queueing reply failed", extra={"ctx": {"reply_id": str(r["id"])}})

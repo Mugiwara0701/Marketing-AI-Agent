@@ -9,13 +9,22 @@ send_approved(); there is no other caller of a transport.
               or the outbox folder (dry-run, nothing leaves the machine)
 
 Unapproved, rejected, unknown, suppressed or (in dev) off-allowlist addresses are never sent.
+
+Never twice: Gmail has no idempotency key, so an unclear result (a timeout, a 5xx, a dropped connection: the mail may have
+been accepted) is never retried at once. The email stays 'sending'; after RECONCILE_AFTER_MINUTES the sender looks for it
+in Gmail's Sent folder (by its fixed Message-ID, then by recipient and subject): found -> recorded as sent; not found ->
+queued again (one attempt used). The same check recovers an email left 'sending' by a crash. If Gmail cannot be asked, the
+email stays 'sending' and MA_SEND_STUCK tells a person.
 """
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from email.utils import make_msgid
 from pathlib import Path
 from typing import Protocol
+
+from googleapiclient.errors import HttpError
 
 from agentkit import gmail
 from agentkit.config import env
@@ -27,11 +36,23 @@ from .repository import Repository
 
 log = get_logger("agent.leadgen.sender")
 MAX_ATTEMPTS = 3
+STALE_SENDING_MINUTES = 30  # longer than any one send: a crash between Gmail and the database
+STALE_ALERT_EVERY_S = 3600.0
+RECONCILE_AFTER_MINUTES = 15  # Gmail lists a sent mail within seconds; this leaves a wide margin
+_last_stale_alert = float("-inf")
 _GATE = object()  # only this module can make a Cleared
 
 
 class NotApprovedError(RuntimeError):
     """An attempt to send an email that has not passed the approval gate."""
+
+
+class SendOutcomeUnknownError(RuntimeError):
+    """Gmail may or may not have accepted the mail (timeout, 5xx, connection lost). Never retried blindly."""
+
+
+class RateLimitedError(RuntimeError):
+    """Gmail refused the send for now (429): nothing was sent; the batch stops and the emails wait."""
 
 
 @dataclass(frozen=True)
@@ -93,15 +114,37 @@ class GmailTransport:
                 got = await asyncio.to_thread(gmail.send_message, service, msg, c.thread_id)
             except gmail.GmailAuthError:
                 raise
-            except Exception as exc:  # error type only: never log addresses or bodies
-                errors.append(f"{type(exc).__name__}: {str(exc)[:120]}")
+            except HttpError as exc:  # error type and status only: never log addresses or bodies
+                status = int(getattr(exc.resp, "status", 0) or 0)
+                if status == 429:
+                    raise RateLimitedError("Gmail rate limit (429)") from exc
+                if not 400 <= status < 500:
+                    unclear = f"HttpError {status}: Gmail may have accepted it"
+                    raise SendOutcomeUnknownError(unclear) from exc
+                # a 4xx: refused, nothing was sent
+                errors.append(f"HttpError {status}: refused by Gmail")
                 continue
+            except Exception as exc:
+                raise SendOutcomeUnknownError(
+                    f"{type(exc).__name__}: Gmail may have accepted it"
+                ) from exc
             first = first or Sent(
                 got["message_id"], got["gmail_message_id"], got["gmail_thread_id"]
             )
         if first is None:
             raise RuntimeError("; ".join(errors) or "no recipient")
         return first
+
+    async def find_sent(self, email: EmailDraft, to: str, subject: str) -> Sent | None:
+        """The mail for this email in Gmail's Sent folder, or None. Raises when Gmail cannot be asked."""
+        service = await asyncio.to_thread(gmail.get_service)
+        for addr in (a.strip() for a in to.split(",") if a.strip()):
+            hit = await asyncio.to_thread(
+                gmail.find_sent, service, mailer.message_id_for(email.email_id, addr), addr, subject
+            )
+            if hit is not None:
+                return Sent(hit["message_id"], hit["gmail_message_id"], hit["gmail_thread_id"])
+        return None
 
 
 class OutboxTransport:
@@ -132,45 +175,149 @@ def make_transport(dry_run: bool, out_dir: Path) -> Transport | None:
     return None
 
 
+class TestRedirectInProductionError(RuntimeError):
+    """TEST_RECIPIENT is set while APP_ENV=prod: real approved mail would be redirected and never reach the contact."""
+
+
+async def _check_stale(repo: Repository) -> None:
+    """Emails left in 'sending' (the process died between Gmail and the database) are never retried automatically:
+    they may have gone out. A person must look; the Campaign Agent and Slack are told."""
+    global _last_stale_alert  # noqa: PLW0603 - one timestamp for the process
+    stale = await repo.stale_sending(STALE_SENDING_MINUTES)
+    if not stale or time.monotonic() - _last_stale_alert < STALE_ALERT_EVERY_S:
+        return
+    _last_stale_alert = time.monotonic()
+    log.error("Emails stuck in 'sending'", extra={"ctx": {"count": stale}})
+    from .. import campaign_link  # noqa: PLC0415 - avoids an import cycle
+
+    campaign_link.emit(
+        "blocker", "critical", "MA_SEND_STUCK",
+        f"{stale} email(s) have been 'sending' for over {STALE_SENDING_MINUTES} minutes: check the Gmail sent folder,"
+        " then set each to 'sent' or back to 'approved'",
+        dedupe_key="send-stuck",
+    )  # fmt: skip
+
+
+def _subject(email: EmailDraft, override: str | None) -> str:
+    return f"[TEST for {email.to}] {email.subject}" if override else email.subject
+
+
+async def _reconcile(
+    repo: Repository, transport: Transport, stats: dict, *, mailbox: str, override: str | None
+) -> None:
+    """Settle emails left 'sending' (an unclear Gmail result, or a crash) by looking in Gmail's Sent folder. Never sends."""
+    find = getattr(transport, "find_sent", None)
+    if find is None:  # the outbox: nothing ever leaves the machine, so nothing is unclear
+        return
+    for email in await repo.stuck_sending(RECONCILE_AFTER_MINUTES, 20):
+        ctx = {"email_id": email.email_id, "attempts": email.attempts}
+        try:
+            got = await find(email, override or email.to, _subject(email, override))
+        except Exception as exc:  # stays 'sending'; _check_stale tells a person if it lasts
+            why = {**ctx, "error": type(exc).__name__}
+            log.warning("Could not check Gmail's Sent folder", extra={"ctx": why})
+            continue
+        if got is not None:
+            await repo.mark_sent(
+                email.email_id,
+                got.message_id,
+                got.provider_id,
+                mailbox,
+                got.thread_id,
+                test_redirect=bool(override),
+            )
+            stats["sent"] += 1
+            log.info("Unclear send settled: the mail is in Gmail's Sent folder", extra={"ctx": ctx})
+        else:
+            final = email.attempts + 1 >= MAX_ATTEMPTS
+            await repo.mark_send_failed(
+                email.email_id, "unclear send result; not in Gmail's Sent folder", final=final
+            )
+            stats["failed"] += 1
+            what = "attempts used up" if final else "queued again"
+            log.warning(f"Unclear send settled: not sent, {what}", extra={"ctx": ctx})
+
+
 async def send_approved(
     repo: Repository,
     transport: Transport | None,
     *,
     limit: int | None = None,
     gap_seconds: float | None = None,
+    live_campaign: str | None = None,
 ) -> dict:
-    stats = {"sent": 0, "skipped": 0, "failed": 0, "blocked": 0}
+    """`live_campaign`: see Repository.claim_sendable (None = campaigns are not checked)."""
+    stats = {"sent": 0, "skipped": 0, "failed": 0, "blocked": 0, "unknown": 0}
     if transport is None:
         log.info("Email sending is disabled (EMAIL_SENDING_ENABLED is not true); nothing sent")
         return {**stats, "disabled": 1}
+    override = mailer.test_recipient()
+    if override and transport.name != "outbox" and mailer.is_production():
+        raise TestRedirectInProductionError(
+            "TEST_RECIPIENT is set while APP_ENV=prod: remove one of them; nothing was sent"
+        )
+    await repo.expire_approvals()
+    mailbox = env("MAIL_FROM", "dry-run@example.invalid") or "dry-run@example.invalid"
+    await _reconcile(repo, transport, stats, mailbox=mailbox, override=override)
+    await _check_stale(repo)
     cap = int(env("DAILY_SEND_CAP_PER_MAILBOX", "10") or 10)
     gap = float(env("SEND_GAP_SECONDS", "20") or 20) if gap_seconds is None else gap_seconds
-    mailbox = env("MAIL_FROM", "dry-run@example.invalid") or "dry-run@example.invalid"
-    claimed = await repo.claim_sendable(limit or cap)
+    claimed = await repo.claim_sendable(limit or cap, live_campaign=live_campaign)
+    done: set[str] = set()
+    try:
+        await _send_claimed(repo, transport, claimed, stats, done, cap=cap, gap=gap, mailbox=mailbox,
+                            override=override)  # fmt: skip
+    finally:
+        # Anything claimed but not finished (an error, a cancel) goes back to the queue untouched.
+        for email in claimed:
+            if email.email_id not in done:
+                try:
+                    await repo.release_claim(email.email_id)
+                except Exception:  # never hide the original error
+                    log.exception(
+                        "Could not release a claim", extra={"ctx": {"email_id": email.email_id}}
+                    )
+    if claimed:  # the long-running service calls this every few seconds: log only when there was something to do
+        log.info("Send done", extra={"ctx": stats})
+    return stats
+
+
+async def _send_claimed(
+    repo: Repository,
+    transport: Transport,
+    claimed: list[EmailDraft],
+    stats: dict,
+    done: set[str],
+    *,
+    cap: int,
+    gap: float,
+    mailbox: str,
+    override: str | None,
+) -> None:
+    """`done` collects the emails that reached a final state for this call (sent, failed, blocked, skipped)."""
     for n, email in enumerate(claimed):
         if problem := await repo.sendable_problem(email.email_id):
             stats["blocked"] += 1
             await repo.mark_send_failed(email.email_id, f"gate: {problem}", final=True)
+            done.add(email.email_id)
             log.error(
                 "Send blocked by the approval gate",
                 extra={"ctx": {"email_id": email.email_id, "why": problem}},
             )
             continue
-        override = mailer.test_recipient()
         if await repo.is_suppressed(email.to) or (
             not override and not _allowed(email.to, transport)
         ):
             await repo.mark_send_failed(
                 email.email_id, "suppressed or not allowed in this environment", final=True
             )
+            done.add(email.email_id)
             stats["skipped"] += 1
             continue
         if not await repo.try_increment_send(mailbox, cap):
             log.info("Daily send cap reached", extra={"ctx": {"cap": cap}})
-            for rest in claimed[n:]:
-                await repo.release_claim(rest.email_id)
-            break
-        subject = f"[TEST for {email.to}] {email.subject}" if override else email.subject
+            break  # the rest are released by the caller
+        subject = _subject(email, override)
         thread = await repo.thread_id_for(email.email_id)
         try:
             sent = await transport.send(
@@ -185,28 +332,38 @@ async def send_approved(
             log.warning(
                 "Gmail login problem, nothing more sent", extra={"ctx": {"error": str(exc)[:200]}}
             )
-            for rest in claimed[n:]:
-                await repo.release_claim(rest.email_id)
-            break
+            break  # this one and the rest are released by the caller
+        except RateLimitedError:
+            log.warning("Gmail rate limit, nothing more sent now")
+            break  # nothing was sent: this one and the rest are released by the caller
+        except SendOutcomeUnknownError as exc:
+            # It may be out: never released for another attempt. _reconcile settles it from Gmail's Sent folder.
+            done.add(email.email_id)
+            await repo.mark_send_unknown(email.email_id, str(exc))
+            stats["unknown"] += 1
+            log.exception("Send result unclear; checked against Gmail before any new attempt",
+                      extra={"ctx": {"email_id": email.email_id, "error": str(exc)[:120]}})  # fmt: skip
+            break  # Gmail is in trouble: the rest wait for the next round
         except Exception as exc:
             final = email.attempts + 1 >= MAX_ATTEMPTS
             await repo.mark_send_failed(email.email_id, f"{type(exc).__name__}: {exc}", final=final)
+            done.add(email.email_id)
             stats["failed"] += 1
             log.exception(
                 "Send failed", extra={"ctx": {"email_id": email.email_id, "final": final}}
             )
             continue
+        # From here on the mail is out: never released for another attempt, even if recording it fails.
+        done.add(email.email_id)
         await repo.mark_sent(
-            email.email_id, sent.message_id, sent.provider_id, mailbox, sent.thread_id
-        )
+            email.email_id, sent.message_id, sent.provider_id, mailbox, sent.thread_id,
+            test_redirect=bool(override) and transport.name != "outbox",
+        )  # fmt: skip
         stats["sent"] += 1
         log.info("Email sent", extra={"ctx": {"email_id": email.email_id, "transport": transport.name,
                                               "test_redirect": bool(override)}})  # fmt: skip
         if gap and n < len(claimed) - 1:
             await asyncio.sleep(gap)
-    if claimed:  # the long-running service calls this every few seconds: log only when there was something to do
-        log.info("Send done", extra={"ctx": stats})
-    return stats
 
 
 def _allowed(addr: str, transport: Transport) -> bool:

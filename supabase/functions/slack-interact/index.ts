@@ -103,12 +103,24 @@ Deno.serve(async (req) => {
     if (error) return new Response("error", { status: 500 });
     if (result === "already_decided") return ephemeral("Already decided.");
     if (result === "unknown") return ephemeral("This draft no longer exists.");
+    if (result === "expired") {
+      return ephemeral("This request expired. The agent posts the draft again; decide on the new message.");
+    }
   } else {
     // Exactly once: the update only matches while the row is still undecided.
     const { data: changed, error } = await db.from(spec.table).update({ status: spec.to })
       .eq("id", refId).in("status", spec.from).select("id");
     if (error) return new Response("error", { status: 500 });
     if (!changed?.length) return ephemeral("Already decided.");
+    // The audit record: who decided. For a reply, the agent copies it onto the email it queues (agent/replies.py).
+    const { error: recordError } = await db.from("approvals").insert({
+      kind: spec.kind,
+      ref_id: refId,
+      status: spec.status,
+      decided_by: `slack:${payload.user?.id ?? "unknown"} (${who})`,
+      decided_at: new Date().toISOString(),
+    });
+    if (recordError) console.error("approval not recorded", spec.kind, refId, recordError.message);
   }
 
   const verb = spec.status === "approved" ? "Approved" : "Rejected";

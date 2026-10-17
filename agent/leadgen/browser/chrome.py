@@ -1,7 +1,8 @@
 """Chrome backend: a real Chrome (Playwright) with a persistent profile, one tab, one page at a time.
 
-Search goes to CHROME_SEARCH_URL (default Bing); results are the external links on the results page, read from the
-DOM. A CAPTCHA or bot check is never solved by the agent: the engine rests, the site is skipped and the run goes on
+Search goes to our own SearXNG (SEARXNG_URL) when it is set, as for the other backends; only without it does it open
+CHROME_SEARCH_URL (default Bing) and read the external links on the results page. Every page passes web.may_visit first
+(no forbidden portal, public address only, robots.txt). A CAPTCHA or bot check is never solved by the agent: the engine rests, the site is skipped and the run goes on
 (CHROME_HUMAN_WAIT=<seconds> lets a person at the screen clear a check in the window instead).
 """
 
@@ -43,6 +44,12 @@ class ChromeBrowser:
         self._ctx: Any = None
         self._page: Any = None
         self._visited: set[str] = set()
+        # The result links come from our SearXNG when it is configured: no search engine's own pages are scraped.
+        self.lookup: Any = None
+        if env("SEARXNG_URL"):
+            from .http import HttpBrowser  # noqa: PLC0415
+
+            self.lookup = HttpBrowser(guard)
 
     async def start(self) -> None:
         try:
@@ -122,6 +129,9 @@ class ChromeBrowser:
         return page
 
     async def search(self, query: str, limit: int) -> list[SearchResult]:
+        if self.lookup is not None:
+            results: list[SearchResult] = await self.lookup.search(query, limit)
+            return results
         engine = intent.registrable_domain(self.search_url) or "search"
         if not self.guard.engine_ready(engine):
             raise SearchBlockedError(f"{engine} is resting")
@@ -155,7 +165,8 @@ class ChromeBrowser:
         if why := self.guard.refuse(url):
             log.info("Page skipped", extra={"ctx": {"url": url, "why": why}})
             return None
-        if web.blocked(url):
+        if why := await web.may_visit(url):
+            log.info("Page skipped", extra={"ctx": {"url": url, "why": why}})
             return None
         self.guard.opened(url)
         try:

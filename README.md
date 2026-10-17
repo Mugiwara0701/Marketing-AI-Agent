@@ -25,11 +25,9 @@ Lead pipeline (agent/leadgen)                                         python -m 
 ## How the pieces fit together
 
 ```text
-Dashboard (frontend -> its own backend)
-        │  HTTPS, Bearer token
-        ▼
-Pipeline control API (api/, hosted on Render)      cron-job.org calls /health every 5 min so it never sleeps
-        │  writes "start" / "stop"
+Campaign Agent (approves a campaign, then asks for "running"; switching a campaign off asks for "stopped")
+        │  request_pipeline() in the database           (the pipeline API in api/ can do the same; no dashboard
+        │                                                  branch calls it today)
         ▼
 Supabase Postgres  ── pipeline_control row ──┐     leads, emails, approvals, runs ... (all state)
         ▲                                   │
@@ -60,8 +58,15 @@ pipeline is running:
 desktop stays open). While stopped, nothing is searched, sent or polled; Slack approvals are still recorded and sent
 after the next Start. The requested state lives in the database, so a restart or reboot resumes it.
 
-The dashboard uses three endpoints (full reference: [docs/pipeline-api.md](docs/pipeline-api.md), live docs at
-`<api url>/docs`):
+**Only for an approved campaign.** A discovery pass searches only while the Campaign Agent serves a live, approved
+campaign over the Tailscale link (`MA_LINK_URL`, `MA_LINK_TOKEN`; `agent/campaign_link.py`). With no live campaign, or no
+link configured, the pass is skipped and a `MA_NO_CAMPAIGN` blocker is reported; it never prospects on
+`config/leadgen.yaml` alone (`MA_REQUIRE_CAMPAIGN=false` restores the old behaviour). New leads and their emails record
+the campaign and version they were found for, and an approved email (or a follow-up) of a campaign that is not live
+waits until it is live again.
+
+The pipeline API in `api/` offers three endpoints (full reference: [docs/pipeline-api.md](docs/pipeline-api.md), live docs
+at `<api url>/docs`). No branch of the dashboard calls it today; the Campaign Agent starts and stops the pipeline:
 
 | Method | Path | |
 |---|---|---|
@@ -82,15 +87,31 @@ redone. A company that gives no contact after 3 attempts (`contacts.max_attempts
 ## Email safety
 
 - An email is sent only if, **in the database query that claims it**, it is `approved`, has an `approvals` row with a
-  recorded human decision (who, when) and, for an intro, its lead is `APPROVED`. The sender checks again right before
-  sending, and a transport refuses anything the gate did not clear. Rejected, pending and unknown emails cannot be sent.
+  recorded human decision (who, when) **whose hash matches the recipient, subject and body as they are now**
+  (`email_content_sha256`, migration 0014) and, for an intro, its lead is `APPROVED`. A decided email's subject, body
+  and recipient cannot change (database triggers). The sender checks again right before sending, and a transport refuses
+  anything the gate did not clear. Rejected, pending, expired and unknown emails cannot be sent.
+- Slack shows every word that will be sent (intro, follow-up and reply cards alike) and records who decided, for replies
+  and blog posts too. An approval request expires after 30 days; the draft is then posted again.
+- An email whose send was interrupted between Gmail and the database stays `sending` and is never retried by itself (it
+  may have gone out): a `MA_SEND_STUCK` blocker asks a person to check the Gmail sent folder.
 - Decisions are made in Slack (`supabase/functions/slack-interact` calls the SQL function `decide_email()`) or with
   `python -m agent leads approve|reject <email id>`. Each draft can be decided exactly once.
 - Mail goes out through the **Gmail API** as the account that logged in once (`python -m agent gmail-check`
   creates `token.json`; follow-ups and replies stay in the original Gmail thread). Emails are HTML
   (`config/email_template.html`) with a plain-text alternative. See `docs/aksaht_Docs/Gmail_Migration.md`.
 - `EMAIL_SENDING_ENABLED` must be `true` as well (default false). `APP_ENV=dev` limits recipients to
-  `ALLOWED_RECIPIENT_DOMAINS`; `TEST_RECIPIENT` redirects all mail; suppression list, send cap, unsubscribe footer.
+  `ALLOWED_RECIPIENT_DOMAINS`; `TEST_RECIPIENT` redirects all mail and records it as `test_sent` (the lead stays
+  `APPROVED`: the real contact never got it); with `APP_ENV=prod` it is refused. Suppression list, send cap, unsubscribe
+  footer. A contact whose domain cannot receive mail (no MX, A or AAAA record) is dropped before a draft is written.
+- **Never sent twice.** Gmail has no idempotency key, so the send call is never retried by the client library. A clear
+  refusal (4xx) is retried later; a rate limit (429) stops the round; an unclear result (timeout, 5xx, lost connection)
+  keeps the email in `sending`. After 15 minutes the sender looks for it in Gmail's Sent folder by its fixed Message-ID
+  (then by recipient and subject): found means `sent`, not found means queued again with one attempt used. The same check
+  settles an email left in `sending` by a crash; if Gmail cannot be asked, `MA_SEND_STUCK` tells a person.
+- Commands that act on the production database (`start`, `run`, `send`, `leads run`, `approve` ...) run only where
+  `MA_ON_OFFICE_MACHINE=1` (the systemd service and `deploy/remote.sh` set it), so a laptop whose `.env` points at
+  production cannot become a second agent. `--dry-run` works anywhere.
 - `--dry-run`: a local SQLite store, Slack messages written to `out/leadgen/approvals/`, approved mail written to
   `out/leadgen/outbox/`. Nothing leaves the machine.
 
@@ -110,7 +131,7 @@ Main settings (`.env`):
 
 | Group | Variables |
 |---|---|
-| Database | `DATABASE_URL` (Supabase pooler URL; empty = only `--dry-run` commands work) |
+| Database | `DATABASE_URL` (Supabase pooler URL as the limited `marketing_agent` login from migration 0015, never the owner; empty = only `--dry-run` commands work) |
 | Models | `LLM_BASE_URL`, `LLM_API_KEY`, `ROUTING_CONFIG`, `LLM_MIN_TIMEOUT` (raise on a CPU-only machine) |
 | Lead search | `BROWSER_BACKEND` (`http` / `chrome` / `desktop`), `SEARXNG_URL`, `MAX_NEW_LEADS_PER_DAY`, `HOST_DELAY_SECONDS` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_ALLOWED_USERS`, `SLACK_CHANNEL_OUTREACH` / `_CONTENT` / `_ALERTS` / `_MANUAL` (qualified leads with no contact: company + website, default `#manual-check`) / `_FORM` (a contact form was found: company + form page, to fill by hand, default `#form-fill`) |
@@ -118,6 +139,8 @@ Main settings (`.env`):
 | Sending safety | `EMAIL_SENDING_ENABLED`, `APP_ENV`, `ALLOWED_RECIPIENT_DOMAINS`, `TEST_RECIPIENT`, `DAILY_SEND_CAP_PER_MAILBOX` |
 | Email identity | `SENDER_NAME`, `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_WEBSITE`, `UNSUBSCRIBE_BASE_URL`, `UNSUBSCRIBE_SECRET` |
 | Service | `PIPELINE_POLL_SECONDS` (2), `PIPELINE_REST_MINUTES` (30), `SEND_EVERY_SECONDS` (20), `INBOX_EVERY_MINUTES` (10), `DESKTOP_KEEP_CHROME` |
+| Campaign link | `MA_LINK_URL`, `MA_LINK_TOKEN` (required for any discovery), `MA_REQUIRE_CAMPAIGN` (true) |
+| Retention | `RETENTION_PURGE_ENABLED` (false: the hourly housekeeping only reports contacts older than 12 months; true deletes them) |
 
 `credentials.json`, `token.json` and `.env` are secrets: they stay on the office machine (`deploy/remote.sh
 push-secrets` copies them over SSH) and are git-ignored.
@@ -185,7 +208,11 @@ Everything else (page intent, prices, job boards, scoring, dedup, contact guards
 ## Research rules
 
 - Only pages a search result or a link on the page leads to are opened: no URL is built from a guess, no crawling.
-  Per-run and per-domain page budgets, a per-host pause, robots.txt (HTTP backend), identifiable user agent.
+  Per-run and per-domain page budgets, a per-host pause, robots.txt and public addresses only (every backend:
+  `web.may_visit`; every redirect is checked again), identifiable user agent. The Chrome backend takes its result links
+  from SearXNG when `SEARXNG_URL` is set instead of reading a search engine's pages.
+- A campaign may set `include_countries`: a company its page or its country domain places elsewhere is rejected; one
+  whose country cannot be told is kept, with a note.
 - A CAPTCHA, Cloudflare check, login wall or rate limit is never worked around: the engine or site is rested / skipped
   for the run and recorded. A site whose server answers with an error page ("no available server", 502 / 503...) is
   tried once on `www.`, then counted as a failed attempt. LinkedIn, Indeed, Naukri, Glassdoor and similar portals are

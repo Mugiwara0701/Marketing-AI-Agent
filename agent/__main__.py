@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from typing import Any, cast
 
 from agentkit import db
 
@@ -57,6 +58,11 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     lq = lsub.add_parser("queries", help="print the next search queries the strategy would run")
     lq.add_argument("--count", type=int, default=20)
     lq.add_argument("--project", help="YAML with project_context, to preview its queries")
+    lq.add_argument(
+        "--campaign",
+        help="a campaign file from the Campaign Agent: check it like the live link does and print its queries "
+        "(no database, no network; the Campaign Agent's validation level 6 runs this)",
+    )
     for sp_ in lsub.choices.values():
         sp_.add_argument(
             "--dry-run",
@@ -211,11 +217,15 @@ async def _main(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912, PLR0915
             )
             and not dry
             and not os.environ.get("DATABASE_URL")
+            and not (a.cmd == "leads" and a.leads_cmd == "queries" and getattr(a, "campaign", None))
         ):
             print(  # noqa: T201
                 f"'{a.cmd}' needs a database: set DATABASE_URL in .env (see README), "
                 "or add --dry-run to use a local SQLite store."
             )
+            return 2
+        if (why := _wrong_machine(a, dry)) is not None:
+            print(why)  # noqa: T201
             return 2
         if a.cmd == "leads":
             return await _leads(a, dry)
@@ -410,6 +420,8 @@ async def _leads(a: argparse.Namespace, dry: bool) -> int:  # noqa: PLR0912 - on
         bad = sum(f.status != "ok" for f in found)
         hint = "" if a.apply or not bad else "  (report only: add --apply to reject the dead ones)"
         print(f"{len(found)} lead(s) checked, {bad} with a problem{hint}")  # noqa: T201
+    elif cmd == "queries" and a.campaign:
+        return await _campaign_queries(a.campaign, a.count)
     elif cmd == "queries":
         repo = await open_repository(config.runtime(dry_run=dry))
         try:
@@ -420,6 +432,55 @@ async def _leads(a: argparse.Namespace, dry: bool) -> int:  # noqa: PLR0912 - on
                 print(f"[{q.family}] {q.text}")  # noqa: T201
         finally:
             await repo.close()
+    return 0
+
+
+# Commands that act on the real database, Slack or Gmail: only on the Marketing Agent machine, never on a laptop whose
+# .env points at production (that would run a second agent and could send real approved mail from the wrong place).
+_PRODUCTION_COMMANDS = {"start", "run", "send", "inbox", "replies", "followups", "notify", "test-email", "approve",
+                        "reject", "gui-find"}  # fmt: skip
+_PRODUCTION_LEADS = {"run", "approve", "reject", "check-domains"}
+
+
+def _wrong_machine(a: argparse.Namespace, dry: bool) -> str | None:
+    if dry or not os.environ.get("DATABASE_URL") or os.environ.get("MA_ON_OFFICE_MACHINE") == "1":
+        return None
+    acts = a.cmd in _PRODUCTION_COMMANDS or (a.cmd == "leads" and a.leads_cmd in _PRODUCTION_LEADS)
+    if not acts:
+        return None
+    return (
+        f"'{a.cmd}' works on the production database: run it on the Marketing Agent machine "
+        "(bash deploy/remote.sh agent ...), or add --dry-run. That machine sets MA_ON_OFFICE_MACHINE=1."
+    )
+
+
+class _NoHistory:
+    """No query has run before: the campaign check needs no database."""
+
+    async def query_last_run(self, query: str) -> None:
+        return None
+
+
+async def _campaign_queries(path: str, count: int) -> int:
+    """`leads queries --campaign FILE`: the contract with the Campaign Agent (Campaign-Agent validators/downstream.py).
+    Exit 0 and one query per line when this agent would accept the file; exit 2 and one sentence on stderr when not."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from . import campaign_link  # noqa: PLC0415
+    from .leadgen import config, strategy  # noqa: PLC0415
+
+    base = config.load().raw
+    try:
+        text = await asyncio.to_thread(Path(path).read_text, encoding="utf-8")
+        overlay = campaign_link.parse_overlay(text)
+        campaign_link.check_overlay(overlay, base)
+    except (OSError, campaign_link.OverlayError) as exc:
+        print(f"campaign file rejected: {exc}", file=sys.stderr)  # noqa: T201
+        return 2
+    cfg = config.from_raw(campaign_link.merge_overlay(base, overlay))
+    suffix = str(cfg.search.get("query_suffix") or "").strip()
+    for q in await strategy.next_queries(cast(Any, _NoHistory()), cfg, count):
+        print(f"{q.text} {suffix}".strip())  # noqa: T201
     return 0
 
 

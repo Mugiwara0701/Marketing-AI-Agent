@@ -2,7 +2,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "fix/**", "feature/**"]
 permissions:
   contents: read
 concurrency:
@@ -13,9 +13,37 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # A throwaway Postgres (with pgvector, as Supabase has) so the SQL safety functions are tested: decide_email(), the
+    # sending gate, the frozen-content triggers, expiry (agent/tests/test_leadgen_postgres.py).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: {python-version: "3.12", cache: pip}
       - run: pip install -r requirements-dev.txt   # the agent and agentkit, as in production
-      - run: make test
+      # Failures are also reported as annotations, so they can be read without the log.
+      - run: make test PYTEST_ARGS="--junitxml=pytest-report.xml"
+      - name: Report test failures
+        if: failure()
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          for case in ET.parse("pytest-report.xml").iter("testcase"):
+              for bad in list(case.iter("failure")) + list(case.iter("error")):
+                  where = (case.get("file") or case.get("classname", "").replace(".", "/") + ".py")
+                  msg = ((bad.get("message") or "") + " / " + (bad.text or "")[-1500:]).replace("%", "%25")
+                  msg = msg.replace("\r", "").replace("\n", "%0A")
+                  print(f"::error file={where},line={case.get('line') or 1},title={case.get('name')}::{msg}")
+          PY

@@ -286,3 +286,100 @@ def test_pipeline_control_row_round_trip(pg):
         and off["desired_state"] == "running"
     )
     assert bad is not None and "running or stopped" in str(bad)
+
+
+def _approved_intro(pg, domain: str, campaign=None):
+    async def go():
+        lid = await pg.insert_lead(
+            Lead(company_name=domain, company_website=domain), source="t", campaign=campaign
+        )
+        for s in (LeadStatus.QUALIFIED, LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED):
+            await pg.set_status(lid, s)
+        cid = await pg.save_contact(lid, Contact(email=f"a@{domain}", source="u"))
+        eid = await pg.save_email_draft(lid, cid, "Hi", "Body", None)
+        assert await pg.decide_email(eid, True, "slack:U1") == "approved"
+        return lid, cid, eid
+
+    return go()
+
+
+def test_an_approved_email_cannot_be_changed_in_postgres(pg):
+    """Migration 0014: subject, body and recipient are frozen once decided, and the approval holds their hash."""
+    import asyncpg
+
+    async def go():
+        _lid, cid, eid = await _approved_intro(pg, "frozen.io")
+        row = await db.fetchrow("select content_sha256 from approvals where ref_id=$1::uuid", eid)
+        assert row and len(row["content_sha256"]) == 64
+        for sql in (
+            "update emails set body='other' where id=$1::uuid",
+            "update contacts set email='b@elsewhere.io' where id=(select contact_id from emails where id=$1::uuid)",
+        ):
+            try:
+                await db.execute(sql, eid)
+                raise AssertionError(f"not refused: {sql}")
+            except asyncpg.RaiseError:
+                pass
+        assert await pg.sendable_problem(eid) is None
+        return cid
+
+    _run(go())
+
+
+def test_the_hash_in_sql_matches_python(pg):
+    from agent.leadgen.repository import content_sha256
+
+    row = _run(
+        db.fetchrow(
+            "select email_content_sha256($1, $2, $3) h", " Ana@X.io ", "Sub", "Line 1\nLine 2"
+        )
+    )
+    assert row and row["h"] == content_sha256(" Ana@X.io ", "Sub", "Line 1\nLine 2")
+
+
+def test_an_expired_request_cannot_be_decided_in_postgres(pg):
+    async def go():
+        lid = await pg.insert_lead(Lead(company_name="Late", company_website="late.io"), source="t")
+        for s in (LeadStatus.QUALIFIED, LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED):
+            await pg.set_status(lid, s)
+        cid = await pg.save_contact(lid, Contact(email="a@late.io", source="u"))
+        eid = await pg.save_email_draft(lid, cid, "Hi", "Body", None)
+        await pg.open_approval(eid, "#c")
+        await pg.set_status(lid, LeadStatus.PENDING_APPROVAL)
+        await db.execute(
+            "update approvals set expires_at = now() - interval '1 day' where ref_id=$1::uuid", eid
+        )
+        assert await pg.decide_email(eid, True, "slack:U1") == "expired"
+        # posted again by the next pass
+        assert (await pg.get_lead(lid)).status == LeadStatus.EMAIL_DRAFTED
+        assert await pg.decide_email(eid, True, "slack:U1") == "expired"
+        await pg.open_approval(eid, "#c")
+        assert await pg.decide_email(eid, True, "slack:U1") == "approved"
+
+    _run(go())
+
+
+def test_emails_wait_while_their_campaign_is_not_live_in_postgres(pg, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.delenv("TEST_RECIPIENT", raising=False)
+    camp_a = "aaaaaaaa-0000-0000-0000-000000000001"
+    camp_b = "aaaaaaaa-0000-0000-0000-000000000002"
+
+    async def go():
+        # other tests' mail
+        await db.execute("update emails set status='skipped' where status='approved'")
+        _lid, _cid, eid = await _approved_intro(pg, "campaign-a.io", campaign=(camp_a, 3))
+        row = await db.fetchrow(
+            "select source_campaign_id, source_campaign_version from emails where id=$1::uuid", eid
+        )
+        assert row and str(row["source_campaign_id"]) == camp_a
+        assert row["source_campaign_version"] == 3
+        assert await pg.claim_sendable(10, live_campaign=camp_b) == []
+        assert await pg.claim_sendable(10, live_campaign="none") == []
+        got = await pg.claim_sendable(10, live_campaign=camp_a)
+        assert [e.email_id for e in got] == [eid]
+        await pg.mark_sent(eid, "<m@x>", f"pid-{eid}", "from@x.io", test_redirect=True)
+        status = await db.fetchrow("select status from emails where id=$1::uuid", eid)
+        assert status and status["status"] == "test_sent"
+
+    _run(go())

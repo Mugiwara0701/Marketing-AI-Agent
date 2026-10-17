@@ -8,7 +8,7 @@ import hmac
 import os
 import re
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, parseaddr
 from html import escape
 from pathlib import Path
 
@@ -163,6 +163,15 @@ def render_html(subject: str, body: str, unsubscribe: str) -> str:
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), ""), _template())
 
 
+def message_id_for(email_id: str, to_addr: str) -> str:
+    """The Message-ID of the mail for one email row and one recipient: always the same, so after an unclear send result
+    the agent can look for exactly this mail in Gmail's Sent folder before it ever sends again (sender._reconcile)."""
+    address = parseaddr(env("MAIL_FROM", "") or "")[1]
+    domain = address.rpartition("@")[2].strip().lower() or "localhost"
+    tag = hashlib.sha256(to_addr.strip().lower().encode("utf-8")).hexdigest()[:12]
+    return f"<ma-{email_id}-{tag}@{domain}>"
+
+
 def build_message(row, to_addr: str) -> EmailMessage:
     """multipart/alternative: a clean plain-text part and the HTML template, with the identity footer and the one-click
     unsubscribe link and headers in both."""
@@ -177,7 +186,8 @@ def build_message(row, to_addr: str) -> EmailMessage:
     )
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = sender, to_addr, row["subject"]
-    msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid()
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = message_id_for(str(row["id"]), to_addr)
     msg["List-Unsubscribe"] = f"<{url}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     if row.get("in_reply_to"):  # follow-ups and replies thread under the mail they answer
@@ -189,13 +199,19 @@ def build_message(row, to_addr: str) -> EmailMessage:
     return msg
 
 
+def is_production() -> bool:
+    return (env("APP_ENV", "dev") or "dev") == "prod"
+
+
 def allowed_in_env(addr: str) -> bool:
-    """In dev, only addresses on ALLOWED_RECIPIENT_DOMAINS may be emailed."""
-    if (env("APP_ENV", "dev") or "dev") == "prod":
+    """In dev, only addresses on ALLOWED_RECIPIENT_DOMAINS may be emailed. Anything that is not one address is refused."""
+    if "@" not in addr or "," in addr:
+        return False
+    if is_production():
         return True
     allowed = [
         d.strip().lower()
         for d in (env("ALLOWED_RECIPIENT_DOMAINS", "") or "").split(",")
         if d.strip()
     ]
-    return addr.split("@", 1)[1].lower() in allowed
+    return addr.rsplit("@", 1)[1].strip().lower() in allowed

@@ -141,17 +141,20 @@ class PostgresRepository:
         source_urls=$14, qualification_notes=$15::jsonb, fit_score=$16, fit_reason=$17, result_type=$18,
         customer_tier=$19"""
 
-    async def insert_lead(self, lead: Lead, *, source: str) -> str:
+    async def insert_lead(
+        self, lead: Lead, *, source: str, campaign: tuple[str, int] | None = None
+    ) -> str:
         row = await db.fetchrow(
             """insert into companies (name, name_key, industry, product, project_summary, opportunity, technologies,
                    project_signal, page_type, location, lead_score, score, evidence, source_urls,
                    qualification_notes, fit_score, fit_reason, result_type, customer_tier, domain, website, source,
-                   source_url, status, lead_status)
+                   source_url, status, lead_status, source_campaign_id, source_campaign_version)
                values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14,$15::jsonb,$16,$17,
-                       $18,$19,$20,$21,$22,$23,'candidate','DISCOVERED')
+                       $18,$19,$20,$21,$22,$23,'candidate','DISCOVERED',$24::uuid,$25)
                returning id""",
             *self._values(lead), lead.company_website, f"https://{lead.company_website}", source,
             lead.source_urls[0] if lead.source_urls else None,
+            campaign[0] if campaign else None, campaign[1] if campaign else None,
         )  # fmt: skip
         assert row is not None  # noqa: S101 - insert ... returning always yields a row
         lead.lead_id, lead.status = str(row["id"]), LeadStatus.DISCOVERED
@@ -256,14 +259,18 @@ class PostgresRepository:
         return EmailDraft(email_id=str(r["id"]), lead_id=str(r["company_id"]), contact_id=str(r["contact_id"]),
                           to=r["to_addr"] or "", subject=r["subject"] or "", body=r["body"] or "",
                           review_note=r["review_note"], status=r["status"], step=r["step"],
-                          attempts=r["attempts"], in_reply_to=r["in_reply_to"])  # fmt: skip
+                          attempts=r["attempts"], in_reply_to=r["in_reply_to"],
+                          source_campaign_id=str(r["source_campaign_id"]) if r["source_campaign_id"] else None,
+                          source_campaign_version=r["source_campaign_version"])  # fmt: skip
 
     async def save_email_draft(self, lead_id, contact_id, subject, body, note) -> str | None:
         row = await db.fetchrow(
-            """insert into emails (contact_id, campaign_id, step, status, subject, body, review_note, idempotency_key)
-               values ($1::uuid,$2,1,'drafted',$3,$4,$5,$6)
+            """insert into emails (contact_id, campaign_id, step, status, subject, body, review_note, idempotency_key,
+                                   source_campaign_id, source_campaign_version)
+               select $1::uuid,$2,1,'drafted',$3,$4,$5,$6, co.source_campaign_id, co.source_campaign_version
+                 from companies co where co.id = $7::uuid
                on conflict (contact_id, campaign_id, step) do nothing returning id""",
-            contact_id, await self._campaign(), subject, body, note, f"intro-{contact_id}",
+            contact_id, await self._campaign(), subject, body, note, f"intro-{contact_id}", lead_id,
         )  # fmt: skip
         return str(row["id"]) if row else None
 
@@ -328,28 +335,62 @@ class PostgresRepository:
 
     # --- sending (the gate) -----------------------------------------------------------------------------------
 
-    _GATE = """e.status = 'approved' and c.email is not null
-        and exists (select 1 from approvals a where a.kind='email' and a.ref_id=e.id and a.status='approved')
+    # The approval must cover exactly this recipient, subject and body (migration 0014).
+    _HASH_OK = """exists (select 1 from approvals a where a.kind='email' and a.ref_id=e.id and a.status='approved'
+                 and a.content_sha256 = email_content_sha256(c.email, e.subject, e.body))"""
+    _GATE = f"""e.status = 'approved' and c.email is not null
+        and {_HASH_OK}
         and (not (e.step = 1 and e.campaign_id = (select id from campaigns where name='daily-outreach'))
-             or co.lead_status = 'APPROVED')"""
+             or co.lead_status = 'APPROVED')
+        and ($2::text is null or e.source_campaign_id is null or e.source_campaign_id::text = $2::text)"""
 
-    async def claim_sendable(self, limit: int) -> list[EmailDraft]:
+    async def claim_sendable(
+        self, limit: int, *, live_campaign: str | None = None
+    ) -> list[EmailDraft]:
+        """`live_campaign`: emails found for another campaign wait (they stay approved) until it is live again."""
         rows = await db.fetch(
             f"""update emails set status='sending', updated_at=now() where id in (
                   select e.id from emails e join contacts c on c.id=e.contact_id join companies co on co.id=c.company_id
                    where {self._GATE} order by e.created_at limit $1 for update of e skip locked)
                 returning id""",
             limit,
+            live_campaign,
         )
         return [e for r in rows if (e := await self.get_email(str(r["id"])))]
 
+    async def stale_sending(self, minutes: int) -> int:
+        row = await db.fetchrow(
+            "select count(*) n from emails where status='sending' and updated_at < now() - make_interval(mins => $1)",
+            minutes,
+        )
+        return int(row["n"]) if row else 0
+
+    async def stuck_sending(self, minutes: int, limit: int) -> list[EmailDraft]:
+        rows = await db.fetch(
+            f"""{self._EMAIL_Q} where e.status='sending' and e.updated_at < now() - make_interval(mins => $1)
+                 order by e.updated_at limit $2""",
+            minutes, limit,
+        )  # fmt: skip
+        return [self._email(r) for r in rows]
+
+    async def mark_send_unknown(self, email_id: str, error: str) -> None:
+        await db.execute(
+            "update emails set last_error=$2, updated_at=now() where id=$1::uuid and status='sending'",
+            email_id, f"unclear send result: {error}"[:500],
+        )  # fmt: skip
+
+    async def expire_approvals(self) -> int:
+        row = await db.fetchrow("select expire_approvals() as n")
+        return int(row["n"]) if row else 0
+
     async def sendable_problem(self, email_id: str) -> str | None:
         row = await db.fetchrow(
-            """select e.status, c.email, co.lead_status,
+            f"""select e.status, c.email, co.lead_status,
                       case when e.step = 1 and e.campaign_id = (select id from campaigns where name='daily-outreach')
                            then 1 else 2 end as step,
                       (select count(*) from approvals a where a.kind='email' and a.ref_id=e.id
-                          and a.status='approved') as ok
+                          and a.status='approved') as ok,
+                      {self._HASH_OK} as hash_ok
                  from emails e join contacts c on c.id=e.contact_id join companies co on co.id=c.company_id
                 where e.id=$1::uuid""",
             email_id,
@@ -374,13 +415,17 @@ class PostgresRepository:
         )
         return row["t"] if row else None
 
-    async def mark_sent(self, email_id, message_id, provider_id, mailbox, thread_id=None) -> None:
+    async def mark_sent(
+        self, email_id, message_id, provider_id, mailbox, thread_id=None, *, test_redirect=False
+    ) -> None:
         await db.execute(
-            """update emails set status='sent', sent_at=now(), message_id=$2, provider_id=$3, mailbox=$4,
+            """update emails set status=$6, sent_at=now(), message_id=$2, provider_id=$3, mailbox=$4,
                    gmail_message_id=nullif($3, 'dry-run'), gmail_thread_id=$5, updated_at=now()
                 where id=$1::uuid and status='sending'""",
-            email_id, message_id, provider_id, mailbox, thread_id,
+            email_id, message_id, provider_id, mailbox, thread_id, "test_sent" if test_redirect else "sent",
         )  # fmt: skip
+        if test_redirect:  # the real contact never got it: the lead stays APPROVED
+            return
         await db.execute(
             """update companies set lead_status='SENT', updated_at=now() where lead_status='APPROVED' and id =
                  (select c.company_id from emails e join contacts c on c.id=e.contact_id where e.id=$1::uuid)""",

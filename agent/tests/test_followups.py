@@ -39,8 +39,8 @@ def _patch(monkeypatch, rows, problems=()):
     async def noop():
         return None
 
-    async def candidates(days, limit):
-        assert days == 4
+    async def candidates(days, limit, live_campaign=None):
+        assert days == 4 and live_campaign is None  # no link configured: campaigns are not checked
         return rows
 
     async def draft(_ctx):

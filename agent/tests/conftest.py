@@ -18,3 +18,25 @@ def _no_real_services(monkeypatch):
         "MA_LINK_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_site_checks(request, monkeypatch):
+    """The browser backends ask web.may_visit (DNS and robots.txt over the network) before opening a page. Unit tests
+    use made-up sites and no network, so it allows everything here; test_web_rules.py tests the real rules."""
+    if request.module.__name__.endswith("test_web_rules"):
+        return
+    from agent import web
+
+    async def allow(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(web, "may_visit", allow)
+    if request.module.__name__.endswith("test_mail_domain"):
+        return
+    from agent.leadgen import contacts
+
+    async def deliverable(_address: str) -> bool:
+        return True
+
+    monkeypatch.setattr(contacts, "mail_domain_ok", deliverable)

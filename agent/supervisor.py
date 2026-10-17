@@ -134,6 +134,26 @@ async def inbox_once() -> dict | None:
     return {"inbox": polled, "replies": answered} if busy else None
 
 
+async def housekeeping_once() -> dict | None:
+    """Hourly, whether or not the pipeline runs: expire approval requests past their date (the lead is posted again),
+    and the 12-month contact retention. Deleting contacts is permanent, so it only runs with RETENTION_PURGE_ENABLED=true;
+    otherwise the number that would go is reported."""
+    from agentkit import db  # noqa: PLC0415
+
+    expired = await db.fetchrow("select expire_approvals() as n")
+    out: dict = {"approvals_expired": int(expired["n"]) if expired else 0}
+    if (env("RETENTION_PURGE_ENABLED", "false") or "false").lower() == "true":
+        purged = await db.fetchrow("select purge_stale_contacts() as n")
+        out["contacts_purged"] = int(purged["n"]) if purged else 0
+    else:
+        due = await db.fetchrow(
+            """select count(*) as n from contacts
+                where coalesce(last_engaged_at, collected_at) < now() - interval '12 months'"""
+        )
+        out["contacts_due_for_purge"] = int(due["n"]) if due else 0
+    return out if any(out.values()) else None
+
+
 async def start() -> int:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -160,6 +180,15 @@ async def start() -> int:
         ),
         asyncio.create_task(
             _loop("inbox", inbox_every, inbox_once, stop, is_running), name="inbox"
+        ),
+        asyncio.create_task(
+            _loop(
+                "housekeeping",
+                _seconds("HOUSEKEEPING_EVERY_SECONDS", 3600),
+                housekeeping_once,
+                stop,
+            ),
+            name="housekeeping",
         ),
     ]
     if (

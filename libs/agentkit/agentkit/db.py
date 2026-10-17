@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import unquote
 
@@ -50,6 +52,14 @@ async def close_pool() -> None:
     if _pool is not None:
         await _pool.close()
         _pool = None
+
+
+@asynccontextmanager
+async def transaction() -> AsyncIterator[asyncpg.Connection]:
+    """One connection inside one transaction: everything in the block is committed together, or not at all."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        yield conn
 
 
 async def fetch(sql: str, *args: Any) -> list[asyncpg.Record]:

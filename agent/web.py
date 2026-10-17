@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -24,6 +24,7 @@ _HOST_DELAY = float(
     env("HOST_DELAY_SECONDS", "2") or 2
 )  # pause between two requests to the same host
 _MAX_BYTES = 800_000
+_MAX_REDIRECTS = 5
 _last_hit: dict[str, float] = {}
 _robots: dict[str, RobotFileParser | None] = {}
 bot_blocked: set[str] = set()  # hosts that showed a bot check this run: not tried again
@@ -117,7 +118,7 @@ async def _allowed(client: httpx.AsyncClient, url: str) -> bool:
     if base not in _robots:
         rp = RobotFileParser()
         try:
-            r = await client.get(f"{base}/robots.txt", timeout=10)
+            r = await client.get(f"{base}/robots.txt", timeout=10, follow_redirects=True)
             if r.status_code in (401, 403):
                 _robots[base] = None  # explicit block
                 return False
@@ -157,11 +158,42 @@ async def _wait_for_host(host: str) -> None:
     _last_hit[host] = time.monotonic()
 
 
-async def fetch_page(  # noqa: PLR0911 - every refusal returns early
+async def may_visit(url: str) -> str | None:
+    """Why this page must not be opened (by any browser backend), or None. The same rules as fetch_page: no portal
+    whose terms forbid scraping, only public addresses, and robots.txt for our user agent."""
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return "not a web address"
+    if blocked(url):
+        return "portal whose terms forbid scraping"
+    if not await asyncio.to_thread(_public_host, u.hostname):
+        return "not a public address"
+    async with httpx.AsyncClient(
+        headers={"User-Agent": settings.load().user_agent}, timeout=10
+    ) as c:
+        if not await _allowed(c, url):
+            return "robots.txt disallows it"
+    return None
+
+
+async def _read_capped(r: httpx.Response) -> str:
+    """At most _MAX_BYTES of the body: a huge or endless response is cut, never held in memory whole."""
+    parts: list[bytes] = []
+    size = 0
+    async for chunk in r.aiter_bytes():
+        parts.append(chunk)
+        size += len(chunk)
+        if size >= _MAX_BYTES:
+            break
+    return b"".join(parts)[:_MAX_BYTES].decode(r.encoding or "utf-8", errors="replace")
+
+
+async def fetch_page(  # noqa: PLR0911, PLR0912 - every refusal returns early
     url: str, *, check_robots: bool = True, accept: str = "text/html"
 ) -> Fetched | None:
     """GET a public page politely: robots.txt, per-host delay, no private addresses, no blocked portals, bot checks
-    recognised (and the host remembered, never retried this run). None when the request itself failed."""
+    recognised (and the host remembered, never retried this run). None when the request itself failed.
+    Redirects are followed one by one and every hop is checked again: a public page can never lead to a private one."""
     u = urlparse(url)
     if u.scheme not in ("http", "https") or not u.hostname:
         return None
@@ -172,27 +204,43 @@ async def fetch_page(  # noqa: PLR0911 - every refusal returns early
     if not await asyncio.to_thread(_public_host, u.hostname):
         return Fetched(url, 0, "", "not a public address")
     headers = {"User-Agent": settings.load().user_agent, "Accept": accept}
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20) as c:
+    async with httpx.AsyncClient(headers=headers, follow_redirects=False, timeout=20) as c:
         if check_robots and not await _allowed(c, url):
             return Fetched(url, 0, "", "robots.txt disallows it")
         await _wait_for_host(u.hostname)
+        current = url
         try:
-            r = await c.get(url)
+            for _ in range(_MAX_REDIRECTS + 1):
+                async with c.stream("GET", current) as r:
+                    if r.is_redirect:
+                        target = urljoin(current, r.headers.get("location", ""))
+                        tu = urlparse(target)
+                        if tu.scheme not in ("http", "https") or not tu.hostname:
+                            return None
+                        if blocked(target):
+                            return Fetched(
+                                target, r.status_code, "", "redirected to a blocked portal"
+                            )
+                        if not await asyncio.to_thread(_public_host, tu.hostname):
+                            return Fetched(
+                                target, r.status_code, "", "redirected to a non-public address"
+                            )
+                        current = target
+                        continue
+                    status, text = r.status_code, await _read_capped(r)
+                    break
+            else:
+                return Fetched(current, 0, "", "too many redirects")
         except httpx.HTTPError as exc:
             log.info(
                 "fetch failed", extra={"ctx": {"host": u.hostname, "error": type(exc).__name__}}
             )
             return None
-    final = str(r.url)
-    if blocked(final):  # redirected onto a portal we must not read
-        return Fetched(final, r.status_code, "", "redirected to a blocked portal")
-    if bot_check(r.text):
+    if bot_check(text):
         bot_blocked.add(u.hostname)
-        log.info(
-            "bot check, site skipped", extra={"ctx": {"host": u.hostname, "status": r.status_code}}
-        )
-        return Fetched(final, r.status_code, "", "bot check")
-    return Fetched(final, r.status_code, r.text[:_MAX_BYTES])
+        log.info("bot check, site skipped", extra={"ctx": {"host": u.hostname, "status": status}})
+        return Fetched(current, status, "", "bot check")
+    return Fetched(current, status, text)
 
 
 async def fetch(url: str, *, check_robots: bool = True, accept: str = "text/html") -> str | None:

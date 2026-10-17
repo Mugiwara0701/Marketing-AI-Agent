@@ -9,7 +9,7 @@ import time
 
 from agentkit.log import get_logger
 
-from . import notify, settings, store
+from . import campaign_link, notify, settings, store
 from .tasks import followup
 
 log = get_logger("agent.followups")
@@ -35,7 +35,12 @@ async def run(deadline: float | None = None) -> dict:
     cfg = settings.load()
     stats = {"processed": 0, "drafted": 0, "failed": 0}
     await store.ensure_followup_step()
-    for row in await store.followup_candidates(cfg.followup_delay_days, cfg.followup_max_per_run):
+    rows = await store.followup_candidates(
+        cfg.followup_delay_days,
+        cfg.followup_max_per_run,
+        live_campaign=campaign_link.live_campaign_id(),
+    )
+    for row in rows:
         if deadline is not None and time.monotonic() > deadline:
             break
         try:
