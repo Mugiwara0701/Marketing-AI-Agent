@@ -182,7 +182,12 @@ async def start() -> int:
             _loop("inbox", inbox_every, inbox_once, stop, is_running), name="inbox"
         ),
         asyncio.create_task(
-            _loop("housekeeping", _seconds("HOUSEKEEPING_EVERY_SECONDS", 3600), housekeeping_once, stop),
+            _loop(
+                "housekeeping",
+                _seconds("HOUSEKEEPING_EVERY_SECONDS", 3600),
+                housekeeping_once,
+                stop,
+            ),
             name="housekeeping",
         ),
     ]

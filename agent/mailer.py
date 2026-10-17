@@ -166,7 +166,8 @@ def render_html(subject: str, body: str, unsubscribe: str) -> str:
 def message_id_for(email_id: str, to_addr: str) -> str:
     """The Message-ID of the mail for one email row and one recipient: always the same, so after an unclear send result
     the agent can look for exactly this mail in Gmail's Sent folder before it ever sends again (sender._reconcile)."""
-    domain = parseaddr(env("MAIL_FROM", "") or "")[1].rpartition("@")[2].strip().lower() or "localhost"
+    address = parseaddr(env("MAIL_FROM", "") or "")[1]
+    domain = address.rpartition("@")[2].strip().lower() or "localhost"
     tag = hashlib.sha256(to_addr.strip().lower().encode("utf-8")).hexdigest()[:12]
     return f"<ma-{email_id}-{tag}@{domain}>"
 
@@ -185,7 +186,8 @@ def build_message(row, to_addr: str) -> EmailMessage:
     )
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = sender, to_addr, row["subject"]
-    msg["Date"], msg["Message-ID"] = formatdate(localtime=True), message_id_for(str(row["id"]), to_addr)
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = message_id_for(str(row["id"]), to_addr)
     msg["List-Unsubscribe"] = f"<{url}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     if row.get("in_reply_to"):  # follow-ups and replies thread under the mail they answer

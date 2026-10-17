@@ -105,7 +105,9 @@ def reply_blocks(row, approval_id: str) -> tuple[str, list[dict]]:
     ]
     if row["status"] == "classified":  # still undecided: offer buttons
         if row["draft_response"]:
-            blocks += full_text_sections("*Draft answer (sent exactly as written):*", row["draft_response"])
+            blocks += full_text_sections(
+                "*Draft answer (sent exactly as written):*", row["draft_response"]
+            )
             buttons = [("Approve", "approve_reply"), ("Skip", "skip_reply")]
         else:
             buttons = [("Dismiss", "skip_reply")]

@@ -116,7 +116,9 @@ async def ensure_followup_step() -> None:
     await db.execute("update campaigns set steps=2 where name='daily-outreach' and steps < 2")
 
 
-async def followup_candidates(delay_days: int, limit: int, live_campaign: str | None = None) -> list:
+async def followup_candidates(
+    delay_days: int, limit: int, live_campaign: str | None = None
+) -> list:
     """Intros sent at least `delay_days` ago with no reply, no bounce and no follow-up yet (Gmail has no open data).
     `live_campaign` (see agent.campaign_link.live_campaign_id): an intro of another campaign gets no follow-up while
     that campaign is not live; None = campaigns are not checked."""

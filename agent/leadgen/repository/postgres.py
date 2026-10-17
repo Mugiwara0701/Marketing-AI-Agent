@@ -351,7 +351,8 @@ class PostgresRepository:
                   select e.id from emails e join contacts c on c.id=e.contact_id join companies co on co.id=c.company_id
                    where {self._GATE} order by e.created_at limit $1 for update of e skip locked)
                 returning id""",
-            limit, live_campaign,
+            limit,
+            live_campaign,
         )
         return [e for r in rows if (e := await self.get_email(str(r["id"])))]
 

@@ -31,13 +31,13 @@ jobs:
           ruff format --diff . > format.diff 2>&1 || true
           python - <<'PY'
           import re
-          text = open("format.diff").read()
-          for part in re.split(r"(?m)^(?=--- )", text):
-              m = re.match(r"--- (\S+)", part)
-              if m:
-                  line = re.search(r"(?m)^@@ -(\d+)", part)
-                  body = part[-3000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
-                  print(f"::error file={m.group(1)},line={line.group(1) if line else 1},title=ruff format::{body}")
+          # GitHub shows at most 10 error annotations per step: the whole diff goes into at most 10, split per file.
+          parts = [p for p in re.split(r"(?m)^(?=--- )", open("format.diff").read()) if p.startswith("--- ")]
+          groups = [parts[i::10] for i in range(min(10, len(parts)))]
+          for group in groups:
+              first = re.match(r"--- (\S+)", group[0]).group(1)
+              body = "".join(group)[:60000].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error file={first},line=1,title=ruff format ({len(group)} file(s))::{body}")
           PY
 
   typecheck:

@@ -119,8 +119,10 @@ class GmailTransport:
                 if status == 429:
                     raise RateLimitedError("Gmail rate limit (429)") from exc
                 if not 400 <= status < 500:
-                    raise SendOutcomeUnknownError(f"HttpError {status}: Gmail may have accepted it") from exc
-                errors.append(f"HttpError {status}: refused by Gmail")  # a 4xx: refused, nothing was sent
+                    unclear = f"HttpError {status}: Gmail may have accepted it"
+                    raise SendOutcomeUnknownError(unclear) from exc
+                # a 4xx: refused, nothing was sent
+                errors.append(f"HttpError {status}: refused by Gmail")
                 continue
             except Exception as exc:
                 raise SendOutcomeUnknownError(
@@ -212,11 +214,18 @@ async def _reconcile(
         try:
             got = await find(email, override or email.to, _subject(email, override))
         except Exception as exc:  # stays 'sending'; _check_stale tells a person if it lasts
-            log.warning("Could not check Gmail's Sent folder", extra={"ctx": {**ctx, "error": type(exc).__name__}})
+            why = {**ctx, "error": type(exc).__name__}
+            log.warning("Could not check Gmail's Sent folder", extra={"ctx": why})
             continue
         if got is not None:
-            await repo.mark_sent(email.email_id, got.message_id, got.provider_id, mailbox, got.thread_id,
-                                 test_redirect=bool(override))  # fmt: skip
+            await repo.mark_sent(
+                email.email_id,
+                got.message_id,
+                got.provider_id,
+                mailbox,
+                got.thread_id,
+                test_redirect=bool(override),
+            )
             stats["sent"] += 1
             log.info("Unclear send settled: the mail is in Gmail's Sent folder", extra={"ctx": ctx})
         else:
@@ -225,8 +234,8 @@ async def _reconcile(
                 email.email_id, "unclear send result; not in Gmail's Sent folder", final=final
             )
             stats["failed"] += 1
-            log.warning("Unclear send settled: not sent, queued again" if not final else
-                        "Unclear send settled: not sent, attempts used up", extra={"ctx": ctx})  # fmt: skip
+            what = "attempts used up" if final else "queued again"
+            log.warning(f"Unclear send settled: not sent, {what}", extra={"ctx": ctx})
 
 
 async def send_approved(

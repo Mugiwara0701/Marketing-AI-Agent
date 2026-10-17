@@ -21,7 +21,8 @@ class LeadgenConfig:
     exclude_companies: list[str] = field(default_factory=list)
     exclude_countries: list[str] = field(default_factory=list)
     exclude_tlds: list[str] = field(default_factory=list)
-    include_countries: list[str] = field(default_factory=list)  # set by a campaign: only companies in these countries
+    # set by a campaign: only companies in these countries
+    include_countries: list[str] = field(default_factory=list)
     desktop_engines: list[str] = field(default_factory=list)
 
     def q(self, key: str, default: Any) -> Any:

@@ -38,7 +38,8 @@ def test_leads_queries_campaign_rejects_an_unsupported_version(tmp_path, capsys)
 
 
 def test_a_long_followup_is_shown_whole_in_slack():
-    body = "\n\n".join(f"Paragraph {i}: " + "word " * 120 for i in range(12))  # about 7,000 characters
+    # about 7,000 characters
+    body = "\n\n".join(f"Paragraph {i}: " + "word " * 120 for i in range(12))
     row: dict[str, object] = {"company": "Acme", "domain": "acme.io", "project_summary": "p", "technologies": [],
            "email": "hi@acme.io", "name": "", "role": "", "source_url": "", "review_note": None,
            "subject": "Re: Hello", "body": body, "step": 2}  # fmt: skip
@@ -95,7 +96,8 @@ def test_a_pass_without_a_live_campaign_does_not_search(monkeypatch):
 
     monkeypatch.setattr(campaign_link, "apply_campaign", no_campaign)
     monkeypatch.setattr(service, "make_browser", boom)
-    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:1/x")  # a real run (never connected to)
+    # a real run (never connected to)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:1/x")
     out = asyncio.run(service.run_leads(dry_run=False))
     assert "not configured" in out["skipped"]
 
@@ -110,7 +112,8 @@ def test_a_company_placed_outside_the_campaign_countries_is_rejected():
     assert intent.country_outside("acme.io", "Munich, Germany", ["United States"])
     assert "Germany" not in intent.country_outside("acme.io", "Munich, Germany", ["Germany"])
     assert intent.country_outside("acme.io", "Munich, Germany", ["Germany", "Austria"]) == ""
-    assert intent.country_outside("acme.de", "Austin, Texas, USA", ["US"]) == ""  # the page wins over the domain
+    # the page wins over the domain
+    assert intent.country_outside("acme.de", "Austin, Texas, USA", ["US"]) == ""
     assert intent.country_outside("acme.de", "", []) == ""  # no countries set: any country
 
 
@@ -124,7 +127,8 @@ def test_a_company_whose_country_cannot_be_told_is_kept_and_noted():
 
 
 def test_the_link_accepts_and_merges_include_countries():
-    base = {"config_version": "1.0", "search": {"query_suffix": ""}, "exclude_countries": ["Canada"]}
+    search = {"query_suffix": ""}
+    base = {"config_version": "1.0", "search": search, "exclude_countries": ["Canada"]}
     overlay = {"config_version": "1.0", "include_countries": ["Germany", "Austria"]}
     campaign_link.check_overlay(overlay, base)
     merged = campaign_link.merge_overlay(base, overlay)

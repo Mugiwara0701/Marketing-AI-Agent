@@ -528,7 +528,15 @@ class SqliteRepository:
         self.db.execute(
             "update emails set status=?, sent_at=?, message_id=?, provider_id=?, mailbox=?, updated_at=? "
             "where id=? and status='sending'",
-            ("test_sent" if test_redirect else "sent", now, message_id, provider_id, mailbox, now, email_id),
+            (
+                "test_sent" if test_redirect else "sent",
+                now,
+                message_id,
+                provider_id,
+                mailbox,
+                now,
+                email_id,
+            ),
         )
         if test_redirect:  # the real contact never got it: the lead stays APPROVED
             return

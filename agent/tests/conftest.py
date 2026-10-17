@@ -40,4 +40,3 @@ def _no_real_site_checks(request, monkeypatch):
         return True
 
     monkeypatch.setattr(contacts, "mail_domain_ok", deliverable)
-
