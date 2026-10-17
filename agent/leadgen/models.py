@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field
 class LeadStatus(StrEnum):
     DISCOVERED = "DISCOVERED"  # a company was identified from a page; not judged yet
     QUALIFIED = "QUALIFIED"  # the evidence says it may buy our engineering services
+    NEEDS_CONTACT = (
+        "NEEDS_CONTACT"  # qualified, but no contact found: a person adds an email on the dashboard
+    )
     CONTACT_FOUND = "CONTACT_FOUND"  # a public business contact is known
     EMAIL_DRAFTED = "EMAIL_DRAFTED"  # an intro email is drafted; no human has seen it yet
     PENDING_APPROVAL = "PENDING_APPROVAL"  # the draft was put in front of a human (Slack)
@@ -26,7 +29,10 @@ class LeadStatus(StrEnum):
 # Allowed transitions. Anything else is a bug and raises InvalidTransitionError.
 TRANSITIONS: dict[LeadStatus, frozenset[LeadStatus]] = {
     LeadStatus.DISCOVERED: frozenset({LeadStatus.QUALIFIED, LeadStatus.REJECTED}),
-    LeadStatus.QUALIFIED: frozenset({LeadStatus.CONTACT_FOUND, LeadStatus.REJECTED}),
+    LeadStatus.QUALIFIED: frozenset(
+        {LeadStatus.CONTACT_FOUND, LeadStatus.NEEDS_CONTACT, LeadStatus.REJECTED}
+    ),
+    LeadStatus.NEEDS_CONTACT: frozenset({LeadStatus.CONTACT_FOUND, LeadStatus.REJECTED}),
     LeadStatus.CONTACT_FOUND: frozenset({LeadStatus.EMAIL_DRAFTED, LeadStatus.REJECTED}),
     LeadStatus.EMAIL_DRAFTED: frozenset(
         {LeadStatus.PENDING_APPROVAL, LeadStatus.APPROVED, LeadStatus.REJECTED}
@@ -88,6 +94,10 @@ class Evidence(BaseModel):
     source: Literal["llm", "rule", "contact"] = "rule"
 
 
+# contacts.source_url of an address a person typed on the dashboard (migration 0013, submit_manual_contact()).
+MANUAL_SOURCE = "manual:dashboard"
+
+
 class Contact(BaseModel):
     name: str = ""
     role: str = ""
@@ -99,6 +109,11 @@ class Contact(BaseModel):
     confidence: float = 0.0
     rank: int = 99  # role priority: 0 = CTO ... lower is better (see contacts.ROLE_PRIORITY)
     id: str | None = None
+
+    @property
+    def manual(self) -> bool:
+        """Typed by a person on the dashboard, not read from the company's site."""
+        return self.source == MANUAL_SOURCE
 
 
 class ScoreCard(BaseModel):

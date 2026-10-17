@@ -39,6 +39,7 @@ async def draft_followup(context: str) -> tuple[FollowUp, list[str]]:
         validate=_validate,
         temperature=0.5,
         max_tokens=400,
+        reasoning_effort="none",  # a thinking model otherwise spends the whole budget before the JSON
     )
     parsed = completion.parsed
     if not isinstance(parsed, FollowUp):

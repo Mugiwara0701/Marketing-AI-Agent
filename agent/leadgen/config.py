@@ -32,7 +32,11 @@ class LeadgenConfig:
 
 def load(path: str | None = None) -> LeadgenConfig:
     p = Path(path or env("LEADGEN_CONFIG", "config/leadgen.yaml") or "config/leadgen.yaml")
-    raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return from_raw(yaml.safe_load(p.read_text(encoding="utf-8")) or {})
+
+
+def from_raw(raw: dict[str, Any]) -> LeadgenConfig:
+    """The same config from an already parsed mapping (the base with a campaign merged in, see agent/campaign_link.py)."""
     return LeadgenConfig(
         raw=raw,
         search=raw.get("search") or {},

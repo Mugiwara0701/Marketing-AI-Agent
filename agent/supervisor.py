@@ -8,6 +8,8 @@ While it is running:
              seconds of Start), then follow-ups, blog (agent.run.daily_run, own time budget). Stop cancels the pass.
     sender   every SEND_EVERY_SECONDS (20): send what a person approved in Slack. Only approved emails (the gate in
              agent/leadgen/sender.py); nothing at all while EMAIL_SENDING_ENABLED is not true.
+    manual   every MANUAL_EVERY_SECONDS (30): a contact a person added on the dashboard for a lead the agent found no
+             contact for: draft the email and post it to Slack for approval (agent.leadgen.service.manual_contacts).
     inbox    every INBOX_EVERY_MINUTES (10): poll Gmail for replies and bounces, classify replies and draft answers
              (posted to Slack for approval like everything else).
 
@@ -24,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from agentkit.config import env
 from agentkit.log import get_logger
 
-from . import control, mailer
+from . import campaign_link, control, mailer
 
 log = get_logger("agent.supervisor")
 
@@ -34,6 +36,35 @@ def _seconds(name: str, default: float) -> float:
         return float(env(name, str(default)) or default)
     except ValueError:
         return default
+
+
+# What a repeated failure of a background job means to the Campaign Agent: (code, dedupe key, message). Fixed texts only.
+_BLOCKERS = {
+    "inbox": ("MA_INBOX_FAILED", "inbox", "The inbox could not be read"),
+    "sender": ("MA_SEND_FAILED", "send", "Approved emails could not be sent"),
+}
+_GMAIL_AUTH = (
+    "MA_GMAIL_AUTH",
+    "gmail-auth",
+    "The Gmail login expired: someone must log in again on the Marketing Agent machine",
+)
+
+
+def _report_failure(name: str, exc: BaseException) -> None:
+    code, key, message = (
+        _GMAIL_AUTH
+        if type(exc).__name__ == "GmailAuthError"
+        else _BLOCKERS.get(name, (None, None, None))
+    )
+    if code and message:
+        campaign_link.emit("blocker", "error", code, message, dedupe_key=key)
+
+
+def _report_recovered(name: str) -> None:
+    for code, key, _ in ([_GMAIL_AUTH] if name == "inbox" else []) + (
+        [_BLOCKERS[name]] if name in _BLOCKERS else []
+    ):
+        campaign_link.emit("resolved", "info", code, "Working again", dedupe_key=key)
 
 
 async def _loop(
@@ -46,6 +77,9 @@ async def _loop(
     """Run `job` every `every` seconds until `stop`, skipping turns while not `active()`. Errors are logged with
     backoff (never a tight crash loop)."""
     failures = 0
+    reported = (
+        False  # a restart forgets earlier failures: the first good run says "working again" once
+    )
     while not stop.is_set():
         if not active():
             failures = 0
@@ -54,14 +88,17 @@ async def _loop(
             continue
         try:
             result = await job()
-            failures = 0
+            if failures or not reported:
+                _report_recovered(name)
+            failures, reported = 0, True
             if result:
                 log.info(f"{name} done", extra={"ctx": {"result": result}})
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             failures += 1
             log.exception(f"{name} failed", extra={"ctx": {"in_a_row": failures}})
+            _report_failure(name, exc)
         wait = every * min(2 ** max(failures - 1, 0), 30) if failures else every
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=wait)
@@ -78,6 +115,12 @@ async def send_once() -> dict | None:
         if stats.get("sent") or stats.get("failed") or stats.get("blocked") or stats.get("skipped")
         else None
     )
+
+
+async def manual_once() -> dict | None:
+    from .leadgen import service  # noqa: PLC0415
+
+    return await service.manual_contacts() or None
 
 
 async def inbox_once() -> dict | None:
@@ -99,6 +142,7 @@ async def start() -> int:
             loop.add_signal_handler(sig, stop.set)
     send_every = _seconds("SEND_EVERY_SECONDS", 20)
     inbox_every = _seconds("INBOX_EVERY_MINUTES", 10) * 60
+    manual_every = _seconds("MANUAL_EVERY_SECONDS", 30)
     pipeline, poll_every = control.from_env()
     store = control.PostgresControl()
     log.info("Agent service started", extra={"ctx": {
@@ -112,9 +156,26 @@ async def start() -> int:
             _loop("sender", send_every, send_once, stop, is_running), name="sender"
         ),
         asyncio.create_task(
+            _loop("manual", manual_every, manual_once, stop, is_running), name="manual"
+        ),
+        asyncio.create_task(
             _loop("inbox", inbox_every, inbox_once, stop, is_running), name="inbox"
         ),
     ]
+    if (
+        campaign_link.link_config() is not None
+    ):  # the direct link to the Campaign Agent (off unless configured)
+        tasks.append(
+            asyncio.create_task(campaign_link.run_sender(stop), name="campaign-link-events")
+        )
+        from .leadgen import config as leadgen_config  # noqa: PLC0415
+
+        tasks.append(  # picks a new live campaign up in seconds, even while the pipeline is stopped
+            asyncio.create_task(
+                campaign_link.run_watcher(stop, lambda: leadgen_config.load().raw),
+                name="campaign-link-watch",
+            )
+        )
     await stop.wait()
     log.info(
         "Agent service stopping",

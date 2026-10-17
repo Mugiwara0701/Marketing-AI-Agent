@@ -437,3 +437,26 @@ def test_screen_form_top_labels_and_bottom_button_are_judged_together():
     )
     assert intent.CONTACT_TITLE.search("Contact us - L4B Software")
     assert not intent.CONTACT_TITLE.search("Embedded Linux BSP - Acme")
+
+
+def test_a_window_lost_while_reading_a_page_reopens_chrome_and_moves_on():
+    from agent.gui.desktop import DesktopError
+
+    class LostWindowDesk:
+        recovered = 0
+
+        async def navigate(self, url):
+            return None
+
+        async def title(self):
+            raise DesktopError("Chrome has no window: nothing typed")
+
+        async def recover(self):
+            self.recovered += 1
+
+    desk = LostWindowDesk()
+    b = DesktopBrowser(Guard(), ["default"], 30, desk=desk)  # type: ignore[arg-type]
+    assert (
+        asyncio.run(b.open_url("https://acme-ev.com/")) is None
+    )  # not an error that ends the lead search
+    assert desk.recovered == 1

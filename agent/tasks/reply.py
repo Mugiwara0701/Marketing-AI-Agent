@@ -52,6 +52,7 @@ async def classify_and_draft(context: str) -> tuple[ReplyResult, list[str]]:
         validate=_validate,
         temperature=0.3,
         max_tokens=600,
+        reasoning_effort="none",  # a thinking model otherwise spends the whole budget before the JSON
     )
     parsed = completion.parsed
     if not isinstance(parsed, ReplyResult):
