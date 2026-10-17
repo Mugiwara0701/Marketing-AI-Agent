@@ -237,6 +237,33 @@ def test_an_approval_for_one_draft_cannot_authorize_another(repo):
     assert asyncio.run(repo.get_email(b)).status == "approved"  # never claimed
 
 
+def _shown(repo, eid):
+    from agent.leadgen.repository import content_sha256
+
+    e = asyncio.run(repo.get_email(eid))
+    return content_sha256(e.to, e.subject, e.body)
+
+
+def test_a_draft_changed_after_its_card_was_posted_cannot_be_approved(repo):
+    lid, eid = _lead_with_draft(repo)
+    asyncio.run(repo.open_approval(eid, "#c", _shown(repo, eid)))  # the card shows this text
+    asyncio.run(repo.set_status(lid, LeadStatus.PENDING_APPROVAL))
+    repo.db.execute("update emails set body='not what the card showed' where id=?", (eid,))
+    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "changed"
+    assert asyncio.run(repo.get_email(eid)).status == "drafted"  # nothing decided
+    assert asyncio.run(repo.get_lead(lid)).status == LeadStatus.EMAIL_DRAFTED  # posted again
+    t = RecordingTransport()
+    assert _send(repo, t)["sent"] == 0 and t.sent == []
+    asyncio.run(repo.open_approval(eid, "#c", _shown(repo, eid)))  # the new card shows the new text
+    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "approved"
+
+
+def test_the_shown_text_unchanged_is_approved_as_before(repo):
+    _lid, eid = _lead_with_draft(repo)
+    asyncio.run(repo.open_approval(eid, "#c", _shown(repo, eid)))
+    assert asyncio.run(approval.decide(repo, eid, True, "slack:U1")) == "approved"
+
+
 def test_a_changed_recipient_after_approval_is_not_sent(repo):
     _lid, eid = _lead_with_draft(repo)
     asyncio.run(approval.decide(repo, eid, True, "x"))

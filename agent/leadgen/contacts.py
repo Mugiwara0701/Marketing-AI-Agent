@@ -20,6 +20,7 @@ from . import identity, intent
 from .browser import Browser
 from .config import LeadgenConfig
 from .models import Contact, Page
+from .roles import preferred_rank
 
 log = get_logger("agent.leadgen.contacts")
 
@@ -48,6 +49,12 @@ _MAILBOX_RANK = {"engineering": 9, "business": 9, "partner": 9, "sales": 10, "co
 _ROLE_WORDS = re.compile(
     r"\b(cto|ceo|founder|vp|vice president|head of|director|manager|chief)\b", re.I
 )
+
+
+def _order(c: Contact, cfg: LeadgenConfig) -> int:
+    """Where a contact goes in the list: the campaign's preferred roles first, then this agent's own order."""
+    order = preferred_rank(c.rank, cfg.preferred_roles)
+    return c.rank if order is None else order
 
 
 def role_rank(role: str) -> int | None:
@@ -274,7 +281,8 @@ async def discover(
             -best[c.email].confidence,
         ):
             best[c.email] = c
-    found.contacts = sorted(best.values(), key=lambda c: (c.rank, -c.confidence))
+    # The campaign's preferred roles first, in its order; the rank itself is kept (scoring reads it).
+    found.contacts = sorted(best.values(), key=lambda c: (_order(c, cfg), -c.confidence))
     log.info(
         "Contact search done",
         extra={"ctx": {"domain": domain, "pages": len(pages), "contacts": len(found.contacts),

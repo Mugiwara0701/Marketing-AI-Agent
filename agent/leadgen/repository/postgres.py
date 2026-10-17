@@ -294,11 +294,17 @@ class PostgresRepository:
 
     # --- approval ----------------------------------------------------------------------------------------------
 
-    async def open_approval(self, email_id: str, channel: str) -> None:
+    async def open_approval(
+        self, email_id: str, channel: str, shown_sha256: str | None = None
+    ) -> None:
+        # shown_sha256: what the card shows now (a re-post shows the draft as it is now). decide_email() refuses a
+        # decision when the draft no longer matches it (migration 0016).
         await db.execute(
-            """insert into approvals (kind, ref_id, status, slack_channel) values ('email', $1::uuid, 'pending', $2)
-               on conflict (kind, ref_id) where status = 'pending' do nothing""",
-            email_id, channel,
+            """insert into approvals (kind, ref_id, status, slack_channel, shown_sha256)
+               values ('email', $1::uuid, 'pending', $2, $3)
+               on conflict (kind, ref_id) where status = 'pending'
+               do update set shown_sha256 = coalesce(excluded.shown_sha256, approvals.shown_sha256)""",
+            email_id, channel, shown_sha256,
         )  # fmt: skip
 
     async def set_approval_message(self, email_id: str, channel: str, message_id: str) -> None:

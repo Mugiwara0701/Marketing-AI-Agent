@@ -100,6 +100,7 @@ jobs:
       - run: deno fmt --check
       - run: deno lint
       - run: deno check supabase/functions/*/index.ts
+      - run: deno test supabase/functions
 
   markdown:
     name: markdown (markdownlint)

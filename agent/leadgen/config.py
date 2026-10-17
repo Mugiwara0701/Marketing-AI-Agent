@@ -23,6 +23,8 @@ class LeadgenConfig:
     exclude_tlds: list[str] = field(default_factory=list)
     # set by a campaign: only companies in these countries
     include_countries: list[str] = field(default_factory=list)
+    # set by a campaign: people in these roles first, in this order (contacts.PREFERRED_ROLES names)
+    preferred_roles: list[str] = field(default_factory=list)
     desktop_engines: list[str] = field(default_factory=list)
 
     def q(self, key: str, default: Any) -> Any:
@@ -50,6 +52,7 @@ def from_raw(raw: dict[str, Any]) -> LeadgenConfig:
         exclude_countries=list(raw.get("exclude_countries") or []),
         exclude_tlds=list(raw.get("exclude_tlds") or []),
         include_countries=list(raw.get("include_countries") or []),
+        preferred_roles=list(raw.get("preferred_roles") or []),
         desktop_engines=list(raw.get("desktop_engines") or ["default"]),
     )
 

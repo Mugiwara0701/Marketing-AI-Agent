@@ -383,3 +383,27 @@ def test_emails_wait_while_their_campaign_is_not_live_in_postgres(pg, monkeypatc
         assert status and status["status"] == "test_sent"
 
     _run(go())
+
+
+def test_a_draft_changed_after_its_card_was_posted_is_not_decided_in_postgres(pg):
+    """Migration 0016: decide_email() refuses when the draft is not what the card showed."""
+    from agent.leadgen.repository import content_sha256
+
+    async def go():
+        lid = await pg.insert_lead(
+            Lead(company_name="Shown", company_website="shown.io"), source="t"
+        )
+        for s in (LeadStatus.QUALIFIED, LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED):
+            await pg.set_status(lid, s)
+        cid = await pg.save_contact(lid, Contact(email="a@shown.io", source="u"))
+        eid = await pg.save_email_draft(lid, cid, "Hi", "Body", None)
+        await pg.open_approval(eid, "#c", content_sha256("a@shown.io", "Hi", "Body"))
+        await pg.set_status(lid, LeadStatus.PENDING_APPROVAL)
+        await db.execute("update emails set body='Other' where id=$1::uuid", eid)
+        assert await pg.decide_email(eid, True, "slack:U1") == "changed"
+        assert (await pg.get_email(eid)).status == "drafted"
+        assert (await pg.get_lead(lid)).status == LeadStatus.EMAIL_DRAFTED
+        await pg.open_approval(eid, "#c", content_sha256("a@shown.io", "Hi", "Other"))
+        assert await pg.decide_email(eid, True, "slack:U1") == "approved"
+
+    _run(go())
