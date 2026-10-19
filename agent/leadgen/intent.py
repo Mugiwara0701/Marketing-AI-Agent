@@ -102,6 +102,12 @@ _PROVIDER = [re.compile(p, re.I) for p in (
     r"\bhire me\b", r"\bmy (services|portfolio|skills|experience)\b",
     r"\bi am an? (experienced |senior |certified |freelance )*(\w+ )?(developer|engineer|consultant|freelancer)\b",
 )]  # fmt: skip
+# A parts maker that also sells engineering on top of its parts (ODM, BSP work, design services): not a pure supplier.
+_SERVICE_OFFER = [re.compile(p, re.I) for p in (
+    r"\bodm\b", r"\bdesign services\b", r"\b(bsp|board support package|android|linux|firmware) "
+    r"(development|porting|customi[sz]ation|services)\b", r"\bcarrier board (design|review)\b",
+    r"\bcustom (hardware|board|carrier|product) design\b",
+)]  # fmt: skip
 # A result title that sells development work ("Kiosk Software Development - SoftTeco"): a competitor. Job titles
 # ("Embedded Software Development Engineer") are not caught.
 SERVICES_TITLE = re.compile(
@@ -322,6 +328,9 @@ class PageIntent:
     distributor: int = 0
     asks: int = 0  # explicit requests for outside work (looking for a developer, RFQ, budget...)
     provider: int = 0  # wording of a company that sells engineering services
+    service_offer: int = (
+        0  # ODM / BSP work / design-service wording (a parts maker that also sells engineering)
+    )
     project_request: int = (
         0  # asks, plus partner/outsourcing words when the page is not a services company
     )
@@ -377,6 +386,7 @@ def analyze(url: str, title: str, text: str) -> PageIntent:
         url=url,
         asks=asks,
         provider=provider,
+        service_offer=_count(_SERVICE_OFFER, body),
         tech={k: 1 for k, p in _TECH.items() if p.search(body)},
         domains={k: 1 for k, p in _DOMAINS.items() if p.search(body)},
         ecommerce=_count(_ECOMMERCE, body),
