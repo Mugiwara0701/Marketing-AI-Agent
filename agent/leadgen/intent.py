@@ -524,13 +524,65 @@ def place(host: str, location: str) -> tuple[str | None, str]:
     return None, ""
 
 
+_EUROPE = (
+    "united kingdom", "germany", "france", "italy", "spain", "netherlands", "belgium", "switzerland", "austria",
+    "sweden", "norway", "denmark", "finland", "poland", "czech republic", "ireland", "portugal", "hungary", "romania",
+    "ukraine",
+)  # fmt: skip
+_EU = tuple(c for c in _EUROPE if c not in ("united kingdom", "switzerland", "norway", "ukraine"))
+_ASIA = (
+    "india", "china", "japan", "south korea", "taiwan", "singapore", "malaysia", "indonesia", "thailand", "vietnam",
+    "philippines",
+)  # fmt: skip
+# Region -> its countries in the table above. A campaign may say "Europe" or "DACH" instead of naming countries.
+_REGIONS: dict[str, tuple[str, ...]] = {
+    "europe": _EUROPE,
+    "eu": _EU,
+    "european union": _EU,
+    "dach": ("germany", "austria", "switzerland"),
+    "benelux": ("belgium", "netherlands"),
+    "nordics": ("sweden", "norway", "denmark", "finland"),
+    "nordic countries": ("sweden", "norway", "denmark", "finland"),
+    "scandinavia": ("sweden", "norway", "denmark"),
+    "north america": ("united states", "canada", "mexico"),
+    "latin america": ("mexico", "brazil"),
+    "middle east": ("israel", "turkey", "united arab emirates", "saudi arabia"),
+    "gcc": ("united arab emirates", "saudi arabia"),
+    "asia": _ASIA,
+    "apac": (*_ASIA, "australia", "new zealand"),
+    "asia pacific": (*_ASIA, "australia", "new zealand"),
+    "anz": ("australia", "new zealand"),
+}  # fmt: skip
+
+
+def _wanted(include: list[str]) -> tuple[set[str], set[str]]:
+    """The campaign's countries as table names, and the names it gave that are neither a country nor a region in the
+    table (a state, a city, a misspelling). Those cannot be compared with where a company is."""
+    wanted: set[str] = set()
+    unknown: set[str] = set()
+    for name in include:
+        n = " ".join((name or "").casefold().split()).removeprefix("the ")
+        if country := country_of_name(n):
+            wanted.add(country)
+        elif n in _REGIONS:
+            wanted.update(_REGIONS[n])
+        elif n:
+            unknown.add(n)
+    return wanted, unknown
+
+
+def _named_in(location: str, wanted: set[str], unknown: set[str]) -> bool:
+    return any(has_word(location or "", w) for w in wanted | unknown)
+
+
 def country_outside(host: str, location: str, include: list[str]) -> str:
     """Why a company is outside the campaign's countries; "" when it is inside, when the campaign sets no countries, or
-    when its country cannot be told (it is then kept: see `country_unknown`)."""
+    when that cannot be told (it is then kept: see `country_unknown`). A region ("Europe", "DACH") stands for its
+    countries. A place the table does not know ("Bavaria") never rejects a company: it cannot be compared."""
     if not include:
         return ""
-    wanted = {country_of_name(c) or " ".join(c.casefold().split()) for c in include}
-    if any(has_word(location or "", w) for w in wanted):
+    wanted, unknown = _wanted(include)
+    if unknown or _named_in(location, wanted, unknown):
         return ""
     country, how = place(host, location)
     if country is None or country in wanted:
@@ -539,8 +591,11 @@ def country_outside(host: str, location: str, include: list[str]) -> str:
 
 
 def country_unknown(host: str, location: str, include: list[str]) -> bool:
-    """The campaign sets countries but this company's country cannot be told from its page or its site."""
+    """The campaign sets countries but it cannot be told whether this company is in one of them."""
     if not include:
         return False
-    wanted = {country_of_name(c) or " ".join(c.casefold().split()) for c in include}
-    return not any(has_word(location or "", w) for w in wanted) and place(host, location)[0] is None
+    wanted, unknown = _wanted(include)
+    if _named_in(location, wanted, unknown):
+        return False
+    country = place(host, location)[0]
+    return country is None or (bool(unknown) and country not in wanted)

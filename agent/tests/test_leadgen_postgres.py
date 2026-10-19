@@ -407,3 +407,24 @@ def test_a_draft_changed_after_its_card_was_posted_is_not_decided_in_postgres(pg
         assert await pg.decide_email(eid, True, "slack:U1") == "approved"
 
     _run(go())
+
+
+def test_leads_are_scoped_to_a_campaign_in_postgres(pg):
+    live, other = "11111111-aaaa-4aaa-8aaa-111111111111", "22222222-bbbb-4bbb-8bbb-222222222222"
+
+    async def go():
+        mine_lead = Lead(company_name="Mine Co", company_website="mineco.io")
+        theirs_lead = Lead(company_name="Theirs Co", company_website="theirsco.io")
+        mine = await pg.insert_lead(mine_lead, source="t", campaign=(live, 1))
+        theirs = await pg.insert_lead(theirs_lead, source="t", campaign=(other, 1))
+        for lid in (mine, theirs):
+            await pg.set_status(lid, LeadStatus.QUALIFIED)
+        assert (await pg.get_lead(mine)).source_campaign_id == live  # type: ignore[union-attr]
+        retry = await pg.leads_needing_contact(3, 50, campaign=live)
+        qualified = await pg.leads_with_status([LeadStatus.QUALIFIED], 50, campaign=live)
+        for found in (retry, qualified):
+            ids = {x.lead_id for x in found}
+            assert mine in ids and theirs not in ids
+        assert theirs in {x.lead_id for x in await pg.leads_needing_contact(3, 50)}
+
+    _run(go())

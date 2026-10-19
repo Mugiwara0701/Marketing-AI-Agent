@@ -18,6 +18,9 @@ from ..models import (
 )
 from . import NO_LIVE_CAMPAIGN, content_sha256
 
+# A lead of the given campaign, or one found before campaigns were tracked; no campaign given: any lead.
+_CAMPAIGN = "(? is null or source_campaign_id is null or source_campaign_id = ?)"
+
 _SCHEMA = """
 create table if not exists companies (
   id text primary key, name text not null, domain text not null unique, name_key text,
@@ -140,6 +143,7 @@ class SqliteRepository:
             qualification_notes=json.loads(r["notes"] or "[]"),
             status=LeadStatus(r["lead_status"]),
             created_at=_dt(r["created_at"]), updated_at=_dt(r["updated_at"]),
+            source_campaign_id=r["source_campaign_id"],
         )  # fmt: skip
         contacts = self.db.execute(
             "select * from contacts where company_id=? order by rank, confidence desc", (r["id"],)
@@ -223,11 +227,14 @@ class SqliteRepository:
         )
         return cur.rowcount == 1
 
-    async def leads_with_status(self, statuses: list[LeadStatus], limit: int = 50) -> list[Lead]:
+    async def leads_with_status(
+        self, statuses: list[LeadStatus], limit: int = 50, *, campaign: str | None = None
+    ) -> list[Lead]:
         marks = ",".join("?" * len(statuses))
         rows = self.db.execute(
-            f"select * from companies where lead_status in ({marks}) order by updated_at limit ?",
-            (*[s.value for s in statuses], limit),
+            f"select * from companies where lead_status in ({marks}) and {_CAMPAIGN} "
+            "order by updated_at limit ?",
+            (*[s.value for s in statuses], campaign, campaign, limit),
         ).fetchall()
         return [self._lead(r) for r in rows]
 
@@ -255,11 +262,13 @@ class SqliteRepository:
         )  # fmt: skip
         return int(row["contact_attempts"]) if row else 0
 
-    async def leads_needing_contact(self, max_attempts: int, limit: int) -> list[Lead]:
+    async def leads_needing_contact(
+        self, max_attempts: int, limit: int, *, campaign: str | None = None
+    ) -> list[Lead]:
         rows = self.db.execute(
             "select * from companies where lead_status='QUALIFIED' and coalesce(contact_attempts, 0) < ? "
-            "order by updated_at limit ?",
-            (max_attempts, limit),
+            f"and {_CAMPAIGN} order by updated_at limit ?",
+            (max_attempts, campaign, campaign, limit),
         ).fetchall()
         return [self._lead(r) for r in rows]
 

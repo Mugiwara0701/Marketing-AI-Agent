@@ -203,7 +203,7 @@ async def qualify_page(  # noqa: PLR0911, PLR0912 - one rule per branch, each wi
         return v
     if intent.country_unknown(website, a.location, cfg.include_countries):
         v.notes.append(
-            f"country not known from the page or the site; kept (the campaign wants {', '.join(cfg.include_countries)})"
+            f"could not tell from the page or the site whether it is in {', '.join(cfg.include_countries)}; kept"
         )
 
     verified = [q for q in a.evidence if quote_on_page(q.quote, page.text)]

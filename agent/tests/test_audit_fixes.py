@@ -126,6 +126,27 @@ def test_a_company_whose_country_cannot_be_told_is_kept_and_noted():
     assert not intent.country_unknown("acme.io", "", [])
 
 
+def test_a_region_stands_for_its_countries():
+    """'Companies in Europe' or 'in the DACH region': a company placed in one of its countries is kept."""
+    from agent.leadgen import intent
+
+    assert intent.country_outside("acme.at", "", ["DACH"]) == ""
+    assert intent.country_outside("acme.io", "Lyon, France", ["Europe"]) == ""
+    assert intent.country_outside("acme.se", "", ["the Nordics"]) == ""
+    assert intent.country_outside("acme.fr", "", ["DACH"])  # France is not in DACH
+    assert intent.country_outside("acme.in", "Pune, India", ["Europe"])
+    assert not intent.country_unknown("acme.at", "", ["DACH"])
+
+
+def test_a_place_the_agent_does_not_know_never_rejects_a_company():
+    """'Bavaria' is not a country or a region in the table: the company is kept, with a note, not rejected."""
+    from agent.leadgen import intent
+
+    assert intent.country_outside("acme.de", "Munich, Germany", ["Bavaria"]) == ""
+    assert intent.country_unknown("acme.de", "Munich, Germany", ["Bavaria"])
+    assert not intent.country_unknown("acme.io", "Munich, Bavaria", ["Bavaria"])
+
+
 def test_the_link_accepts_and_merges_include_countries():
     search = {"query_suffix": ""}
     base = {"config_version": "1.0", "search": search, "exclude_countries": ["Canada"]}

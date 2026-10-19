@@ -80,6 +80,10 @@ class PostgresRepository:
           where c.company_id = co.id and e.step = 1 and e.campaign_id =
                 (select id from campaigns where name = 'daily-outreach') limit 1) as intro_id
         from companies co"""
+    # A lead of the given campaign, or one found before campaigns were tracked; no campaign given: any lead.
+    _CAMPAIGN = (
+        "(${n}::uuid is null or co.source_campaign_id is null or co.source_campaign_id=${n}::uuid)"
+    )
 
     async def _lead(self, r) -> Lead:
         lead = Lead(
@@ -94,6 +98,7 @@ class PostgresRepository:
             source_urls=list(r["source_urls"] or []) or ([r["source_url"]] if r["source_url"] else []),
             qualification_notes=list(_json(r["qualification_notes"])),
             status=LeadStatus(r["lead_status"]), created_at=r["created_at"], updated_at=r["updated_at"],
+            source_campaign_id=str(r["source_campaign_id"]) if r.get("source_campaign_id") else None,
         )  # fmt: skip
         if r["best_contact"]:
             c: dict = (
@@ -175,10 +180,13 @@ class PostgresRepository:
         )  # fmt: skip
         return row is not None
 
-    async def leads_with_status(self, statuses: list[LeadStatus], limit: int = 50) -> list[Lead]:
+    async def leads_with_status(
+        self, statuses: list[LeadStatus], limit: int = 50, *, campaign: str | None = None
+    ) -> list[Lead]:
         rows = await db.fetch(
-            f"{self._LEAD_Q} where co.lead_status = any($1::text[]) order by co.updated_at limit $2",
-            [s.value for s in statuses], limit,
+            f"""{self._LEAD_Q} where co.lead_status = any($1::text[]) and {self._CAMPAIGN.format(n=3)}
+                 order by co.updated_at limit $2""",
+            [s.value for s in statuses], limit, campaign,
         )  # fmt: skip
         return [await self._lead(r) for r in rows]
 
@@ -208,11 +216,13 @@ class PostgresRepository:
         )
         return int(row["contact_attempts"]) if row else 0
 
-    async def leads_needing_contact(self, max_attempts: int, limit: int) -> list[Lead]:
+    async def leads_needing_contact(
+        self, max_attempts: int, limit: int, *, campaign: str | None = None
+    ) -> list[Lead]:
         rows = await db.fetch(
             f"""{self._LEAD_Q} where co.lead_status='QUALIFIED' and co.contact_attempts < $1
-                 order by co.updated_at limit $2""",
-            max_attempts, limit,
+                 and {self._CAMPAIGN.format(n=3)} order by co.updated_at limit $2""",
+            max_attempts, limit, campaign,
         )  # fmt: skip
         return [await self._lead(r) for r in rows]
 
