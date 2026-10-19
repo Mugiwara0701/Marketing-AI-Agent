@@ -675,3 +675,50 @@ def test_form_of_a_competitor_is_not_posted(tmp_path):
         form_url="https://rival.com/contact", competitor="engineering services firm"
     )
     assert _form_posts(repo, tmp_path, found) == []
+
+
+def test_a_pass_resumes_only_the_live_campaigns_leads():
+    """A half-done lead of another campaign is left alone: it would use up this run's draft budget and post an
+    approval that cannot be sent. Leads found before campaigns were tracked are still resumed."""
+    from agent.leadgen.models import Lead
+
+    repo = SqliteRepository(":memory:")
+
+    async def store(domain, campaign):
+        lid = await repo.insert_lead(
+            Lead(company_name=domain, company_website=domain, lead_score=70),
+            source="t", campaign=campaign,
+        )  # fmt: skip
+        await repo.set_status(lid, LeadStatus.QUALIFIED)
+        return lid
+
+    live = asyncio.run(store("live.com", ("camp-live", 1)))
+    old = asyncio.run(store("old.com", ("camp-old", 3)))
+    legacy = asyncio.run(store("legacy.com", None))
+    assert asyncio.run(repo.get_lead(live)).source_campaign_id == "camp-live"  # type: ignore[union-attr]
+
+    def ids(leads):
+        return {x.lead_id for x in leads}
+
+    scoped = asyncio.run(repo.leads_needing_contact(3, 10, campaign="camp-live"))
+    assert ids(scoped) == {live, legacy}
+    scoped = asyncio.run(repo.leads_with_status([LeadStatus.QUALIFIED], 10, campaign="camp-live"))
+    assert ids(scoped) == {live, legacy}
+    assert ids(asyncio.run(repo.leads_needing_contact(3, 10))) == {live, old, legacy}
+
+
+def test_a_campaign_with_other_countries_gets_its_own_searches():
+    """The query history is kept by what was typed (query + the campaign's suffix): a campaign that changes only its
+    countries is searched at once, not after repeat_after_days."""
+    repo = SqliteRepository(":memory:")
+    germany = cfg()
+    germany.search["query_suffix"] = "Germany"
+    first = asyncio.run(strategy.next_queries(repo, germany))
+    for q in first:
+        asyncio.run(repo.record_query(strategy.typed(q.text, germany), q.family, "e", 5, 1))
+    assert asyncio.run(strategy.next_queries(repo, germany)) != first  # the same ones wait
+    austria = cfg()
+    austria.search["query_suffix"] = "Austria"
+    again = asyncio.run(strategy.next_queries(repo, austria))
+    assert [q.text for q in again] == [q.text for q in first]
+    assert strategy.typed("android hmi", austria) == "android hmi Austria"

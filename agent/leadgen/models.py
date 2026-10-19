@@ -149,6 +149,8 @@ class Lead(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     lead_id: str | None = None
+    # The Campaign Agent campaign it was found for (None: found before campaigns were tracked)
+    source_campaign_id: str | None = None
 
     def add_evidence(self, items: list[Evidence]) -> None:
         """Merge evidence, one entry per (url, quote or reason)."""

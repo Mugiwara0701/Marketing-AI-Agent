@@ -131,8 +131,16 @@ class Pipeline:
             ([LeadStatus.CONTACT_FOUND, LeadStatus.EMAIL_DRAFTED], 50),
         )
         max_attempts = int(self.cfg.contacts.get("max_attempts", 3))
-        batches = [await self.repo.leads_with_status(statuses, limit) for statuses, limit in groups]
-        batches.append(await self.repo.leads_needing_contact(max_attempts, retry_contacts))
+        # Only the live campaign's leads (and those found before campaigns were tracked): another campaign's
+        # half-done leads would use up this run's draft budget and post approvals that cannot be sent.
+        cid = self.campaign[0] if self.campaign else None
+        batches = [
+            await self.repo.leads_with_status(statuses, limit, campaign=cid)
+            for statuses, limit in groups
+        ]
+        batches.append(
+            await self.repo.leads_needing_contact(max_attempts, retry_contacts, campaign=cid)
+        )
         for batch in batches:
             for lead in batch:
                 if self.stop_reason():
@@ -213,8 +221,7 @@ class Pipeline:
                                        self.cfg.exclude_companies) or None  # fmt: skip
 
     async def search(self, q: strategy.Query) -> None:  # noqa: PLR0912, PLR0915 - one loop, each refusal on its own
-        suffix = str(self.cfg.search.get("query_suffix") or "").strip()
-        text = f"{q.text} {suffix}".strip()
+        text = strategy.typed(q.text, self.cfg)
         try:
             results = await self.svc.browser.search(
                 text, int(self.cfg.search.get("results_per_query", 10))
@@ -290,7 +297,7 @@ class Pipeline:
                 self.stats.add("errors")
                 log.exception("Working on a page failed", extra={"ctx": {"url": page.url}})
         await self.repo.record_query(
-            q.text, q.family, results[0].engine if results else "", len(results), opened
+            text, q.family, results[0].engine if results else "", len(results), opened
         )
 
     async def feeds(self) -> None:

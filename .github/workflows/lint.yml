@@ -50,11 +50,12 @@ jobs:
         with: {python-version: "3.12", cache: pip}
       - run: pip install -e "libs/agentkit[dev]" mypy types-PyYAML
       # mypy's findings are also reported as annotations, so a failure can be read without the log.
-      - run: set -o pipefail; mypy libs/agentkit/agentkit eval/runner agent api --show-column-numbers --no-error-summary | tee mypy.txt
+      - run: set -o pipefail; mypy libs/agentkit/agentkit eval/runner agent api --show-column-numbers --no-error-summary 2>&1 | tee mypy.txt
       - name: Report mypy errors
         if: failure()
         run: >-
-          sed -nE 's/^([^:]+):([0-9]+):([0-9]+): error: (.*)$/::error file=\1,line=\2,col=\3::\4/p' mypy.txt
+          sed -nE 's/^([^:]+):([0-9]+):([0-9]+): error: (.*)$/::error file=\1,line=\2,col=\3::\4/p' mypy.txt;
+          grep -vE '^[^:]+:[0-9]+:[0-9]+: (error|note):' mypy.txt | head -n 20 | sed 's/^/::error title=mypy::/'
 
   sql:
     name: sql (sqlfluff)

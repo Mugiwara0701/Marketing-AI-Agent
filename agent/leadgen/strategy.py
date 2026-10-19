@@ -186,6 +186,12 @@ def generate(
         yield Query(text, it.family, it)
 
 
+def typed(text: str, cfg: LeadgenConfig) -> str:
+    """What goes into the search box: the query plus the campaign's suffix ("Germany Austria"). The query history is
+    kept by this text, so a campaign that changes only its countries gets its own searches, not a 14-day wait."""
+    return f"{text} {str(cfg.search.get('query_suffix') or '').strip()}".strip()
+
+
 async def next_queries(
     repo: Repository,
     cfg: LeadgenConfig,
@@ -209,7 +215,7 @@ async def next_queries(
         if key in seen:
             continue
         seen.add(key)
-        last = await repo.query_last_run(q.text)
+        last = await repo.query_last_run(typed(q.text, cfg))
         if last is not None and now - (last if last.tzinfo else last.replace(tzinfo=UTC)) < repeat:
             continue
         out.append(q)
