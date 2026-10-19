@@ -232,19 +232,20 @@ def _no_contact_pipeline(repo, tmp_path, form_url=None):
     return p
 
 
-def test_dead_site_is_retried_a_few_times_then_waits_for_a_contact(tmp_path):
+def test_dead_site_is_on_the_needs_contact_page_from_the_first_miss_and_retried_a_few_times(
+    tmp_path,
+):
     repo = SqliteRepository(":memory:")
     lid = _stored_qualified(repo)
     for run in range(1, 4):
+        # attempts 2 and 3 still run: the lead stays listed for a person and is retried by the agent
+        assert (run == 1) or [
+            x.lead_id for x in asyncio.run(repo.leads_needing_contact(3, 10))
+        ] == [lid]
         _run(_no_contact_pipeline(repo, tmp_path))
         lead = asyncio.run(repo.get_lead(lid))
-        assert lead and lead.status == (
-            LeadStatus.NEEDS_CONTACT if run == 3 else LeadStatus.QUALIFIED
-        )
-    assert (
-        "no contact after 3 attempts"
-        in repo.db.execute("select status_note from companies").fetchone()[0]
-    )
+        assert lead and lead.status == LeadStatus.NEEDS_CONTACT
+    assert "no contact found" in repo.db.execute("select status_note from companies").fetchone()[0]
     out = _run(_no_contact_pipeline(repo, tmp_path))  # a fourth run does not open it again
     assert out.get("resumed", 0) == 0
 
@@ -521,12 +522,12 @@ def _manual_calls(repo, tmp_path, runs, form_url=None):
     return calls
 
 
-def test_qualified_lead_without_contact_goes_to_manual_check_once_when_final(tmp_path):
+def test_qualified_lead_without_contact_goes_to_manual_check_once_at_the_first_miss(tmp_path):
     repo = SqliteRepository(":memory:")
     _stored_qualified(repo, "dead.example.com")
-    assert _manual_calls(repo, tmp_path, 2) == []  # attempts 1 and 2 may still find a contact
-    calls = _manual_calls(repo, tmp_path, 3)  # the third attempt is the last
+    calls = _manual_calls(repo, tmp_path, 1)
     assert len(calls) == 1 and calls[0][:2] == ("Dead Co", "dead.example.com")
+    assert _manual_calls(repo, tmp_path, 3) == []  # the retries do not post again
 
 
 def test_form_only_lead_goes_to_form_fill_once_not_manual_check(tmp_path):

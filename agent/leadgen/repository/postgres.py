@@ -220,7 +220,7 @@ class PostgresRepository:
         self, max_attempts: int, limit: int, *, campaign: str | None = None
     ) -> list[Lead]:
         rows = await db.fetch(
-            f"""{self._LEAD_Q} where co.lead_status='QUALIFIED' and co.contact_attempts < $1
+            f"""{self._LEAD_Q} where co.lead_status in ('QUALIFIED','NEEDS_CONTACT') and co.contact_attempts < $1
                  and {self._CAMPAIGN.format(n=3)} order by co.updated_at limit $2""",
             max_attempts, limit, campaign,
         )  # fmt: skip

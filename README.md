@@ -82,7 +82,7 @@ laptop `bash deploy/remote.sh pipeline start|stop|status`.
 `DISCOVERED -> QUALIFIED -> (NEEDS_CONTACT ->) CONTACT_FOUND -> EMAIL_DRAFTED -> PENDING_APPROVAL -> APPROVED -> SENT`, plus `REJECTED`
 and `FAILED` (`agent/leadgen/models.py`). Every state is stored (`companies.lead_status`), so a run that is stopped or
 crashes is resumed by the next one: leads stuck half-way are moved on first, pages and queries already done are not
-redone. A company that gives no contact after 3 attempts (`contacts.max_attempts`) becomes `NEEDS_CONTACT`: the dashboard lists it, a person types an email, and the agent then drafts the email and asks for approval in Slack (`manual` loop of `agent start`, every `MANUAL_EVERY_SECONDS`, default 30). It is never rejected for lack of a contact.
+redone. A company that gives no contact becomes `NEEDS_CONTACT` at the first miss (the agent still retries on later passes, up to `contacts.max_attempts` = 3 in all; a contact it finds moves the lead on): the dashboard lists it, `#manual-check` gets one message, a person types an email, and the agent then drafts the email and asks for approval in Slack (`manual` loop of `agent start`, every `MANUAL_EVERY_SECONDS`, default 30). It is never rejected for lack of a contact.
 
 ## Email safety
 
