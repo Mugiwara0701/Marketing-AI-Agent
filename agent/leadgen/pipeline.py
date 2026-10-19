@@ -475,7 +475,10 @@ class Pipeline:
             lead.status = new
             if not ok:
                 return
-        if lead.status == LeadStatus.QUALIFIED and not await self.contact(lead):
+        if lead.status in (
+            LeadStatus.QUALIFIED,
+            LeadStatus.NEEDS_CONTACT,
+        ) and not await self.contact(lead):
             return
         if lead.status == LeadStatus.CONTACT_FOUND:
             manual = bool(lead.contact and lead.contact.manual)
@@ -543,19 +546,20 @@ class Pipeline:
             self.stats.add("contact_not_found")
             log.info("Contact not found", extra={"ctx": {"lead_id": lead.lead_id, "why": reason, "attempt": attempts,
                                                          "form": bool(found.form_url)}})  # fmt: skip
-            # The last attempt (a contact form is retried too): a person takes it from here, once.
-            if attempts == max_attempts and not found.form_url:  # a form goes to #form-fill instead
-                await self._manual_check(lead, reason, found.form_url)
-            if (
-                attempts >= max_attempts
-            ):  # kept, not rejected: the dashboard lists it so a person can add an email
-                note = f"no contact after {attempts} attempts: {reason}"
-                await self.repo.set_status(lead.lead_id, LeadStatus.NEEDS_CONTACT, note=note)
+            # From the first miss the lead is on the dashboard's Needs contact page (a person can add an email
+            # there at once) and, without a contact form, in #manual-check. The agent keeps trying on later
+            # passes until max_attempts; a contact it finds, or one a person adds, moves the lead on.
+            if lead.status == LeadStatus.QUALIFIED and await self.repo.set_status(
+                lead.lead_id, LeadStatus.NEEDS_CONTACT, note=f"no contact found: {reason}"
+            ):
                 lead.status = LeadStatus.NEEDS_CONTACT
                 self.stats.add("needs_contact")
-                log.info(
-                    "Lead needs a contact", extra={"ctx": {"lead_id": lead.lead_id, "why": note}}
-                )
+                log.info("Lead needs a contact", extra={"ctx": {"lead_id": lead.lead_id, "why": reason}})  # fmt: skip
+                if not found.form_url:  # a form goes to #form-fill instead
+                    await self._manual_check(lead, reason, found.form_url)
+            if attempts >= max_attempts:
+                log.info("No more automatic contact attempts", extra={"ctx": {"lead_id": lead.lead_id,
+                                                                              "attempts": attempts}})  # fmt: skip
             return False
         for c in found.contacts[:3]:
             c.id = await self.repo.save_contact(lead.lead_id, c)
@@ -565,7 +569,8 @@ class Pipeline:
             lead.score = scoring.with_contact(lead.score, found.best)
             lead.lead_score = lead.score.total
         await self.repo.save_lead(lead)
-        await self.repo.set_status(lead.lead_id, LeadStatus.CONTACT_FOUND)
+        if not await self.repo.set_status(lead.lead_id, LeadStatus.CONTACT_FOUND):
+            return False  # a person added a contact on the dashboard first: that path takes the lead from here
         lead.status = LeadStatus.CONTACT_FOUND
         self.stats.add("contacts_found")
         log.info("Contact found", extra={"ctx": {"lead_id": lead.lead_id, "role": found.best.role,

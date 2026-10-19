@@ -266,7 +266,7 @@ class SqliteRepository:
         self, max_attempts: int, limit: int, *, campaign: str | None = None
     ) -> list[Lead]:
         rows = self.db.execute(
-            "select * from companies where lead_status='QUALIFIED' and coalesce(contact_attempts, 0) < ? "
+            "select * from companies where lead_status in ('QUALIFIED','NEEDS_CONTACT') and coalesce(contact_attempts, 0) < ? "
             f"and {_CAMPAIGN} order by updated_at limit ?",
             (max_attempts, campaign, campaign, limit),
         ).fetchall()
