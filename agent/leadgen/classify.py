@@ -5,7 +5,8 @@ firmware / application engineering. Technologies on a page (RFID, cameras, CAN, 
 the product, never a reason to target the companies that sell them. So the question asked here is not "is the page
 about our technology?" but "what does this company do?":
 
-    sells a component / module / board        HARDWARE_SUPPLIER     rejected
+    sells a component / module / board        HARDWARE_SUPPLIER     rejected, unless it also sells ODM / BSP /
+                                                                    design services (then a partner lead)
     builds a complete product or system       POTENTIAL_CUSTOMER    qualified (tier "potential")
       ... and shows an engineering need       POTENTIAL_CUSTOMER    qualified (tier "high")
     makes hardware, no sign of software work  HARDWARE_MANUFACTURER investigated (penalised, needs more evidence)
@@ -77,6 +78,19 @@ def _software_evidence(a: Assessment, pi: PageIntent) -> bool:
     return bool(pi.tech or a.engineering_needs or a.project_signal in NEED_SIGNALS)
 
 
+def _supplier(pi: PageIntent) -> Classification:
+    """A parts seller is rejected, unless it also sells ODM / BSP / design services: then it is a partner lead."""
+    if pi.service_offer >= 1:
+        return Classification(
+            ResultType.POTENTIAL_CUSTOMER,
+            "potential",
+            "sells modules and also ODM / BSP / design services (partner lead)",
+        )
+    return Classification(
+        ResultType.HARDWARE_SUPPLIER, "none", REJECT_REASON[ResultType.HARDWARE_SUPPLIER]
+    )
+
+
 def classify(a: Assessment, pi: PageIntent, *, accept_services: bool = False) -> Classification:  # noqa: PLR0911
     asks = a.project_signal in _ASK_SIGNALS and (pi.asks > 0 or a.page_type == "project_request")
     need = a.project_signal in NEED_SIGNALS
@@ -114,9 +128,7 @@ def classify(a: Assessment, pi: PageIntent, *, accept_services: bool = False) ->
             ResultType.JOB_POSTING, tier, "a job ad: the hiring company is the lead"
         )
     if a.company_role == "sells_components_or_modules" or a.sells_hardware_only:
-        return Classification(
-            ResultType.HARDWARE_SUPPLIER, "none", REJECT_REASON[ResultType.HARDWARE_SUPPLIER]
-        )
+        return _supplier(pi)
     if a.company_role == "builds_end_products" or a.builds_own_product:
         if _software_evidence(a, pi) or pi.hardware >= 3:
             tier = "high" if need else "potential"

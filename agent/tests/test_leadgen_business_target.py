@@ -84,6 +84,20 @@ def test_component_seller_is_rejected(tech, component, product):
     )
 
 
+def test_a_module_maker_that_also_sells_odm_and_bsp_services_is_not_a_pure_supplier():
+    reading = assessment(page_type="company_product_page", company_name="Kestrel", company_role="unknown",
+                         builds_own_product=False, sells_hardware_only=True, project_signal="product_development")  # fmt: skip
+    pi = intent.analyze(
+        "https://kestrel.example/",
+        "",
+        "Kestrel offers SOM, SBC and ODM solutions with BSP development.",
+    )
+    kind = classify.classify(reading, pi)
+    assert kind.type == ResultType.POTENTIAL_CUSTOMER and kind.proceed
+    plain = intent.analyze("https://kestrel.example/", "", "Kestrel sells SOM and SBC modules.")
+    assert classify.classify(reading, plain).type == ResultType.HARDWARE_SUPPLIER
+
+
 def _builder_page(tech: str, product: str, *, need: bool) -> Page:
     name, url = _co(tech)
     text = (f"{name} builds the {product}, a complete {tech} system running embedded Linux on an ARM board with a "
