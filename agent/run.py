@@ -26,6 +26,14 @@ async def _step(name: str, fn: Callable[[], Awaitable[dict]], seconds: float) ->
     except asyncio.CancelledError:  # stopped from the dashboard (or the service is stopping)
         await db.finish_run(run_id, "failed", None, "stopped")
         raise
+    except (
+        TimeoutError
+    ):  # the step used up its time: what it stored is kept and the next pass resumes from it
+        log.warning("step timed out", extra={"ctx": {"step": name, "seconds": round(seconds)}})
+        await db.finish_run(run_id, "failed", None, f"TimeoutError after {round(seconds)}s")
+        return {
+            "error": f"TimeoutError after {round(seconds / 60)} min, progress is saved and the next run continues"
+        }
     except Exception as exc:
         log.exception("step failed", extra={"ctx": {"step": name}})
         await db.finish_run(run_id, "failed", None, f"{type(exc).__name__}: {exc}"[:500])
@@ -34,6 +42,10 @@ async def _step(name: str, fn: Callable[[], Awaitable[dict]], seconds: float) ->
 
 
 FOLLOWUPS_MINUTES = 10
+# The lead search checks its deadline between items, but one item (a page read, a model call that may take up to
+# LLM_MIN_TIMEOUT = 420 s on the CPU) can still be running when the deadline passes. The step's hard limit is the
+# deadline plus this, so a lead that is half-way is finished instead of cut off.
+LEADS_GRACE_SECONDS = 15 * 60
 
 
 async def daily_run(
@@ -85,7 +97,7 @@ async def daily_run(
         out["leads"] = await step(
             "leads",
             lambda: leadgen.run_leads(dry_run=False, deadline=deadline),
-            max(budget, 60) + 120,
+            max(budget, 60) + LEADS_GRACE_SECONDS,
         )
 
     try:

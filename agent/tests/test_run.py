@@ -53,3 +53,17 @@ def test_dashboard_pass_starts_with_the_lead_search(monkeypatch):
     monkeypatch.setenv("EMAIL_SENDING_ENABLED", "true")
     out = asyncio.run(run.daily_run(force=True, leads_first=True, on_step=steps.append))
     assert order == ["leads", "followups", "blog"] and steps == order and list(out) == order
+
+
+def test_a_step_that_runs_out_of_time_reports_it_and_the_next_step_still_runs(monkeypatch):
+    async def none(*_a, **_k):
+        return None
+
+    async def slow():
+        await asyncio.sleep(5)
+        return {"processed": 1}
+
+    monkeypatch.setattr(run.db, "start_run", none)
+    monkeypatch.setattr(run.db, "finish_run", none)
+    out = asyncio.run(run._step("leads", slow, 0.01))
+    assert out["error"].startswith("TimeoutError") and "next run continues" in out["error"]
