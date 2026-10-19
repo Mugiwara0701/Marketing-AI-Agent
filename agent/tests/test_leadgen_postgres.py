@@ -419,7 +419,7 @@ def test_leads_are_scoped_to_a_campaign_in_postgres(pg):
         theirs = await pg.insert_lead(theirs_lead, source="t", campaign=(other, 1))
         for lid in (mine, theirs):
             await pg.set_status(lid, LeadStatus.QUALIFIED)
-        assert (await pg.get_lead(mine)).source_campaign_id == live  # type: ignore[union-attr]
+        assert (await pg.get_lead(mine)).source_campaign_id == live
         retry = await pg.leads_needing_contact(3, 50, campaign=live)
         qualified = await pg.leads_with_status([LeadStatus.QUALIFIED], 50, campaign=live)
         for found in (retry, qualified):
