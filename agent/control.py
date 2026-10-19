@@ -97,9 +97,7 @@ class Pipeline:
         while self.running:
             self.next_at, self.step, self.pass_started = None, None, _now()
             outcome: dict[str, Any] = {"started_at": _iso(self.pass_started)}
-            campaign_link.emit(
-                "info", "info", "MA_PASS_STARTED", "A pass started", pass_id=outcome["started_at"]
-            )
+            self._announce_pass(outcome["started_at"])
             try:
                 result = await run.daily_run(force=True, leads_first=True, on_step=self._on_step)
                 outcome |= {
@@ -117,6 +115,16 @@ class Pipeline:
             self.next_at = _now() + timedelta(seconds=self.rest_seconds)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), timeout=self.rest_seconds)
+
+    @staticmethod
+    def _announce_pass(pass_id: str) -> None:
+        """A new pass is the retry of the failed one: the dashboard's "needs a person" alert for that failure is closed
+        now instead of an hour later, when this pass ends. If this pass fails too, its end raises the alert again."""
+        campaign_link.emit("info", "info", "MA_PASS_STARTED", "A pass started", pass_id=pass_id)
+        campaign_link.emit(
+            "resolved", "info", "MA_PASS_FAILED", "A new pass started: the earlier failure is being retried",
+            pass_id=pass_id, dedupe_key="pass-failed",
+        )  # fmt: skip
 
     def _on_step(self, name: str) -> None:
         self.step = name
