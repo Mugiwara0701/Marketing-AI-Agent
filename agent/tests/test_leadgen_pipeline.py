@@ -744,3 +744,12 @@ def test_a_run_stops_when_it_has_found_its_leads(tmp_path):
     assert p.stop_reason() is None
     p.max_new, p.new_leads = 3, 3
     assert "3 new leads found" in (p.stop_reason() or "")
+
+
+def test_the_daily_limit_is_five_leads_unless_the_environment_says_otherwise(monkeypatch):
+    from agent.leadgen import pipeline
+
+    monkeypatch.delenv("MAX_NEW_LEADS_PER_DAY", raising=False)
+    assert pipeline.daily_leads_limit() == 5
+    monkeypatch.setenv("MAX_NEW_LEADS_PER_DAY", "8")
+    assert pipeline.daily_leads_limit() == 8
