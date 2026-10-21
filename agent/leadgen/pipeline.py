@@ -662,7 +662,13 @@ def today_start() -> datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
 
 
+DEFAULT_LEADS_PER_DAY = 5
+
+
+def daily_leads_limit() -> int:
+    return int(env("MAX_NEW_LEADS_PER_DAY", str(DEFAULT_LEADS_PER_DAY)) or DEFAULT_LEADS_PER_DAY)
+
+
 async def daily_leads_left(repo: Repository) -> int:
     """How many more leads may be found today: MAX_NEW_LEADS_PER_DAY minus the leads created since midnight."""
-    daily = int(env("MAX_NEW_LEADS_PER_DAY", "10") or 10)
-    return max(0, daily - await repo.leads_since(today_start()))
+    return max(0, daily_leads_limit() - await repo.leads_since(today_start()))

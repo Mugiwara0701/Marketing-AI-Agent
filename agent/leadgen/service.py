@@ -116,8 +116,7 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
             and not await pipeline.daily_leads_left(repo)
         ):  # fmt: skip
             # Today's quota of leads is used: no Chrome, no model call, no search until tomorrow.
-            limit = env("MAX_NEW_LEADS_PER_DAY", "10") or 10
-            why = f"the daily limit of {limit} leads is reached; the search continues tomorrow"
+            why = f"the daily limit of {pipeline.daily_leads_limit()} leads is reached; the search continues tomorrow"
             log.info("Lead discovery skipped", extra={"ctx": {"why": why}})
             return {"skipped": why, "daily_limit_reached": True, "dry_run": False}
         svc = Services(repo=repo, browser=make_browser(rt.browser, cfg),
