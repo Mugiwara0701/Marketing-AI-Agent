@@ -509,6 +509,25 @@ def test_a_failed_pass_is_reported_and_a_good_one_closes_it(monkeypatch, tmp_pat
     assert "leads step failed" in box[1]["message"]
 
 
+def test_a_new_pass_closes_the_failed_pass_alert_at_once(monkeypatch, tmp_path) -> None:
+    from agent import control
+
+    monkeypatch.setenv("MA_LINK_URL", "http://campaign-agent:8787/ma/v1")
+    monkeypatch.setenv("MA_LINK_TOKEN", "t" * 40)
+    monkeypatch.setenv("MA_LINK_CACHE_DIR", str(tmp_path / "c"))
+    pipeline = control.Pipeline(rest_minutes=30)
+    pipeline._finish(
+        {"started_at": "t0", "outcome": "failed", "result": {"leads": {"error": "boom"}}}
+    )
+    pipeline._announce_pass("t1")
+    box = cl.Outbox(tmp_path / "c" / "outbox.jsonl").pending()
+    assert [(e["kind"], e["code"]) for e in box][-2:] == [
+        ("info", "MA_PASS_STARTED"),
+        ("resolved", "MA_PASS_FAILED"),
+    ]
+    assert box[-1]["dedupe_key"] == "pass-failed"
+
+
 def test_a_failing_inbox_is_a_blocker_and_a_working_one_closes_it(monkeypatch, tmp_path) -> None:
     import asyncio
 

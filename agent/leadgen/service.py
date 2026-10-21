@@ -11,7 +11,7 @@ from agentkit.config import env
 from agentkit.log import get_logger
 
 from .. import campaign_link
-from . import approval, config, outreach, report, sender
+from . import approval, config, outreach, pipeline, report, sender
 from .browser import make_browser
 from .models import Contact, Lead, LeadStatus
 from .pipeline import Pipeline, Services
@@ -111,6 +111,15 @@ async def run_leads(*, dry_run: bool | None = None, browser: str | None = None, 
         )
     repo = await open_repository(rt)
     try:
+        if (
+            not rt.dry_run and not project and max_leads is None
+            and not await pipeline.daily_leads_left(repo)
+        ):  # fmt: skip
+            # Today's quota of leads is used: no Chrome, no model call, no search until tomorrow.
+            limit = env("MAX_NEW_LEADS_PER_DAY", "10") or 10
+            why = f"the daily limit of {limit} leads is reached; the search continues tomorrow"
+            log.info("Lead discovery skipped", extra={"ctx": {"why": why}})
+            return {"skipped": why, "daily_limit_reached": True, "dry_run": False}
         svc = Services(repo=repo, browser=make_browser(rt.browser, cfg),
                        approver=approval.make_approver(rt.dry_run, rt.out_dir),
                        manual_notify=approval.make_manual_notifier(rt.dry_run, rt.out_dir),
