@@ -244,6 +244,10 @@ class SqliteRepository:
         )
         return int(row["n"]) if row else 0
 
+    async def leads_since(self, since: datetime) -> int:
+        row = self._one("select count(*) n from companies where created_at >= ?", since.isoformat())
+        return int(row["n"]) if row else 0
+
     async def set_manual(self, lead_id: str, form_url: str | None, reason: str | None) -> bool:
         row = self._one("select contact_form_url from companies where id=?", lead_id)
         new_form = bool(form_url) and (row is None or row["contact_form_url"] != form_url)

@@ -67,7 +67,9 @@ class Pipeline:
         self.deadline = deadline or time.monotonic() + 3600
         self.kill_file = kill_file
         self.stats = Stats()
-        self.new_drafts = 0
+        self.new_leads = (
+            0  # qualified leads this run found: they, not the drafts, use up the day's quota
+        )
         self.max_new = int(cfg.limit("max_new_leads_per_run", 10))
         self.llm_failures = 0
         self.touched: list[str] = []  # lead ids this run created or moved, for the report
@@ -79,8 +81,8 @@ class Pipeline:
             return "time budget used"
         if self.kill_file and self.kill_file.exists():
             return f"stop file {self.kill_file} exists"
-        if self.new_drafts >= self.max_new:
-            return f"{self.max_new} new leads drafted this run"
+        if self.new_leads >= self.max_new:
+            return f"{self.max_new} new leads found (the limit for today or for this run)"
         if self.llm_failures >= _LLM_FAILURES_TO_STOP:
             return "the model host keeps failing"
         if self.svc.browser.guard.pages >= self.svc.browser.guard.max_pages:
@@ -91,10 +93,7 @@ class Pipeline:
         started = time.monotonic()
         log.info("Pipeline started", extra={"ctx": {"browser": self.svc.browser.name, "store": self.repo.name,
                                                     "max_new_leads": self.max_new}})  # fmt: skip
-        daily = int(env("MAX_NEW_LEADS_PER_DAY", "10") or 10)
-        self.max_new = min(
-            self.max_new, max(0, daily - await self.repo.drafted_since(today_start()))
-        )
+        self.max_new = min(self.max_new, await daily_leads_left(self.repo))
         try:
             await self.svc.browser.start()
             await self.resume()
@@ -402,6 +401,7 @@ class Pipeline:
         await self.repo.set_status(lead_id, LeadStatus.QUALIFIED, note=verdict.reason)
         lead.status = LeadStatus.QUALIFIED
         self.stats.add("leads_qualified")
+        self.new_leads += 1
         log.info("Lead qualified", extra={"ctx": {"lead_id": lead_id, "company": lead.company_name,
                                                   "score": lead.lead_score, "evidence": len(lead.evidence)}})  # fmt: skip
         await self.advance(lead)
@@ -626,7 +626,6 @@ class Pipeline:
                     "Email draft not saved (one already exists)",
                     extra={"ctx": {"lead_id": lead.lead_id}},
                 )
-            self.new_drafts += 1
             self.stats.add("emails_drafted")
             log.info(
                 "Email generated", extra={"ctx": {"lead_id": lead.lead_id, "flags": len(problems)}}
@@ -658,5 +657,12 @@ def _contact_evidence(c: Contact) -> list[Evidence]:
 
 
 def today_start() -> datetime:
-    now = datetime.now(UTC)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    """Midnight of the machine's own day (the office's, not UTC), as a UTC time for the database."""
+    now = datetime.now().astimezone()
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+
+
+async def daily_leads_left(repo: Repository) -> int:
+    """How many more leads may be found today: MAX_NEW_LEADS_PER_DAY minus the leads created since midnight."""
+    daily = int(env("MAX_NEW_LEADS_PER_DAY", "10") or 10)
+    return max(0, daily - await repo.leads_since(today_start()))

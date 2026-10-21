@@ -723,3 +723,24 @@ def test_a_campaign_with_other_countries_gets_its_own_searches():
     again = asyncio.run(strategy.next_queries(repo, austria))
     assert [q.text for q in again] == [q.text for q in first]
     assert strategy.typed("android hmi", austria) == "android hmi Austria"
+
+
+def test_the_daily_quota_counts_leads_found_not_emails_drafted(monkeypatch, tmp_path):
+    from agent.leadgen import pipeline
+    from agent.leadgen.models import Lead
+
+    monkeypatch.setenv("MAX_NEW_LEADS_PER_DAY", "2")
+    repo = SqliteRepository(":memory:")
+    assert asyncio.run(pipeline.daily_leads_left(repo)) == 2
+    for n, domain in enumerate(("one-co.com", "two-co.com"), start=1):
+        asyncio.run(
+            repo.insert_lead(Lead(company_name=f"Co {n}", company_website=domain), source="t")
+        )
+        assert asyncio.run(pipeline.daily_leads_left(repo)) == 2 - n  # no email was drafted for any
+
+
+def test_a_run_stops_when_it_has_found_its_leads(tmp_path):
+    p = _no_contact_pipeline(SqliteRepository(":memory:"), tmp_path)
+    assert p.stop_reason() is None
+    p.max_new, p.new_leads = 3, 3
+    assert "3 new leads found" in (p.stop_reason() or "")

@@ -198,6 +198,10 @@ class PostgresRepository:
         )
         return int(row["n"]) if row else 0
 
+    async def leads_since(self, since: datetime) -> int:
+        row = await db.fetchrow("select count(*) n from companies where created_at >= $1", since)
+        return int(row["n"]) if row else 0
+
     async def set_manual(self, lead_id: str, form_url: str | None, reason: str | None) -> bool:
         row = await db.fetchrow("select contact_form_url from companies where id=$1::uuid", lead_id)
         new_form = bool(form_url) and (row is None or row["contact_form_url"] != form_url)

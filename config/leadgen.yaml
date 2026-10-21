@@ -267,7 +267,7 @@ contacts:
 
 # --------------------------------------------------------------------------------------------------- limits
 limits:
-  max_new_leads_per_run: 10 # leads that reach EMAIL_DRAFTED in one run
+  max_new_leads_per_run: 10 # new leads (qualified companies) one run may find; MAX_NEW_LEADS_PER_DAY caps the day
   max_pages_per_run: 100 # >= queries_per_run x pages_per_query (16 x 6 = 96), or late queries are starved
   max_pages_per_domain: 6
   host_delay_seconds: 2.0
