@@ -47,6 +47,6 @@ def _fresh_web_client():
     """web reuses one httpx client; every test (and its event loop) gets a fresh one so mock transports don't leak."""
     from agent import web
 
-    web._client = None
+    web._client[0] = None
     yield
-    web._client = None
+    web._client[0] = None
