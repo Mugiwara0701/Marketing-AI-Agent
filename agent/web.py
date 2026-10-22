@@ -29,6 +29,24 @@ _last_hit: dict[str, float] = {}
 _robots: dict[str, RobotFileParser | None] = {}
 bot_blocked: set[str] = set()  # hosts that showed a bot check this run: not tried again
 
+_client: list[httpx.AsyncClient | None] = [None]
+
+
+async def close() -> None:
+    client = _client[0]
+    if client is not None:
+        await client.aclose()
+        _client[0] = None
+
+
+def _shared() -> httpx.AsyncClient:
+    client = _client[0]
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(follow_redirects=False, timeout=20)
+        _client[0] = client
+    return client
+
+
 # Aggregators and socials: never treated as "the company's own website".
 NOT_COMPANY_SITES = {
     "linkedin.com", "indeed.com", "glassdoor.com", "naukri.com", "monster.com", "ziprecruiter.com",
@@ -112,13 +130,20 @@ def html_to_text(html: str) -> str:
     return re.sub(r"\s+", " ", " ".join(p.parts)).strip()
 
 
-async def _allowed(client: httpx.AsyncClient, url: str) -> bool:
+async def _allowed(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> bool:
     u = urlparse(url)
     base = f"{u.scheme}://{u.netloc}"
     if base not in _robots:
         rp = RobotFileParser()
         try:
-            r = await client.get(f"{base}/robots.txt", timeout=10, follow_redirects=True)
+            r = await client.get(
+                f"{base}/robots.txt", timeout=10, follow_redirects=True, headers=headers
+            )
             if r.status_code in (401, 403):
                 _robots[base] = None  # explicit block
                 return False
@@ -168,11 +193,10 @@ async def may_visit(url: str) -> str | None:
         return "portal whose terms forbid scraping"
     if not await asyncio.to_thread(_public_host, u.hostname):
         return "not a public address"
-    async with httpx.AsyncClient(
-        headers={"User-Agent": settings.load().user_agent}, timeout=10
-    ) as c:
-        if not await _allowed(c, url):
-            return "robots.txt disallows it"
+    headers = {"User-Agent": settings.load().user_agent}
+    c = _shared()
+    if not await _allowed(c, url, headers=headers):
+        return "robots.txt disallows it"
     return None
 
 
@@ -204,38 +228,34 @@ async def fetch_page(  # noqa: PLR0911, PLR0912 - every refusal returns early
     if not await asyncio.to_thread(_public_host, u.hostname):
         return Fetched(url, 0, "", "not a public address")
     headers = {"User-Agent": settings.load().user_agent, "Accept": accept}
-    async with httpx.AsyncClient(headers=headers, follow_redirects=False, timeout=20) as c:
-        if check_robots and not await _allowed(c, url):
-            return Fetched(url, 0, "", "robots.txt disallows it")
-        await _wait_for_host(u.hostname)
-        current = url
-        try:
-            for _ in range(_MAX_REDIRECTS + 1):
-                async with c.stream("GET", current) as r:
-                    if r.is_redirect:
-                        target = urljoin(current, r.headers.get("location", ""))
-                        tu = urlparse(target)
-                        if tu.scheme not in ("http", "https") or not tu.hostname:
-                            return None
-                        if blocked(target):
-                            return Fetched(
-                                target, r.status_code, "", "redirected to a blocked portal"
-                            )
-                        if not await asyncio.to_thread(_public_host, tu.hostname):
-                            return Fetched(
-                                target, r.status_code, "", "redirected to a non-public address"
-                            )
-                        current = target
-                        continue
-                    status, text = r.status_code, await _read_capped(r)
-                    break
-            else:
-                return Fetched(current, 0, "", "too many redirects")
-        except httpx.HTTPError as exc:
-            log.info(
-                "fetch failed", extra={"ctx": {"host": u.hostname, "error": type(exc).__name__}}
-            )
-            return None
+    c = _shared()
+    if check_robots and not await _allowed(c, url, headers=headers):
+        return Fetched(url, 0, "", "robots.txt disallows it")
+    await _wait_for_host(u.hostname)
+    current = url
+    try:
+        for _ in range(_MAX_REDIRECTS + 1):
+            async with c.stream("GET", current, headers=headers) as r:
+                if r.is_redirect:
+                    target = urljoin(current, r.headers.get("location", ""))
+                    tu = urlparse(target)
+                    if tu.scheme not in ("http", "https") or not tu.hostname:
+                        return None
+                    if blocked(target):
+                        return Fetched(target, r.status_code, "", "redirected to a blocked portal")
+                    if not await asyncio.to_thread(_public_host, tu.hostname):
+                        return Fetched(
+                            target, r.status_code, "", "redirected to a non-public address"
+                        )
+                    current = target
+                    continue
+                status, text = r.status_code, await _read_capped(r)
+                break
+        else:
+            return Fetched(current, 0, "", "too many redirects")
+    except httpx.HTTPError as exc:
+        log.info("fetch failed", extra={"ctx": {"host": u.hostname, "error": type(exc).__name__}})
+        return None
     if bot_check(text):
         bot_blocked.add(u.hostname)
         log.info("bot check, site skipped", extra={"ctx": {"host": u.hostname, "status": status}})
@@ -271,11 +291,10 @@ async def fetch_rendered(url: str) -> str | None:
         from playwright.async_api import async_playwright  # noqa: PLC0415 - optional dependency
     except ImportError:
         return None
-    async with httpx.AsyncClient(
-        headers={"User-Agent": settings.load().user_agent}, follow_redirects=True, timeout=20
-    ) as c:
-        if not await _allowed(c, url):
-            return None
+    headers = {"User-Agent": settings.load().user_agent}
+    c = _shared()
+    if not await _allowed(c, url, headers=headers):
+        return None
     await _wait_for_host(u.hostname)
     try:
         async with async_playwright() as pw:
