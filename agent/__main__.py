@@ -9,6 +9,7 @@ import sys
 import time
 from typing import Any, cast
 
+from agent import web
 from agentkit import db
 
 
@@ -413,7 +414,10 @@ async def _leads(a: argparse.Namespace, dry: bool) -> int:  # noqa: PLR0912 - on
         try:
             found = await domain_check.run(repo, apply=a.apply)
         finally:
-            await repo.close()
+            try:
+                await web.close()
+            finally:
+                await repo.close()
         for f in found:
             if f.status != "ok":
                 print(f"{f.status.upper():8} {f.company} ({f.domain}): {f.detail}  {f.action}")  # noqa: T201
@@ -431,7 +435,10 @@ async def _leads(a: argparse.Namespace, dry: bool) -> int:  # noqa: PLR0912 - on
             for q in await strategy.next_queries(repo, cfg, a.count):
                 print(f"[{q.family}] {q.text}")  # noqa: T201
         finally:
-            await repo.close()
+            try:
+                await web.close()
+            finally:
+                await repo.close()
     return 0
 
 

@@ -40,3 +40,13 @@ def _no_real_site_checks(request, monkeypatch):
         return True
 
     monkeypatch.setattr(contacts, "mail_domain_ok", deliverable)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_web_client():
+    """web reuses one httpx client; every test (and its event loop) gets a fresh one so mock transports don't leak."""
+    from agent import web
+
+    web._client[0] = None
+    yield
+    web._client[0] = None
