@@ -48,5 +48,7 @@ def _fresh_web_client():
     from agent import web
 
     web._client[0] = None
+    web._settings.cache_clear()
     yield
     web._client[0] = None
+    web._settings.cache_clear()

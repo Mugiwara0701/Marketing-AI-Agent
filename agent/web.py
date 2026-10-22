@@ -6,6 +6,7 @@ import re
 import socket
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
@@ -19,6 +20,12 @@ from agentkit.log import get_logger
 from . import settings
 
 log = get_logger("agent.web")
+
+
+@lru_cache(maxsize=1)
+def _settings() -> settings.Settings:
+    return settings.load()
+
 
 _HOST_DELAY = float(
     env("HOST_DELAY_SECONDS", "2") or 2
@@ -152,7 +159,7 @@ async def _allowed(
             rp.parse([])
         _robots[base] = rp
     cached = _robots[base]
-    return cached is not None and cached.can_fetch(settings.load().user_agent, url)
+    return cached is not None and cached.can_fetch(_settings().user_agent, url)
 
 
 _BOT_CHECK = re.compile(
@@ -193,7 +200,7 @@ async def may_visit(url: str) -> str | None:
         return "portal whose terms forbid scraping"
     if not await asyncio.to_thread(_public_host, u.hostname):
         return "not a public address"
-    headers = {"User-Agent": settings.load().user_agent}
+    headers = {"User-Agent": _settings().user_agent}
     c = _shared()
     if not await _allowed(c, url, headers=headers):
         return "robots.txt disallows it"
@@ -227,7 +234,7 @@ async def fetch_page(  # noqa: PLR0911, PLR0912 - every refusal returns early
         return Fetched(url, 0, "", "bot check (earlier this run)")
     if not await asyncio.to_thread(_public_host, u.hostname):
         return Fetched(url, 0, "", "not a public address")
-    headers = {"User-Agent": settings.load().user_agent, "Accept": accept}
+    headers = {"User-Agent": _settings().user_agent, "Accept": accept}
     c = _shared()
     if check_robots and not await _allowed(c, url, headers=headers):
         return Fetched(url, 0, "", "robots.txt disallows it")
@@ -291,7 +298,7 @@ async def fetch_rendered(url: str) -> str | None:
         from playwright.async_api import async_playwright  # noqa: PLC0415 - optional dependency
     except ImportError:
         return None
-    headers = {"User-Agent": settings.load().user_agent}
+    headers = {"User-Agent": _settings().user_agent}
     c = _shared()
     if not await _allowed(c, url, headers=headers):
         return None
@@ -300,7 +307,7 @@ async def fetch_rendered(url: str) -> str | None:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=not env("BROWSER_HEADED"))
             try:
-                page = await browser.new_page(user_agent=settings.load().user_agent)
+                page = await browser.new_page(user_agent=_settings().user_agent)
                 await page.goto(url, wait_until="networkidle", timeout=25_000)
                 return (await page.content())[:_MAX_BYTES]
             finally:
