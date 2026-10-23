@@ -46,6 +46,9 @@ ROLE_PRIORITY: tuple[tuple[int, str], ...] = (
 _ROLE_RX = [(rank, re.compile(p, re.I)) for rank, p in ROLE_PRIORITY]
 _MAILBOX_RANK = {"engineering": 9, "business": 9, "partner": 9, "sales": 10, "contact": 11, "hello": 11,
                  "enquir": 11, "inquir": 11, "info": 12, "office": 12}  # fmt: skip
+# Short words must match the whole mailbox name ("hi@"): as a prefix they would also take "hiring@" or "history@".
+_MAILBOX_EXACT = {"admin": 12, "mail": 12, "general": 12, "marketing": 12, "commercial": 11, "export": 10,
+                  "biz": 9, "bd": 9, "team": 12, "hi": 11}  # fmt: skip
 _ROLE_WORDS = re.compile(
     r"\b(cto|ceo|founder|vp|vice president|head of|director|manager|chief)\b", re.I
 )
@@ -67,6 +70,8 @@ def role_rank(role: str) -> int | None:
 
 def mailbox_rank(address: str) -> int:
     local = address.split("@", 1)[0].lower()
+    if local in _MAILBOX_EXACT:
+        return _MAILBOX_EXACT[local]
     return next((r for k, r in _MAILBOX_RANK.items() if local.startswith(k)), 13)
 
 
@@ -79,6 +84,9 @@ class Discovery:
     competitor: str | None = (
         None  # the home page shows an engineering-services firm: not a lead (why)
     )
+    skipped: list[str] = field(
+        default_factory=list
+    )  # company-domain addresses seen but not used (named for a person)
 
     @property
     def best(self) -> Contact | None:
@@ -113,7 +121,11 @@ def company_free_mail(text: str, company: str) -> list[str]:
 
 
 def candidates_from(
-    page: Page, domain: str, people: contact_task.ContactResult | None, company: str = ""
+    page: Page,
+    domain: str,
+    people: contact_task.ContactResult | None,
+    company: str = "",
+    skipped: list[str] | None = None,
 ) -> list[Contact]:
     """Code guards on top of the model: literal on the page, on the company's domain (or the company's own free-mail
     mailbox), an allowed role."""
@@ -150,6 +162,10 @@ def candidates_from(
                     role="business contact", email=addr, source=page.url, confidence=0.6, rank=rank
                 )
             )
+        elif skipped is not None and addr not in skipped:
+            skipped.append(
+                addr
+            )  # reported to the person who adds a contact by hand, never silently lost
     for addr in company_free_mail(text, company):
         if not any(c.email == addr for c in out):
             out.append(Contact(role="business contact (free-mail address on the company site)", email=addr,
@@ -231,6 +247,45 @@ async def mail_domain_ok(address: str) -> bool | None:
     return answer
 
 
+COMMON_CONTACT_PATHS = ("/contact", "/contact-us", "/contact-us.html", "/contactus")
+
+
+def _shows_a_way_in(pages: list[Page], domain: str) -> bool:
+    """Do the pages read so far show a company-domain address or a contact form?"""
+    for page in pages:
+        text = f"{page.text} " + " ".join(
+            link.url[7:] for link in page.links if link.url.startswith("mailto:")
+        )
+        if (
+            page.has_contact_form
+            or intent.looks_like_contact_form(page.text)
+            or rules.emails_on_domain(text, domain)
+        ):
+            return True
+    return False
+
+
+async def _try_common_paths(
+    browser: Browser, home: Page, pages: list[Page], domain: str, *, blocked: bool
+) -> None:
+    """Clicking a "Contact" link can miss (a menu that needs a hover, a popup, a page that was not read). When the pages
+    read so far show no address and no form, open the usual contact URLs of the same site directly: no clicking, no
+    model call. Stops at the first page that shows a way in; three tries at most."""
+    if blocked or _shows_a_way_in(pages, domain):
+        return
+    root = home.url.split("://", 1)[0] + "://" + home.url.split("://", 1)[-1].split("/", 1)[0]
+    for path in COMMON_CONTACT_PATHS[:3]:
+        url = root + path
+        if any(p.url.rstrip("/") == url for p in pages):
+            continue
+        page = await browser.open_url(url)
+        if page is None or page.blocked or len(page.text) < 150:
+            continue
+        pages.append(page)
+        if _shows_a_way_in([page], domain):
+            return
+
+
 async def discover(
     browser: Browser,
     domain: str,
@@ -266,14 +321,16 @@ async def discover(
             break
         if all(page.url != p.url for p in pages):
             pages.append(page)
+    await _try_common_paths(browser, home, pages, domain, blocked=bool(found.blocked))
     found.pages = [p.url for p in pages]
     cands: list[Contact] = []
+    seen_not_used: list[str] = []
     for page in pages:
         if (
             page.has_contact_form or intent.looks_like_contact_form(page.text)
         ) and not found.form_url:
             found.form_url = page.url
-        cands += candidates_from(page, domain, await _people(page, extract), company)
+        cands += candidates_from(page, domain, await _people(page, extract), company, seen_not_used)
     best: dict[str, Contact] = {}
     for c in cands:
         if c.email not in best or (c.rank, -c.confidence) < (
@@ -283,9 +340,11 @@ async def discover(
             best[c.email] = c
     # The campaign's preferred roles first, in its order; the rank itself is kept (scoring reads it).
     found.contacts = sorted(best.values(), key=lambda c: (_order(c, cfg), -c.confidence))
+    found.skipped = [a for a in seen_not_used if a not in best]
     log.info(
         "Contact search done",
         extra={"ctx": {"domain": domain, "pages": len(pages), "contacts": len(found.contacts),
-                       "best_rank": found.best.rank if found.best else None}},
+                       "best_rank": found.best.rank if found.best else None,
+                       "urls": found.pages, "not_used": found.skipped}},
     )  # fmt: skip
     return found

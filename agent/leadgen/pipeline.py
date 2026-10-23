@@ -534,6 +534,12 @@ class Pipeline:
             await self._form_fill(lead, found.form_url)
         if not found.best:
             reason = found.blocked or "no public business contact on the company's site"
+            if (
+                found.skipped
+            ):  # seen on the site but named for a person: a human may still choose one
+                reason += (
+                    f" (addresses on the site that were not used: {', '.join(found.skipped[:5])})"
+                )
             attempts = await self.repo.record_contact_attempt(lead.lead_id)
             max_attempts = int(self.cfg.contacts.get("max_attempts", 3))
             lead.score = (
