@@ -753,3 +753,46 @@ def test_the_daily_limit_is_five_leads_unless_the_environment_says_otherwise(mon
     assert pipeline.daily_leads_limit() == 5
     monkeypatch.setenv("MAX_NEW_LEADS_PER_DAY", "8")
     assert pipeline.daily_leads_limit() == 8
+
+
+def test_common_business_mailboxes_are_accepted_and_personal_looking_ones_are_reported(tmp_path):
+    for addr in (
+        "admin@pretech-e.com",
+        "mail@x.com",
+        "general@x.com",
+        "export@x.com",
+        "marketing@x.com",
+    ):
+        assert contacts.mailbox_rank(addr) < 13, addr
+    for addr in ("city@x.com", "hiring@x.com", "history@x.com", "support@x.com", "jack@x.com"):
+        assert contacts.mailbox_rank(addr) == 13, addr  # "hi" must not take hiring@ or history@
+
+    page = Page(
+        url="https://foogletech.com/contact",
+        title="Contact",
+        text="Write to admin@foogletech.com or city@foogletech.com",
+    )
+    skipped: list[str] = []
+    found = contacts.candidates_from(page, "foogletech.com", None, "", skipped)
+    assert [c.email for c in found] == ["admin@foogletech.com"]
+    assert skipped == ["city@foogletech.com"]
+
+
+def test_when_the_contact_link_is_missed_the_usual_contact_url_is_opened(tmp_path):
+    home_text = (
+        "FoogleTech builds Android kiosks and embedded Linux devices for retail and payments customers worldwide. "
+        * 3
+    )
+    web = {
+        "https://foogletech.com": html("FoogleTech", home_text),
+        "https://foogletech.com/contact": html(
+            "Contact Us",
+            "Contact FoogleTech. Our companies are listed below. Any enquiry, please send email to: "
+            "admin@foogletech.com. Address: 808 Example Road, Shenzhen. Tel: +86 755 0000 0000. "
+            * 2,
+        ),
+    }
+    browser = FakeBrowser(web, [])
+    found = asyncio.run(contacts.discover(browser, "foogletech.com", cfg(), extract=fake_people))
+    assert found.best and found.best.email == "admin@foogletech.com"
+    assert "https://foogletech.com/contact" in found.pages
